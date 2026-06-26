@@ -6,9 +6,10 @@ wires them together. This is the single place that knows the *order* of
 operations, which keeps the agents themselves decoupled and unaware of
 one another.
 
-v0.1 daily pipeline::
+Daily pipeline::
 
     Content Director  -> brief
+    Campaign Manager  -> campaign (the brief becomes a campaign; content belongs to it)
     Content Creator   -> content (stored in SQLite)
     Publisher         -> no-op (placeholder)
     Analytics Agent   -> local counts (placeholder)
@@ -20,6 +21,7 @@ from datetime import date
 from typing import Any
 
 from onassis.agents import AnalyticsAgent, ContentCreator, ContentDirector, Publisher
+from onassis.campaign_manager import CampaignManager
 from onassis.config import Config
 from onassis.database import Database
 from onassis.logger import get_logger
@@ -38,6 +40,8 @@ class Orchestrator:
         self.creator = ContentCreator(config, db)
         self.publisher = Publisher(config, db)
         self.analytics = AnalyticsAgent(config, db)
+        # Campaigns are the central object — every run produces one.
+        self.campaigns = CampaignManager(config, db)
 
     def run_daily(self, *, for_date: date | None = None) -> dict[str, Any]:
         """Run one full pass of the daily pipeline.
@@ -47,11 +51,14 @@ class Orchestrator:
         log.info("=== ONASSIS daily pipeline START ===")
 
         brief = self.director.execute(for_date=for_date)
+        campaign = self.campaigns.create_from_brief(brief)
         items = self.creator.execute(brief=brief)
         publish_result = self.publisher.execute(brief_id=brief["id"])
         analytics_result = self.analytics.execute(brief_id=brief["id"])
 
         summary = {
+            "campaign_id": campaign["id"],
+            "campaign_name": campaign["name"],
             "brief_id": brief["id"],
             "theme": brief["theme"],
             "items_created": len(items),

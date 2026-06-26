@@ -40,3 +40,31 @@ def test_run_daily_persists_one_brief_per_run(config, db, sample_brief):
     orch.run_daily(for_date=date(2026, 6, 27))
 
     assert len(db.get_recent_briefs()) == 2
+
+
+def test_run_daily_creates_campaign_with_content(config, db, sample_brief):
+    n = (
+        config.content_targets.get("pinterest_posts", 5)
+        + config.content_targets.get("instagram_captions", 3)
+        + config.content_targets.get("facebook_posts", 2)
+        + config.content_targets.get("image_prompts", 3)
+    )
+    orch = Orchestrator(config, db)
+    orch.director._llm = FakeLLM(sample_brief)
+    orch.creator._llm = FakeLLM(
+        make_content_response(
+            config.content_targets.get("pinterest_posts", 5),
+            config.content_targets.get("instagram_captions", 3),
+            config.content_targets.get("facebook_posts", 2),
+            config.content_targets.get("image_prompts", 3),
+        )
+    )
+
+    summary = orch.run_daily(for_date=date(2026, 6, 26))
+
+    assert "campaign_id" in summary
+    view = orch.campaigns.get_campaign(summary["campaign_id"])
+    assert view is not None
+    assert view["name"] == sample_brief["campaign_name"]
+    assert view["status"] == "Draft"
+    assert len(view["content_ids"]) == n  # all content belongs to the campaign

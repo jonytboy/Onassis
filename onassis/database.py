@@ -56,6 +56,19 @@ CREATE TABLE IF NOT EXISTS content_items (
 
 CREATE INDEX IF NOT EXISTS idx_content_brief ON content_items(brief_id);
 CREATE INDEX IF NOT EXISTS idx_content_platform ON content_items(platform);
+
+CREATE TABLE IF NOT EXISTS campaigns (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at    TEXT    NOT NULL,
+    name          TEXT    NOT NULL,
+    theme         TEXT,
+    story         TEXT,
+    status        TEXT    NOT NULL DEFAULT 'Draft',  -- Draft | Scheduled | Live | Complete
+    brief_id      INTEGER NOT NULL UNIQUE,           -- the brief this campaign wraps (1:1)
+    FOREIGN KEY (brief_id) REFERENCES briefs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_campaign_status ON campaigns(status);
 """
 
 
@@ -173,6 +186,70 @@ class Database:
     def count_content(self) -> int:
         with self._connect() as conn:
             return int(conn.execute("SELECT COUNT(*) FROM content_items").fetchone()[0])
+
+    # --- Campaigns --------------------------------------------------
+
+    def insert_campaign(self, campaign: dict[str, Any]) -> int:
+        """Persist a campaign and return its new row id."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO campaigns (created_at, name, theme, story, status, brief_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utcnow(),
+                    campaign.get("name", ""),
+                    campaign.get("theme", ""),
+                    campaign.get("story", ""),
+                    campaign.get("status", "Draft"),
+                    campaign["brief_id"],
+                ),
+            )
+            campaign_id = int(cur.lastrowid)
+        log.info("Stored campaign #%s (%r)", campaign_id, campaign.get("name"))
+        return campaign_id
+
+    def get_campaign(self, campaign_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM campaigns WHERE id = ?", (campaign_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_campaign_by_brief(self, brief_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM campaigns WHERE brief_id = ?", (brief_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_campaigns(self) -> list[dict[str, Any]]:
+        """Return all campaigns, newest first."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM campaigns ORDER BY id DESC").fetchall()
+        return [dict(r) for r in rows]
+
+    def update_campaign_status(self, campaign_id: int, status: str) -> bool:
+        """Set a campaign's status. Returns True if a row was updated."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE campaigns SET status = ? WHERE id = ?", (status, campaign_id)
+            )
+            return cur.rowcount > 0
+
+    def get_briefs_without_campaign(self) -> list[dict[str, Any]]:
+        """Briefs that don't yet have a campaign (used for backfill)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT b.* FROM briefs b
+                LEFT JOIN campaigns c ON c.brief_id = b.id
+                WHERE c.id IS NULL
+                ORDER BY b.id
+                """
+            ).fetchall()
+        return [_row_to_brief(r) for r in rows]
 
 
 def _row_to_brief(row: sqlite3.Row) -> dict[str, Any]:

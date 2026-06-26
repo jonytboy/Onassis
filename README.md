@@ -16,15 +16,46 @@ Every morning the pipeline runs automatically:
    Anthropic API, drawing on: the Local Celebrity brand, the Mediterranean
    lifestyle, the current season, the brand's content pillars, and previous
    campaigns stored in SQLite (so it never repeats itself).
-2. **Content Creator** uses that brief to generate (also via the LLM):
+2. **Campaign Manager** turns that brief into a **campaign** — the central
+   object everything else belongs to (see below).
+3. **Content Creator** uses the brief to generate (via the LLM):
    - 5 Pinterest posts
    - 3 Instagram captions
    - 2 Facebook posts
    - 3 cinematic image prompts
-3. **Publisher** and **Analytics Agent** are wired in as **placeholders**
+4. **Publisher** and **Analytics Agent** are wired in as **placeholders**
    (no publishing yet).
 
 Everything is stored in **SQLite**.
+
+## Campaigns — the central object
+
+A **campaign** is the spine of ONASSIS: everything belongs to one. Each
+daily brief becomes exactly one campaign (1:1), and the content generated
+for that brief belongs to the campaign. Every campaign has:
+
+| Field | Source |
+|-------|--------|
+| Campaign ID | auto-assigned |
+| Campaign Name | the brief's campaign name |
+| Theme | the brief's theme |
+| Story | the brief's creative concept |
+| Date Created | when the campaign was created |
+| Status | `Draft` → `Scheduled` → `Live` → `Complete` (default `Draft`) |
+| Content IDs | the content items that belong to it |
+
+Campaigns live in a `campaigns` table (the dashboard). `CampaignManager`
+owns the lifecycle; existing briefs are automatically backfilled into
+campaigns, so nothing is ever orphaned.
+
+```bash
+python main.py --campaigns                 # the dashboard — list all campaigns
+python main.py --campaign <id>             # everything for one campaign (JSON)
+python main.py --set-status <id> <status>  # Draft | Scheduled | Live | Complete
+```
+
+> No publishing and no social-media integration yet — status is **tracked,
+> not acted on**.
 
 ## Quick start
 
@@ -70,8 +101,9 @@ then daily at `08:00` local time. Both are configurable.
 | `requirements.txt` | Minimal, pure-Python dependencies. |
 | `onassis/config.py` | Loads & merges YAML + env into a typed `Config`. |
 | `onassis/logger.py` | Centralized console + rotating-file logging. |
-| `onassis/database.py` | SQLite layer: schema + all queries (`briefs`, `content_items`). |
+| `onassis/database.py` | SQLite layer: schema + all queries (`briefs`, `content_items`, `campaigns`). |
 | `onassis/llm.py` | Anthropic API wrapper: prompt → schema-validated JSON. |
+| `onassis/campaign_manager.py` | The campaign — central object: lifecycle, dashboard, views. |
 | `onassis/orchestrator.py` | Defines the daily pipeline and owns the agents. |
 | `onassis/scheduler.py` | Runs the pipeline daily at a fixed time. |
 | `onassis/agents/base.py` | `BaseAgent` — the agent framework foundation. |
@@ -115,7 +147,10 @@ in cleanly:
 
 ## Database schema
 
+- **`campaigns`** — one row per campaign (name, theme, story, status,
+  created_at), linked 1:1 to a brief via `brief_id`. The central object.
 - **`briefs`** — one row per daily brief (theme, tone, audience,
   objective, keywords, plus the full brief as JSON for forward-compat).
 - **`content_items`** — many rows per brief (platform, content_type,
-  title, body, metadata, status), linked via `brief_id`.
+  title, body, metadata, status), linked via `brief_id`. They belong to the
+  brief's campaign.
