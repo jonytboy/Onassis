@@ -5,3 +5,4 @@
 PyYAML>=6.0          # Parsing config.yaml
 python-dotenv>=1.0   # Loading environment variables from .env
 schedule>=1.2        # Lightweight in-process daily scheduler
+anthropic>=0.69      # Anthropic API client — powers LLM content generation

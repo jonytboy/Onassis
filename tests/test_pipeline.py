@@ -1,14 +1,19 @@
 """Smoke test for the ONASSIS v0.1 daily pipeline.
 
 Runs the whole pipeline against a throwaway SQLite file in a temp dir and
-asserts the configured amount of content was produced and stored. Run with::
+asserts the configured amount of content was produced and stored.
+
+Content generation now calls the Anthropic API, so this test needs a valid
+ANTHROPIC_API_KEY and network access. Without a key it skips (rather than
+fail) so the suite stays green in offline/CI environments. Run with::
 
     python -m pytest        (if pytest is installed)
-    python tests/test_pipeline.py   (no dependencies needed)
+    python tests/test_pipeline.py   (no test runner needed)
 """
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -18,6 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from onassis.config import load_config  # noqa: E402
 from onassis.database import Database  # noqa: E402
 from onassis.orchestrator import Orchestrator  # noqa: E402
+
+_HAS_KEY = bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 
 def _run(tmp_db: Path) -> dict:
@@ -47,11 +54,19 @@ def _run(tmp_db: Path) -> dict:
 
 
 def test_daily_pipeline(tmp_path) -> None:  # pytest entry point
+    if not _HAS_KEY:
+        import pytest
+
+        pytest.skip("ANTHROPIC_API_KEY not set — skipping live-generation test")
     _run(tmp_path / "test.db")
 
 
 if __name__ == "__main__":
     import tempfile
+
+    if not _HAS_KEY:
+        print("SKIP — set ANTHROPIC_API_KEY to run the live pipeline test.")
+        sys.exit(0)
 
     with tempfile.TemporaryDirectory() as d:
         result = _run(Path(d) / "test.db")

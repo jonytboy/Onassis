@@ -49,6 +49,11 @@ class Config:
     run_at: str
     run_on_start: bool
 
+    # llm provider (powers content generation)
+    llm_model: str = "claude-opus-4-8"
+    llm_effort: str = "high"
+    llm_max_tokens: int = 8000
+
     # brand strategy (passed straight to the Content Director)
     brand: dict[str, Any] = field(default_factory=dict)
 
@@ -93,6 +98,7 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
     logging_cfg = raw.get("logging", {})
     database = raw.get("database", {})
     scheduler = raw.get("scheduler", {})
+    llm = raw.get("llm", {})
     brand = raw.get("brand", {})
     content_targets = raw.get("content_targets", {})
 
@@ -111,6 +117,9 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         db_path=_env("ONASSIS_DB_PATH", database.get("path", "data/onassis.db")),
         run_at=_env("ONASSIS_RUN_AT", scheduler.get("run_at", "08:00")),
         run_on_start=bool(scheduler.get("run_on_start", True)),
+        llm_model=_env("ONASSIS_LLM_MODEL", llm.get("model", "claude-opus-4-8")),
+        llm_effort=_env("ONASSIS_LLM_EFFORT", llm.get("effort", "high")),
+        llm_max_tokens=int(_env("ONASSIS_LLM_MAX_TOKENS", llm.get("max_tokens", 8000))),
         brand=brand,
         content_targets=content_targets,
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),

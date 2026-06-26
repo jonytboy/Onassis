@@ -123,6 +123,17 @@ class Database:
             row = conn.execute("SELECT * FROM briefs WHERE id = ?", (brief_id,)).fetchone()
         return _row_to_brief(row) if row else None
 
+    def get_recent_briefs(self, limit: int = 30) -> list[dict[str, Any]]:
+        """Return the most recent briefs (newest first).
+
+        Used by the Content Director to avoid repeating recent campaigns.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM briefs ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [_row_to_brief(r) for r in rows]
+
     # --- Content items ---------------------------------------------
 
     def insert_content_items(self, brief_id: int, items: list[dict[str, Any]]) -> int:

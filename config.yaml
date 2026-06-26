@@ -29,23 +29,32 @@ scheduler:
   # for development; you typically want this false in production.
   run_on_start: true
 
+# --- LLM provider ----------------------------------------------------
+# Powers content generation. The agents read the API key from the
+# ANTHROPIC_API_KEY environment variable (see .env.example).
+llm:
+  model: claude-opus-4-8             # Anthropic model ID
+  effort: high                       # low | medium | high — depth vs. cost
+  max_tokens: 8000                   # per-generation output ceiling
+
 # --- Brand voice & strategy -----------------------------------------
 # Consumed by the Content Director when assembling the daily brief.
 brand:
-  name: Onassis Lifestyle            # overridden by ONASSIS_BRAND_NAME
-  tagline: "Effortless luxury, every day."
-  tone: "aspirational, warm, refined"
-  target_audience: "design-conscious millennials who value quality over quantity"
-  # The Director rotates through these themes day by day so output stays
-  # varied without any external input.
+  name: Local Celebrity              # overridden by ONASSIS_BRAND_NAME
+  positioning: "premium Mediterranean lifestyle"
+  tagline: "Live like the coast is yours."
+  tone: "aspirational, warm, effortlessly refined — editorial, never salesy"
+  target_audience: "discerning travellers and design lovers drawn to the slow, sun-soaked elegance of the Mediterranean"
+  # The brand's strategic pillars. The Content Director draws on these
+  # (alongside the season and past campaigns) to compose each daily brief.
   content_pillars:
-    - "Slow mornings & mindful rituals"
-    - "Elevated home & interior design"
-    - "Travel for the soul"
-    - "Conscious wardrobe staples"
-    - "Hosting & the art of the table"
-    - "Wellness without the hustle"
-    - "Small luxuries worth it"
+    - "Slow Mediterranean mornings & coastal rituals"
+    - "Sun-washed interiors & timeless homes"
+    - "Island-hopping & hidden coastal escapes"
+    - "Linen, leather & the effortless Riviera wardrobe"
+    - "Long lunches & the art of the Mediterranean table"
+    - "Sea, salt & unhurried wellness"
+    - "Everyday luxuries worth slowing down for"
 
 # --- Content production targets --------------------------------------
 # How much the Content Creator produces per daily brief. Change these
