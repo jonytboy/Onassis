@@ -106,6 +106,40 @@ python main.py                 # start the daily scheduler (long-running)
 Content generation calls the Anthropic API, so an `ANTHROPIC_API_KEY` is
 required. The agents fail with a clear message if it's missing.
 
+## Governance — Compliance Director & CEO
+
+No agent acts on its own. Each submits a structured **proposal**
+(`onassis/proposals.py`: action, estimated cost, expected benefit,
+confidence, risks, reasoning) and the governance layer decides:
+
+1. **Compliance Director** (`onassis/compliance.py`) — a permanent executive
+   with **veto power over everyone, including the CEO**. It scores trademark,
+   copyright, and platform risk plus brand consistency (LLM-reasoned), then
+   applies deterministic thresholds to verdict APPROVE / REJECT /
+   REQUEST_MORE_INFO. It stores every report and feeds past rejections back
+   into its prompt so it learns from precedent. *Company Law: ONASSIS never
+   knowingly infringes IP or platform policy in pursuit of profit.*
+2. **CEO** (`onassis/ceo.py`) — the single business decision authority. A
+   deterministic engine that checks each proposal against company policy
+   (min profit margin, cash reserve, max AI spend, max experiment budget,
+   confidence, brand consistency) and writes its reasoning.
+3. **Governance** (`onassis/governance.py`) ties them together: Compliance
+   reviews first; if it doesn't APPROVE, its verdict **overrules** the CEO.
+   Only when Compliance approves does the CEO's verdict decide. Every
+   proposal, report, and decision is stored.
+
+The daily pipeline now also runs a Compliance review of each generated
+campaign, and a campaign **cannot progress beyond `Draft`** without an
+approving compliance report.
+
+```bash
+python main.py --proposals     # submitted proposals + their status
+python main.py --decisions     # the decision log (CEO + Compliance), with reasoning
+python main.py --compliance    # all compliance reports (scores + risks)
+```
+
+> Decision engine only — no advertising and no publishing.
+
 ## REST API (the service interface)
 
 ONASSIS exposes a FastAPI service so external systems (e.g. Make) can drive
@@ -166,6 +200,10 @@ then daily at `08:00` local time. Both are configurable.
 | `onassis/llm.py` | Anthropic API wrapper: prompt → schema-validated JSON. |
 | `onassis/campaign_manager.py` | The campaign — central object: lifecycle, dashboard, views. |
 | `onassis/brain.py` | The ONASSIS Brain: predicts & remembers (the `knowledge` table). |
+| `onassis/proposals.py` | The `Proposal` structure + shared verdict vocabulary. |
+| `onassis/ceo.py` | CEO Agent — deterministic company-policy decision engine. |
+| `onassis/compliance.py` | Compliance Director — risk review with veto power. |
+| `onassis/governance.py` | Routes proposals: Compliance (veto) → CEO → final verdict. |
 | `onassis/api.py` | FastAPI service — thin REST layer over the existing services. |
 | `onassis/orchestrator.py` | Defines the daily pipeline and owns the agents. |
 | `onassis/scheduler.py` | Runs the pipeline daily at a fixed time. |
@@ -220,3 +258,9 @@ in cleanly:
 - **`knowledge`** — one row per campaign (hypothesis, variables, predicted
   outcome, confidence, success metrics, recommendation), plus `status`,
   `actual_outcome`, and `observed_metrics` reserved for future analytics.
+- **`proposals`** — structured requests agents submit for a decision.
+- **`decisions`** — the unified decision log (CEO + Compliance verdicts with
+  written reasoning).
+- **`compliance_reports`** — per-proposal/per-campaign risk reviews
+  (compliance score, trademark/copyright/platform risk, brand consistency,
+  verdict, corrections). The Compliance Director's learning memory.

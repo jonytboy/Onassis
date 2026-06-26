@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from onassis.api import create_app
-from tests.conftest import FakeLLM, make_content_response
+from tests.conftest import FakeLLM, make_compliance_response, make_content_response
 
 _PREDICTION = {
     "hypothesis": "Authentic slow-living content outperforms aspirational yacht content.",
@@ -44,6 +44,7 @@ def app_and_client(config, sample_brief):
         )
     )
     orch.brain._llm = FakeLLM(_PREDICTION)
+    orch.compliance._llm = FakeLLM(make_compliance_response())
     return app, TestClient(app)
 
 

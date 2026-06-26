@@ -92,11 +92,23 @@ class CampaignManager:
     # --- Status lifecycle -------------------------------------------
 
     def set_status(self, campaign_id: int, status: str) -> dict[str, Any]:
-        """Update a campaign's status (validated against the lifecycle)."""
+        """Update a campaign's status (validated against the lifecycle).
+
+        Company Law: a campaign may not progress beyond ``Draft`` without an
+        approving Compliance report — the Compliance Director's veto applies
+        here too.
+        """
         if status not in STATUSES:
             raise CampaignError(
                 f"Invalid status {status!r}. Must be one of: {', '.join(STATUSES)}"
             )
+        if status != "Draft":  # advancing requires Compliance approval
+            report = self.db.get_compliance_for_campaign(campaign_id)
+            if report is None or report.get("verdict") != "APPROVE":
+                raise CampaignError(
+                    "Compliance approval required before a campaign can progress "
+                    f"beyond Draft (campaign #{campaign_id})."
+                )
         if not self.db.update_campaign_status(campaign_id, status):
             raise CampaignError(f"No campaign with id {campaign_id}")
         log.info("Campaign #%s -> %s", campaign_id, status)

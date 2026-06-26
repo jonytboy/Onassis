@@ -89,6 +89,53 @@ CREATE TABLE IF NOT EXISTS knowledge (
 );
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_status ON knowledge(status);
+
+CREATE TABLE IF NOT EXISTS proposals (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at       TEXT    NOT NULL,
+    agent_name       TEXT    NOT NULL,
+    requested_action TEXT    NOT NULL,
+    estimated_cost   REAL    NOT NULL DEFAULT 0,
+    expected_benefit REAL    NOT NULL DEFAULT 0,
+    confidence       INTEGER,                          -- 0-100
+    risks            TEXT,                             -- JSON-encoded list[str]
+    reasoning        TEXT,
+    campaign_id      INTEGER,                          -- optional link
+    status           TEXT    NOT NULL DEFAULT 'submitted',  -- submitted|approved|rejected|needs_info
+    payload          TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS decisions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at    TEXT    NOT NULL,
+    proposal_id   INTEGER NOT NULL,
+    authority     TEXT    NOT NULL,     -- CEO | Compliance
+    verdict       TEXT    NOT NULL,     -- APPROVE | REJECT | REQUEST_MORE_INFO
+    reasoning     TEXT    NOT NULL,
+    policy_checks TEXT,                 -- JSON
+    payload       TEXT    NOT NULL,
+    FOREIGN KEY (proposal_id) REFERENCES proposals(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS compliance_reports (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at              TEXT    NOT NULL,
+    proposal_id             INTEGER,            -- nullable (campaign-level reviews)
+    campaign_id             INTEGER,
+    subject                 TEXT,               -- short description of what was reviewed
+    compliance_score        INTEGER,            -- 0-100
+    trademark_risk          INTEGER,            -- 0-100
+    copyright_risk          INTEGER,
+    platform_risk           INTEGER,
+    brand_consistency_score INTEGER,
+    verdict                 TEXT    NOT NULL,    -- APPROVE | REJECT | REQUEST_MORE_INFO
+    reasoning               TEXT    NOT NULL,
+    corrections             TEXT,               -- JSON-encoded list[str] (lower-risk alternatives)
+    payload                 TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_decisions_proposal ON decisions(proposal_id);
+CREATE INDEX IF NOT EXISTS idx_compliance_verdict ON compliance_reports(verdict);
 """
 
 
@@ -373,6 +420,174 @@ class Database:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    # --- Governance: proposals --------------------------------------
+
+    def insert_proposal(self, proposal: dict[str, Any]) -> int:
+        """Persist a proposal and return its new row id."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO proposals
+                    (created_at, agent_name, requested_action, estimated_cost,
+                     expected_benefit, confidence, risks, reasoning, campaign_id,
+                     status, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utcnow(),
+                    proposal.get("agent_name", ""),
+                    proposal.get("requested_action", ""),
+                    float(proposal.get("estimated_cost", 0) or 0),
+                    float(proposal.get("expected_benefit", 0) or 0),
+                    proposal.get("confidence"),
+                    json.dumps(proposal.get("risks", [])),
+                    proposal.get("reasoning", ""),
+                    proposal.get("campaign_id"),
+                    proposal.get("status", "submitted"),
+                    json.dumps(proposal),
+                ),
+            )
+            proposal_id = int(cur.lastrowid)
+        log.info("Stored proposal #%s from %s", proposal_id, proposal.get("agent_name"))
+        return proposal_id
+
+    def get_proposal(self, proposal_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM proposals WHERE id = ?", (proposal_id,)
+            ).fetchone()
+        return _row_to_proposal(row) if row else None
+
+    def list_proposals(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM proposals ORDER BY id DESC").fetchall()
+        return [_row_to_proposal(r) for r in rows]
+
+    def update_proposal_status(self, proposal_id: int, status: str) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE proposals SET status = ? WHERE id = ?", (status, proposal_id)
+            )
+            return cur.rowcount > 0
+
+    # --- Governance: decisions (CEO + Compliance verdicts) ----------
+
+    def insert_decision(self, decision: dict[str, Any]) -> int:
+        """Persist a decision (with written reasoning) and return its row id."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO decisions
+                    (created_at, proposal_id, authority, verdict, reasoning,
+                     policy_checks, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utcnow(),
+                    decision["proposal_id"],
+                    decision.get("authority", ""),
+                    decision.get("verdict", ""),
+                    decision.get("reasoning", ""),
+                    json.dumps(decision.get("policy_checks", [])),
+                    json.dumps(decision),
+                ),
+            )
+            decision_id = int(cur.lastrowid)
+        log.info(
+            "Stored %s decision #%s for proposal #%s: %s",
+            decision.get("authority"),
+            decision_id,
+            decision["proposal_id"],
+            decision.get("verdict"),
+        )
+        return decision_id
+
+    def get_decisions_for_proposal(self, proposal_id: int) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM decisions WHERE proposal_id = ? ORDER BY id", (proposal_id,)
+            ).fetchall()
+        return [_row_to_decision(r) for r in rows]
+
+    def list_decisions(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM decisions ORDER BY id DESC").fetchall()
+        return [_row_to_decision(r) for r in rows]
+
+    # --- Governance: compliance reports -----------------------------
+
+    def insert_compliance_report(self, report: dict[str, Any]) -> int:
+        """Persist a compliance report and return its row id."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO compliance_reports
+                    (created_at, proposal_id, campaign_id, subject, compliance_score,
+                     trademark_risk, copyright_risk, platform_risk,
+                     brand_consistency_score, verdict, reasoning, corrections, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utcnow(),
+                    report.get("proposal_id"),
+                    report.get("campaign_id"),
+                    report.get("subject", ""),
+                    report.get("compliance_score"),
+                    report.get("trademark_risk"),
+                    report.get("copyright_risk"),
+                    report.get("platform_risk"),
+                    report.get("brand_consistency_score"),
+                    report.get("verdict", ""),
+                    report.get("reasoning", ""),
+                    json.dumps(report.get("corrections", [])),
+                    json.dumps(report),
+                ),
+            )
+            report_id = int(cur.lastrowid)
+        log.info(
+            "Stored compliance report #%s: %s (score %s)",
+            report_id,
+            report.get("verdict"),
+            report.get("compliance_score"),
+        )
+        return report_id
+
+    def get_compliance_for_proposal(self, proposal_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM compliance_reports WHERE proposal_id = ? ORDER BY id DESC LIMIT 1",
+                (proposal_id,),
+            ).fetchone()
+        return _row_to_compliance(row) if row else None
+
+    def get_compliance_for_campaign(self, campaign_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM compliance_reports WHERE campaign_id = ? ORDER BY id DESC LIMIT 1",
+                (campaign_id,),
+            ).fetchone()
+        return _row_to_compliance(row) if row else None
+
+    def list_compliance_reports(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM compliance_reports ORDER BY id DESC"
+            ).fetchall()
+        return [_row_to_compliance(r) for r in rows]
+
+    def get_recent_compliance_rejections(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Past rejections/changes — the Compliance Director's learning memory."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM compliance_reports
+                WHERE verdict IN ('REJECT', 'REQUEST_MORE_INFO')
+                ORDER BY id DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [_row_to_compliance(r) for r in rows]
+
 
 def _row_to_brief(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
@@ -391,4 +606,22 @@ def _row_to_knowledge(row: sqlite3.Row) -> dict[str, Any]:
     data["variables"] = json.loads(data.get("variables") or "[]")
     data["success_metrics"] = json.loads(data.get("success_metrics") or "[]")
     data["observed_metrics"] = json.loads(data.get("observed_metrics") or "{}")
+    return data
+
+
+def _row_to_proposal(row: sqlite3.Row) -> dict[str, Any]:
+    data = dict(row)
+    data["risks"] = json.loads(data.get("risks") or "[]")
+    return data
+
+
+def _row_to_decision(row: sqlite3.Row) -> dict[str, Any]:
+    data = dict(row)
+    data["policy_checks"] = json.loads(data.get("policy_checks") or "[]")
+    return data
+
+
+def _row_to_compliance(row: sqlite3.Row) -> dict[str, Any]:
+    data = dict(row)
+    data["corrections"] = json.loads(data.get("corrections") or "[]")
     return data

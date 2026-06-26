@@ -64,3 +64,21 @@ content_targets:
   instagram_captions: 3
   facebook_posts: 2
   image_prompts: 3
+
+# --- Company policy --------------------------------------------------
+# The rules the CEO evaluates every proposal against (Sprint 6).
+policy:
+  available_cash: 10000          # current cash on hand (for the reserve check)
+  cash_reserve: 5000             # never let cash fall below this
+  min_profit_margin: 0.30        # (benefit - cost) / benefit must be >= this
+  max_ai_spend: 50               # max cost for a single AI-spend action
+  max_experiment_budget: 200     # max cost for an experiment
+  min_confidence: 50             # below this, the CEO requests more information
+  brand_consistency_min: 70      # min brand-consistency score (0-100) to approve
+
+# --- Compliance thresholds -------------------------------------------
+# The Compliance Director's veto rules (Sprint 7). Risk scores are 0-100.
+compliance:
+  high_risk_threshold: 70        # any risk at/above this -> hard reject (veto)
+  medium_risk_threshold: 40      # any risk at/above this -> request changes
+  brand_consistency_min: 70      # min brand-consistency score to approve

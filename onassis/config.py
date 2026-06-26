@@ -60,6 +60,10 @@ class Config:
     # how much content to produce per brief
     content_targets: dict[str, int] = field(default_factory=dict)
 
+    # governance: CEO company policy + Compliance thresholds
+    policy: dict[str, Any] = field(default_factory=dict)
+    compliance: dict[str, Any] = field(default_factory=dict)
+
     # secrets / future integrations
     anthropic_api_key: str | None = None
 
@@ -101,6 +105,8 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
     llm = raw.get("llm", {})
     brand = raw.get("brand", {})
     content_targets = raw.get("content_targets", {})
+    policy = raw.get("policy", {})
+    compliance = raw.get("compliance", {})
 
     # Environment variables win over YAML.
     brand = {**brand, "name": _env("ONASSIS_BRAND_NAME", brand.get("name", "Onassis"))}
@@ -122,5 +128,7 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         llm_max_tokens=int(_env("ONASSIS_LLM_MAX_TOKENS", llm.get("max_tokens", 8000))),
         brand=brand,
         content_targets=content_targets,
+        policy=policy,
+        compliance=compliance,
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
     )

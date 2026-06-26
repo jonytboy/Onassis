@@ -74,6 +74,15 @@ def _parse_args() -> argparse.Namespace:
         "backfill every campaign that's missing it.",
     )
     parser.add_argument(
+        "--proposals", action="store_true", help="List submitted proposals and their status."
+    )
+    parser.add_argument(
+        "--decisions", action="store_true", help="List the decision log (CEO + Compliance)."
+    )
+    parser.add_argument(
+        "--compliance", action="store_true", help="List compliance reports."
+    )
+    parser.add_argument(
         "--serve", action="store_true", help="Run the REST API (Swagger at /docs)."
     )
     parser.add_argument("--host", default="0.0.0.0", help="API host (with --serve).")
@@ -148,6 +157,53 @@ def _list_knowledge(brain: OnassisBrain) -> None:
     print()
 
 
+def _list_proposals(db: Database) -> None:
+    rows = db.list_proposals()
+    if not rows:
+        print("No proposals submitted yet.")
+        return
+    print(f"\nPROPOSALS — {len(rows)}\n")
+    print(f"{'ID':>3}  {'STATUS':<10}  {'AGENT':<16}  ACTION")
+    print("-" * 72)
+    for p in rows:
+        print(f"{p['id']:>3}  {p['status']:<10}  {p['agent_name'][:16]:<16}  "
+              f"{p['requested_action'][:40]}")
+    print()
+
+
+def _list_decisions(db: Database) -> None:
+    rows = db.list_decisions()
+    if not rows:
+        print("No decisions recorded yet.")
+        return
+    print(f"\nDECISION LOG — {len(rows)}\n")
+    for d in rows:
+        print(f"#{d['id']}  proposal #{d['proposal_id']}  [{d['authority']}]  {d['verdict']}")
+        print(f"  {d['reasoning']}")
+        print("-" * 72)
+    print()
+
+
+def _list_compliance(db: Database) -> None:
+    rows = db.list_compliance_reports()
+    if not rows:
+        print("No compliance reports yet.")
+        return
+    print(f"\nCOMPLIANCE REPORTS — {len(rows)}\n")
+    for r in rows:
+        scope = f"campaign #{r['campaign_id']}" if r.get("campaign_id") else (
+            f"proposal #{r['proposal_id']}" if r.get("proposal_id") else "—")
+        print(f"#{r['id']}  {scope}  {r['verdict']}  score {r['compliance_score']}  "
+              f"(TM {r['trademark_risk']} / CR {r['copyright_risk']} / "
+              f"PL {r['platform_risk']} / brand {r['brand_consistency_score']})")
+        print(f"  subject: {r['subject']}")
+        print(f"  {r['reasoning']}")
+        if r.get("corrections"):
+            print(f"  corrections: {'; '.join(r['corrections'])}")
+        print("-" * 72)
+    print()
+
+
 def _learn(brain: OnassisBrain, db: Database, campaign_arg: int) -> int:
     """Generate knowledge for one campaign, or backfill all missing (arg == 0)."""
     if campaign_arg == 0:
@@ -198,6 +254,18 @@ def main() -> int:
 
     if args.learn is not None:
         return _learn(brain, db, args.learn)
+
+    if args.proposals:
+        _list_proposals(db)
+        return 0
+
+    if args.decisions:
+        _list_decisions(db)
+        return 0
+
+    if args.compliance:
+        _list_compliance(db)
+        return 0
 
     if args.set_status is not None:
         cid, status = args.set_status

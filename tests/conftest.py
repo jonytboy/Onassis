@@ -69,6 +69,21 @@ def sample_brief() -> dict[str, Any]:
     }
 
 
+def make_compliance_response(
+    *, trademark=10, copyright=10, platform=10, brand=90,
+    reasoning="Original, on-brand, low risk.", corrections=None,
+) -> dict[str, Any]:
+    """Build a fake Compliance LLM response (risk scores 0-100)."""
+    return {
+        "trademark_risk": trademark,
+        "copyright_risk": copyright,
+        "platform_risk": platform,
+        "brand_consistency_score": brand,
+        "reasoning": reasoning,
+        "corrections": corrections or [],
+    }
+
+
 def make_content_response(n_pin: int, n_ig: int, n_fb: int, n_img: int) -> dict[str, Any]:
     """Build a fake Content Creator response with the given counts."""
     return {

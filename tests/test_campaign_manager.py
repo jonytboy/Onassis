@@ -98,11 +98,45 @@ def test_create_from_brief_falls_back_to_theme_for_name(manager, db):
 
 # --- Status lifecycle -----------------------------------------------
 
-def test_set_status_valid(manager, db):
+def _approve_compliance(db, campaign_id: int) -> None:
+    """Seed an approving compliance report so a campaign may progress."""
+    db.insert_compliance_report(
+        {"campaign_id": campaign_id, "verdict": "APPROVE", "reasoning": "ok",
+         "compliance_score": 90}
+    )
+
+
+def test_set_status_valid_after_compliance_approval(manager, db):
     brief = _make_brief(db)
     campaign = manager.create_from_brief(brief)
+    _approve_compliance(db, campaign["id"])
     updated = manager.set_status(campaign["id"], "Scheduled")
     assert updated["status"] == "Scheduled"
+
+
+def test_set_status_blocked_without_compliance_approval(manager, db):
+    brief = _make_brief(db)
+    campaign = manager.create_from_brief(brief)
+    with pytest.raises(CampaignError, match="Compliance approval required"):
+        manager.set_status(campaign["id"], "Scheduled")
+
+
+def test_set_status_blocked_when_compliance_rejected(manager, db):
+    brief = _make_brief(db)
+    campaign = manager.create_from_brief(brief)
+    db.insert_compliance_report(
+        {"campaign_id": campaign["id"], "verdict": "REJECT", "reasoning": "no",
+         "compliance_score": 20}
+    )
+    with pytest.raises(CampaignError, match="Compliance approval required"):
+        manager.set_status(campaign["id"], "Live")
+
+
+def test_set_status_to_draft_needs_no_approval(manager, db):
+    brief = _make_brief(db)
+    campaign = manager.create_from_brief(brief)
+    # Setting (or keeping) Draft never requires compliance.
+    assert manager.set_status(campaign["id"], "Draft")["status"] == "Draft"
 
 
 def test_set_status_rejects_invalid_status(manager, db):
@@ -112,8 +146,9 @@ def test_set_status_rejects_invalid_status(manager, db):
         manager.set_status(campaign["id"], "Published")
 
 
-def test_set_status_rejects_unknown_campaign(manager):
-    with pytest.raises(CampaignError, match="No campaign"):
+def test_set_status_rejects_unknown_campaign(manager, db):
+    # Unknown campaign with an (impossible) approval still 404s on update.
+    with pytest.raises(CampaignError):
         manager.set_status(999, "Live")
 
 

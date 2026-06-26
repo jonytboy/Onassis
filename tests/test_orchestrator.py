@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 
 from onassis.orchestrator import Orchestrator
-from tests.conftest import FakeLLM, make_content_response
+from tests.conftest import FakeLLM, make_compliance_response, make_content_response
 
 _PREDICTION = {
     "hypothesis": "Authentic slow-living content outperforms aspirational yacht content.",
@@ -34,6 +34,7 @@ def _wired(config, db, brief):
     orch.director._llm = FakeLLM(brief)
     orch.creator._llm = FakeLLM(make_content_response(n_pin, n_ig, n_fb, n_img))
     orch.brain._llm = FakeLLM(_PREDICTION)
+    orch.compliance._llm = FakeLLM(make_compliance_response())
     return orch
 
 
@@ -86,3 +87,15 @@ def test_run_daily_generates_knowledge_for_campaign(config, db, sample_brief):
     assert knowledge is not None
     assert knowledge["hypothesis"] == _PREDICTION["hypothesis"]
     assert knowledge["status"] == "predicted"
+
+
+def test_run_daily_generates_compliance_report(config, db, sample_brief):
+    orch = _wired(config, db, sample_brief)
+    summary = orch.run_daily(for_date=date(2026, 6, 26))
+
+    assert "compliance_verdict" in summary
+    assert summary["compliance_verdict"] == "APPROVE"  # low-risk fake
+    report = orch.compliance.get_for_campaign(summary["campaign_id"])
+    assert report is not None
+    assert report["campaign_id"] == summary["campaign_id"]
+    assert 0 <= report["compliance_score"] <= 100

@@ -8,12 +8,13 @@ one another.
 
 Daily pipeline::
 
-    Content Director  -> brief
-    Campaign Manager  -> campaign (the brief becomes a campaign; content belongs to it)
-    Content Creator   -> content (stored in SQLite)
-    ONASSIS Brain     -> knowledge (a prediction the campaign will be measured against)
-    Publisher         -> no-op (placeholder)
-    Analytics Agent   -> local counts (placeholder)
+    Content Director    -> brief
+    Campaign Manager    -> campaign (the brief becomes a campaign; content belongs to it)
+    Content Creator     -> content (stored in SQLite)
+    ONASSIS Brain       -> knowledge (a prediction the campaign will be measured against)
+    Compliance Director -> compliance report (risk/brand review of the campaign)
+    Publisher           -> no-op (placeholder)
+    Analytics Agent     -> local counts (placeholder)
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from typing import Any
 from onassis.agents import AnalyticsAgent, ContentCreator, ContentDirector, Publisher
 from onassis.brain import OnassisBrain
 from onassis.campaign_manager import CampaignManager
+from onassis.compliance import ComplianceDirector
 from onassis.config import Config
 from onassis.database import Database
 from onassis.logger import get_logger
@@ -46,6 +48,8 @@ class Orchestrator:
         self.campaigns = CampaignManager(config, db)
         # The Brain predicts and remembers — every campaign generates knowledge.
         self.brain = OnassisBrain(config, db)
+        # The Compliance Director reviews every campaign (veto authority).
+        self.compliance = ComplianceDirector(config, db)
 
     def run_daily(self, *, for_date: date | None = None) -> dict[str, Any]:
         """Run one full pass of the daily pipeline.
@@ -58,6 +62,7 @@ class Orchestrator:
         campaign = self.campaigns.create_from_brief(brief)
         items = self.creator.execute(brief=brief)
         knowledge = self.brain.generate_for_campaign(campaign, brief)
+        compliance = self.compliance.review_campaign(campaign, items)
         publish_result = self.publisher.execute(brief_id=brief["id"])
         analytics_result = self.analytics.execute(brief_id=brief["id"])
 
@@ -69,6 +74,8 @@ class Orchestrator:
             "items_created": len(items),
             "knowledge_id": knowledge["id"],
             "confidence": knowledge["confidence"],
+            "compliance_score": compliance["compliance_score"],
+            "compliance_verdict": compliance["verdict"],
             "published": publish_result["published"],
             "analytics": analytics_result,
         }
