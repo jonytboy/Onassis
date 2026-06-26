@@ -3,12 +3,15 @@
 Runs the whole pipeline against a throwaway SQLite file in a temp dir and
 asserts the configured amount of content was produced and stored.
 
-Content generation now calls the Anthropic API, so this test needs a valid
-ANTHROPIC_API_KEY and network access. Without a key it skips (rather than
-fail) so the suite stays green in offline/CI environments. Run with::
+This is a LIVE test: it calls the real Anthropic API (network + credits). It
+is **opt-in** so the normal suite stays fast and offline — set
+``ONASSIS_RUN_LIVE_TESTS=1`` (and have a valid key) to run it::
 
-    python -m pytest        (if pytest is installed)
-    python tests/test_pipeline.py   (no test runner needed)
+    ONASSIS_RUN_LIVE_TESTS=1 python -m pytest tests/test_pipeline.py
+    ONASSIS_RUN_LIVE_TESTS=1 python tests/test_pipeline.py
+
+Without the flag it skips, regardless of whether a key is configured — so a
+key in `.env` never silently triggers paid API calls during `pytest`.
 """
 
 from __future__ import annotations
@@ -24,7 +27,8 @@ from onassis.config import load_config  # noqa: E402
 from onassis.database import Database  # noqa: E402
 from onassis.orchestrator import Orchestrator  # noqa: E402
 
-_HAS_KEY = bool(os.environ.get("ANTHROPIC_API_KEY"))
+# Opt-in only: a configured key must NOT be enough to trigger paid calls.
+_RUN_LIVE = bool(os.environ.get("ONASSIS_RUN_LIVE_TESTS"))
 
 
 def _run(tmp_db: Path) -> dict:
@@ -54,18 +58,18 @@ def _run(tmp_db: Path) -> dict:
 
 
 def test_daily_pipeline(tmp_path) -> None:  # pytest entry point
-    if not _HAS_KEY:
+    if not _RUN_LIVE:
         import pytest
 
-        pytest.skip("ANTHROPIC_API_KEY not set — skipping live-generation test")
+        pytest.skip("live test — set ONASSIS_RUN_LIVE_TESTS=1 to run it")
     _run(tmp_path / "test.db")
 
 
 if __name__ == "__main__":
     import tempfile
 
-    if not _HAS_KEY:
-        print("SKIP — set ANTHROPIC_API_KEY to run the live pipeline test.")
+    if not _RUN_LIVE:
+        print("SKIP — set ONASSIS_RUN_LIVE_TESTS=1 to run the live pipeline test.")
         sys.exit(0)
 
     with tempfile.TemporaryDirectory() as d:

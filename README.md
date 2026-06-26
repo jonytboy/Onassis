@@ -106,6 +106,32 @@ python main.py                 # start the daily scheduler (long-running)
 Content generation calls the Anthropic API, so an `ANTHROPIC_API_KEY` is
 required. The agents fail with a clear message if it's missing.
 
+## REST API (the service interface)
+
+ONASSIS exposes a FastAPI service so external systems (e.g. Make) can drive
+it. The API is a thin layer — it only calls existing services, no business
+logic of its own. JSON only; no auth yet.
+
+```bash
+python main.py --serve            # or: uvicorn onassis.api:app --port 8000
+```
+
+Interactive **Swagger docs at `/docs`**, OpenAPI schema at `/openapi.json`.
+
+| Method & path | Purpose |
+|---|---|
+| `GET /health` | System status (app, version, counts). |
+| `POST /campaign/create` | Run the full generation pipeline; returns a summary. |
+| `GET /campaigns` | All campaigns (the dashboard). |
+| `GET /campaign/{id}` | One campaign with all assets + its prediction. |
+| `GET /campaign/latest` | The most recently generated campaign, with assets. |
+
+`POST /campaign/create` returns exactly:
+
+```json
+{ "campaign_id": 17, "status": "completed", "assets_created": 13, "duration_seconds": 47 }
+```
+
 ## Tests
 
 The suite mocks the Anthropic API, so it runs fast, offline, and
@@ -140,6 +166,7 @@ then daily at `08:00` local time. Both are configurable.
 | `onassis/llm.py` | Anthropic API wrapper: prompt → schema-validated JSON. |
 | `onassis/campaign_manager.py` | The campaign — central object: lifecycle, dashboard, views. |
 | `onassis/brain.py` | The ONASSIS Brain: predicts & remembers (the `knowledge` table). |
+| `onassis/api.py` | FastAPI service — thin REST layer over the existing services. |
 | `onassis/orchestrator.py` | Defines the daily pipeline and owns the agents. |
 | `onassis/scheduler.py` | Runs the pipeline daily at a fixed time. |
 | `onassis/agents/base.py` | `BaseAgent` — the agent framework foundation. |

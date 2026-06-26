@@ -10,6 +10,7 @@ Usage::
     python main.py --set-status <id> <status>   # change a campaign's status
     python main.py --knowledge         # the Brain's memory — all predictions
     python main.py --learn [id]        # generate knowledge for a campaign (or all missing)
+    python main.py --serve             # run the REST API (Swagger at /docs)
 
 This file is intentionally thin: it loads config, wires up logging, the
 database, the orchestrator, the campaign manager, and the Brain, then hands
@@ -72,6 +73,11 @@ def _parse_args() -> argparse.Namespace:
         help="Generate knowledge for campaign ID (calls the LLM). With no id, "
         "backfill every campaign that's missing it.",
     )
+    parser.add_argument(
+        "--serve", action="store_true", help="Run the REST API (Swagger at /docs)."
+    )
+    parser.add_argument("--host", default="0.0.0.0", help="API host (with --serve).")
+    parser.add_argument("--port", type=int, default=8000, help="API port (with --serve).")
     return parser.parse_args()
 
 
@@ -201,6 +207,15 @@ def main() -> int:
             print(f"Error: {exc}")
             return 1
         print(f"Campaign #{updated['id']} is now '{updated['status']}'.")
+        return 0
+
+    if args.serve:
+        import uvicorn
+
+        from onassis.api import create_app
+
+        log.info("Serving ONASSIS API on %s:%s (docs at /docs)", args.host, args.port)
+        uvicorn.run(create_app(config), host=args.host, port=args.port)
         return 0
 
     if args.once:
