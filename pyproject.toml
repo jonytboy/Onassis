@@ -1,0 +1,7 @@
+# ONASSIS — tooling configuration
+
+[tool.pytest.ini_options]
+# Put the repo root on sys.path so `onassis` and `tests` import cleanly,
+# and only collect from the tests/ directory.
+pythonpath = ["."]
+testpaths = ["tests"]

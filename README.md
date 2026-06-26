@@ -35,11 +35,27 @@ cp .env.example .env           # add your ANTHROPIC_API_KEY (required)
 python main.py --once          # run the pipeline once
 python main.py --show-last     # print the latest brief + its content (JSON)
 python main.py                 # start the daily scheduler (long-running)
-python tests/test_pipeline.py  # smoke test (skips without an API key)
 ```
 
 Content generation calls the Anthropic API, so an `ANTHROPIC_API_KEY` is
 required. The agents fail with a clear message if it's missing.
+
+## Tests
+
+The suite mocks the Anthropic API, so it runs fast, offline, and
+deterministically — no API key needed.
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+Every agent has automated tests (`tests/test_content_director.py`,
+`test_content_creator.py`, `test_publisher.py`, `test_analytics.py`), as do
+the agent framework (`test_base_agent.py`), the database, the LLM wrapper,
+and the end-to-end orchestrator. `tests/test_pipeline.py` is a live
+integration test that hits the real API and **skips** unless
+`ANTHROPIC_API_KEY` is set.
 
 By default the scheduler runs once on start (`run_on_start: true`) and
 then daily at `08:00` local time. Both are configurable.
