@@ -1,0 +1,7 @@
+# ONASSIS v0.1 — runtime dependencies
+# Kept intentionally minimal. Everything here is pure-Python and widely
+# available so the project runs out of the box without an LLM API key.
+
+PyYAML>=6.0          # Parsing config.yaml
+python-dotenv>=1.0   # Loading environment variables from .env
+schedule>=1.2        # Lightweight in-process daily scheduler

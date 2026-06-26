@@ -1,0 +1,29 @@
+# --- Secrets & local config ---
+.env
+*.local.yaml
+
+# --- ONASSIS runtime artifacts ---
+data/*.db
+data/*.sqlite3
+logs/*.log
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# --- Tooling / IDE ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.DS_Store
+.idea/
+.vscode/

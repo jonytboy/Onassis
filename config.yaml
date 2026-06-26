@@ -1,0 +1,57 @@
+# ===================================================================
+# ONASSIS v0.1 — Application Configuration
+# -------------------------------------------------------------------
+# This is the single source of truth for non-secret settings.
+# Environment variables (see .env.example) override any value here at
+# runtime, so this file is safe to commit.
+# ===================================================================
+
+app:
+  name: ONASSIS
+  version: "0.1.0"
+  environment: development          # overridden by ONASSIS_ENV
+
+logging:
+  level: INFO                        # overridden by LOG_LEVEL
+  directory: logs
+  file: onassis.log
+  # Keep N rotated log files of `max_bytes` each.
+  max_bytes: 1048576                 # 1 MiB
+  backup_count: 5
+
+database:
+  path: data/onassis.db              # overridden by ONASSIS_DB_PATH
+
+scheduler:
+  # Time of day the daily pipeline runs (24h, local time).
+  run_at: "08:00"                    # overridden by ONASSIS_RUN_AT
+  # If true, the pipeline also runs once immediately on startup. Handy
+  # for development; you typically want this false in production.
+  run_on_start: true
+
+# --- Brand voice & strategy -----------------------------------------
+# Consumed by the Content Director when assembling the daily brief.
+brand:
+  name: Onassis Lifestyle            # overridden by ONASSIS_BRAND_NAME
+  tagline: "Effortless luxury, every day."
+  tone: "aspirational, warm, refined"
+  target_audience: "design-conscious millennials who value quality over quantity"
+  # The Director rotates through these themes day by day so output stays
+  # varied without any external input.
+  content_pillars:
+    - "Slow mornings & mindful rituals"
+    - "Elevated home & interior design"
+    - "Travel for the soul"
+    - "Conscious wardrobe staples"
+    - "Hosting & the art of the table"
+    - "Wellness without the hustle"
+    - "Small luxuries worth it"
+
+# --- Content production targets --------------------------------------
+# How much the Content Creator produces per daily brief. Change these
+# numbers and the Creator adapts automatically — no code change needed.
+content_targets:
+  pinterest_posts: 5
+  instagram_captions: 3
+  facebook_posts: 2
+  image_prompts: 3
