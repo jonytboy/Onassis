@@ -23,7 +23,9 @@ Every morning the pipeline runs automatically:
    - 3 Instagram captions
    - 2 Facebook posts
    - 3 cinematic image prompts
-4. **Publisher** and **Analytics Agent** are wired in as **placeholders**
+4. **ONASSIS Brain** forms a prediction (knowledge) about the campaign —
+   a hypothesis it can later be measured against (see below).
+5. **Publisher** and **Analytics Agent** are wired in as **placeholders**
    (no publishing yet).
 
 Everything is stored in **SQLite**.
@@ -56,6 +58,39 @@ python main.py --set-status <id> <status>  # Draft | Scheduled | Live | Complete
 
 > No publishing and no social-media integration yet — status is **tracked,
 > not acted on**.
+
+## The ONASSIS Brain — predict & remember
+
+The **Brain** is the learning layer. For every campaign it forms a
+falsifiable prediction and stores it in the `knowledge` table — its
+long-term memory. Each knowledge record has:
+
+| Field | Meaning |
+|-------|---------|
+| Campaign ID | the campaign it belongs to (1:1) |
+| Hypothesis | a falsifiable reason this campaign will (or won't) perform |
+| Variables | what the campaign effectively tests |
+| Predicted outcome | what the Brain expects to happen |
+| Confidence | 0-100, honestly calibrated |
+| Success metrics | concrete signals to monitor |
+| Recommendation | a next action tied to a metric threshold |
+
+The Brain only **predicts and remembers** — it does not read real
+analytics yet. The seam for that is built in: every record carries
+`status`, `actual_outcome`, and `observed_metrics` columns, and
+`OnassisBrain.record_outcome(...)` is the hook a future analytics layer
+will call to fold real results back in and revise predictions
+automatically.
+
+The Brain is a manager module (`onassis/brain.py`), **not** an agent — the
+agent roster is unchanged.
+
+```bash
+python main.py --knowledge        # the Brain's memory — every prediction
+python main.py --learn <id>       # generate knowledge for a campaign (LLM call)
+python main.py --learn            # backfill every campaign missing knowledge
+python main.py --campaign <id>    # campaign view now embeds its prediction
+```
 
 ## Quick start
 
@@ -104,6 +139,7 @@ then daily at `08:00` local time. Both are configurable.
 | `onassis/database.py` | SQLite layer: schema + all queries (`briefs`, `content_items`, `campaigns`). |
 | `onassis/llm.py` | Anthropic API wrapper: prompt → schema-validated JSON. |
 | `onassis/campaign_manager.py` | The campaign — central object: lifecycle, dashboard, views. |
+| `onassis/brain.py` | The ONASSIS Brain: predicts & remembers (the `knowledge` table). |
 | `onassis/orchestrator.py` | Defines the daily pipeline and owns the agents. |
 | `onassis/scheduler.py` | Runs the pipeline daily at a fixed time. |
 | `onassis/agents/base.py` | `BaseAgent` — the agent framework foundation. |
@@ -154,3 +190,6 @@ in cleanly:
 - **`content_items`** — many rows per brief (platform, content_type,
   title, body, metadata, status), linked via `brief_id`. They belong to the
   brief's campaign.
+- **`knowledge`** — one row per campaign (hypothesis, variables, predicted
+  outcome, confidence, success metrics, recommendation), plus `status`,
+  `actual_outcome`, and `observed_metrics` reserved for future analytics.

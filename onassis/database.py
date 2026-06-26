@@ -69,6 +69,26 @@ CREATE TABLE IF NOT EXISTS campaigns (
 );
 
 CREATE INDEX IF NOT EXISTS idx_campaign_status ON campaigns(status);
+
+CREATE TABLE IF NOT EXISTS knowledge (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id       INTEGER NOT NULL UNIQUE,        -- one knowledge record per campaign
+    created_at        TEXT    NOT NULL,
+    updated_at        TEXT    NOT NULL,
+    hypothesis        TEXT    NOT NULL,
+    variables         TEXT,                            -- JSON-encoded list[str]
+    predicted_outcome TEXT,
+    confidence        INTEGER,                         -- 0-100
+    success_metrics   TEXT,                            -- JSON-encoded list[str]
+    recommendation    TEXT,
+    status            TEXT    NOT NULL DEFAULT 'predicted',  -- predicted | validated | revised
+    actual_outcome    TEXT,                            -- NULL until analytics observes (future)
+    observed_metrics  TEXT,                            -- JSON dict, filled by future analytics
+    payload           TEXT    NOT NULL,                -- full record as JSON, forward-compat
+    FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_status ON knowledge(status);
 """
 
 
@@ -251,6 +271,108 @@ class Database:
             ).fetchall()
         return [_row_to_brief(r) for r in rows]
 
+    # --- Knowledge (the Brain) --------------------------------------
+
+    def insert_knowledge(self, knowledge: dict[str, Any]) -> int:
+        """Persist a knowledge record and return its new row id."""
+        now = _utcnow()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO knowledge
+                    (campaign_id, created_at, updated_at, hypothesis, variables,
+                     predicted_outcome, confidence, success_metrics, recommendation,
+                     status, actual_outcome, observed_metrics, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    knowledge["campaign_id"],
+                    now,
+                    now,
+                    knowledge.get("hypothesis", ""),
+                    json.dumps(knowledge.get("variables", [])),
+                    knowledge.get("predicted_outcome", ""),
+                    knowledge.get("confidence"),
+                    json.dumps(knowledge.get("success_metrics", [])),
+                    knowledge.get("recommendation", ""),
+                    knowledge.get("status", "predicted"),
+                    knowledge.get("actual_outcome"),
+                    json.dumps(knowledge.get("observed_metrics", {})),
+                    json.dumps(knowledge),
+                ),
+            )
+            knowledge_id = int(cur.lastrowid)
+        log.info("Stored knowledge #%s for campaign #%s", knowledge_id, knowledge["campaign_id"])
+        return knowledge_id
+
+    def get_knowledge(self, knowledge_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM knowledge WHERE id = ?", (knowledge_id,)
+            ).fetchone()
+        return _row_to_knowledge(row) if row else None
+
+    def get_knowledge_for_campaign(self, campaign_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM knowledge WHERE campaign_id = ?", (campaign_id,)
+            ).fetchone()
+        return _row_to_knowledge(row) if row else None
+
+    def list_knowledge(self) -> list[dict[str, Any]]:
+        """All knowledge records, newest first."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM knowledge ORDER BY id DESC").fetchall()
+        return [_row_to_knowledge(r) for r in rows]
+
+    def update_knowledge(self, knowledge_id: int, fields: dict[str, Any]) -> bool:
+        """Update selected columns on a knowledge record (analytics hook).
+
+        Only a whitelist of columns may be updated; list/dict values are
+        JSON-encoded. ``updated_at`` is refreshed automatically. Returns True
+        if a row changed.
+        """
+        allowed = {
+            "hypothesis",
+            "variables",
+            "predicted_outcome",
+            "confidence",
+            "success_metrics",
+            "recommendation",
+            "status",
+            "actual_outcome",
+            "observed_metrics",
+        }
+        sets: dict[str, Any] = {}
+        for key, value in fields.items():
+            if key not in allowed:
+                continue
+            sets[key] = json.dumps(value) if isinstance(value, (list, dict)) else value
+        if not sets:
+            return False
+
+        sets["updated_at"] = _utcnow()
+        columns = ", ".join(f"{k} = ?" for k in sets)
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"UPDATE knowledge SET {columns} WHERE id = ?",
+                (*sets.values(), knowledge_id),
+            )
+            return cur.rowcount > 0
+
+    def get_campaigns_without_knowledge(self) -> list[dict[str, Any]]:
+        """Campaigns that don't yet have a knowledge record (used for backfill)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT c.* FROM campaigns c
+                LEFT JOIN knowledge k ON k.campaign_id = c.id
+                WHERE k.id IS NULL
+                ORDER BY c.id
+                """
+            ).fetchall()
+        return [dict(r) for r in rows]
+
 
 def _row_to_brief(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
@@ -261,4 +383,12 @@ def _row_to_brief(row: sqlite3.Row) -> dict[str, Any]:
 def _row_to_content(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
     data["metadata"] = json.loads(data.get("metadata") or "{}")
+    return data
+
+
+def _row_to_knowledge(row: sqlite3.Row) -> dict[str, Any]:
+    data = dict(row)
+    data["variables"] = json.loads(data.get("variables") or "[]")
+    data["success_metrics"] = json.loads(data.get("success_metrics") or "[]")
+    data["observed_metrics"] = json.loads(data.get("observed_metrics") or "{}")
     return data

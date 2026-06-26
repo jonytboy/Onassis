@@ -11,6 +11,7 @@ Daily pipeline::
     Content Director  -> brief
     Campaign Manager  -> campaign (the brief becomes a campaign; content belongs to it)
     Content Creator   -> content (stored in SQLite)
+    ONASSIS Brain     -> knowledge (a prediction the campaign will be measured against)
     Publisher         -> no-op (placeholder)
     Analytics Agent   -> local counts (placeholder)
 """
@@ -21,6 +22,7 @@ from datetime import date
 from typing import Any
 
 from onassis.agents import AnalyticsAgent, ContentCreator, ContentDirector, Publisher
+from onassis.brain import OnassisBrain
 from onassis.campaign_manager import CampaignManager
 from onassis.config import Config
 from onassis.database import Database
@@ -42,6 +44,8 @@ class Orchestrator:
         self.analytics = AnalyticsAgent(config, db)
         # Campaigns are the central object — every run produces one.
         self.campaigns = CampaignManager(config, db)
+        # The Brain predicts and remembers — every campaign generates knowledge.
+        self.brain = OnassisBrain(config, db)
 
     def run_daily(self, *, for_date: date | None = None) -> dict[str, Any]:
         """Run one full pass of the daily pipeline.
@@ -53,6 +57,7 @@ class Orchestrator:
         brief = self.director.execute(for_date=for_date)
         campaign = self.campaigns.create_from_brief(brief)
         items = self.creator.execute(brief=brief)
+        knowledge = self.brain.generate_for_campaign(campaign, brief)
         publish_result = self.publisher.execute(brief_id=brief["id"])
         analytics_result = self.analytics.execute(brief_id=brief["id"])
 
@@ -62,6 +67,8 @@ class Orchestrator:
             "brief_id": brief["id"],
             "theme": brief["theme"],
             "items_created": len(items),
+            "knowledge_id": knowledge["id"],
+            "confidence": knowledge["confidence"],
             "published": publish_result["published"],
             "analytics": analytics_result,
         }
