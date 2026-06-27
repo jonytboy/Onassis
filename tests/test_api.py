@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -163,6 +165,62 @@ def test_dashboard_reflects_campaign_ai_cost(app_and_client):
     assert body["cash_balance"] < 10000  # starting cash reduced by AI cost
 
 
+# --- Revenue endpoints ----------------------------------------------
+
+def _order(**kw):
+    base = dict(
+        occurred_at="2026-06-26T10:00:00+00:00", product_id="SKU1", campaign_id=1,
+        platform="etsy", sale_price=25, quantity=2, ai_cost=1, advertising_cost=4,
+        production_cost=8, marketplace_fees=5, payment_fees=2,
+    )
+    base.update(kw)
+    return base
+
+
+def test_orders_endpoints(app_and_client):
+    app, client = app_and_client
+    order = app.state.revenue.record_order(_order())
+
+    listed = client.get("/orders")
+    assert listed.status_code == 200
+    assert len(listed.json()) == 1
+
+    one = client.get(f"/orders/{order['id']}")
+    assert one.status_code == 200
+    assert one.json()["net_profit"] == 30
+
+    assert client.get("/orders/999").status_code == 404
+
+
+def test_revenue_today_endpoint(app_and_client):
+    app, client = app_and_client
+    today = date.today().isoformat()
+    app.state.revenue.record_order(_order(occurred_at=f"{today}T09:00:00+00:00"))
+
+    body = client.get("/revenue/today").json()
+    assert body["orders"] == 1
+    assert body["gross_revenue"] == 50
+    assert body["net_profit"] == 30
+
+
+def test_revenue_month_endpoint(app_and_client):
+    app, client = app_and_client
+    ym = date.today().strftime("%Y-%m")
+    app.state.revenue.record_order(_order(occurred_at=f"{ym}-15T09:00:00+00:00"))
+    body = client.get("/revenue/month").json()
+    assert body["period"] == ym
+    assert body["net_profit"] == 30
+
+
+def test_profit_endpoint(app_and_client):
+    app, client = app_and_client
+    app.state.revenue.record_order(_order())
+    body = client.get("/profit").json()
+    assert body["gross_revenue"] == 50
+    assert body["net_profit"] == 30
+    assert body["orders"] == 1
+
+
 # --- Swagger / OpenAPI docs -----------------------------------------
 
 def test_swagger_docs_available(app_and_client):
@@ -172,7 +230,9 @@ def test_swagger_docs_available(app_and_client):
     assert schema.status_code == 200
     paths = schema.json()["paths"]
     for path in ("/health", "/campaign/create", "/campaigns",
-                 "/campaign/{campaign_id}", "/campaign/latest", "/dashboard"):
+                 "/campaign/{campaign_id}", "/campaign/latest", "/dashboard",
+                 "/revenue/today", "/revenue/month", "/profit",
+                 "/orders", "/orders/{order_id}"):
         assert path in paths
 
 

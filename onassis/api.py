@@ -28,6 +28,7 @@ from onassis.database import Database
 from onassis.logger import get_logger, setup_logging
 from onassis.orchestrator import Orchestrator
 from onassis.profit import ProfitEngine
+from onassis.revenue import RevenueEngine
 
 log = get_logger(__name__)
 
@@ -72,6 +73,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     campaigns = orchestrator.campaigns
     brain = orchestrator.brain
     profit = ProfitEngine(config, db)
+    revenue = RevenueEngine(config, db)
 
     app = FastAPI(
         title="ONASSIS API",
@@ -88,6 +90,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.campaigns = campaigns
     app.state.brain = brain
     app.state.profit = profit
+    app.state.revenue = revenue
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""
@@ -118,6 +121,34 @@ def create_app(config: Config | None = None) -> FastAPI:
     def dashboard() -> dict[str, Any]:
         """The profit-first company dashboard (net profit, ROI, cash, costs…)."""
         return profit.dashboard()
+
+    @app.get("/revenue/today", tags=["revenue"])
+    def revenue_today() -> dict[str, Any]:
+        """Revenue and profit from today's orders."""
+        return revenue.revenue_today()
+
+    @app.get("/revenue/month", tags=["revenue"])
+    def revenue_month() -> dict[str, Any]:
+        """Revenue and profit from this month's orders."""
+        return revenue.revenue_month()
+
+    @app.get("/profit", tags=["revenue"])
+    def profit_endpoint() -> dict[str, Any]:
+        """Company-wide profit — the financial bottom line."""
+        return revenue.company_profit()
+
+    @app.get("/orders", tags=["revenue"])
+    def list_orders() -> list[dict[str, Any]]:
+        """All recorded orders (newest first), each with computed economics."""
+        return revenue.list_orders()
+
+    @app.get("/orders/{order_id}", tags=["revenue"])
+    def get_order(order_id: int) -> dict[str, Any]:
+        """One order with its full economics."""
+        order = revenue.get_order(order_id)
+        if order is None:
+            raise HTTPException(status_code=404, detail=f"No order with id {order_id}.")
+        return order
 
     @app.post(
         "/campaign/create", response_model=CampaignCreateResponse, tags=["campaigns"]

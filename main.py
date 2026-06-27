@@ -30,6 +30,7 @@ from onassis.database import Database
 from onassis.logger import get_logger, setup_logging
 from onassis.orchestrator import Orchestrator
 from onassis.profit import ProfitEngine
+from onassis.revenue import RevenueEngine
 from onassis.scheduler import DailyScheduler
 
 
@@ -85,6 +86,12 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--dashboard", action="store_true", help="Show the profit dashboard."
+    )
+    parser.add_argument(
+        "--orders", action="store_true", help="List recorded orders with economics."
+    )
+    parser.add_argument(
+        "--revenue", action="store_true", help="Show today/month/company revenue & profit."
     )
     parser.add_argument(
         "--serve", action="store_true", help="Run the REST API (Swagger at /docs)."
@@ -223,6 +230,36 @@ def _show_dashboard(profit: ProfitEngine) -> None:
           f"budget remaining {d['remaining_ai_budget_today']:.2f})\n")
 
 
+def _list_orders(revenue: RevenueEngine) -> None:
+    rows = revenue.list_orders()
+    if not rows:
+        print("No orders recorded yet.")
+        return
+    print(f"\nORDERS — {len(rows)}\n")
+    print(f"{'ID':>3}  {'DATE':<10}  {'PLATFORM':<10}  {'PRODUCT':<10}  "
+          f"{'REVENUE':>9}  {'NET':>9}  {'MARGIN':>7}")
+    print("-" * 72)
+    for o in rows:
+        print(f"{o['id']:>3}  {o['sale_date']:<10}  {(o['platform'] or '-'):<10}  "
+              f"{(o['product_id'] or '-'):<10}  {o['gross_revenue']:>9.2f}  "
+              f"{o['net_profit']:>9.2f}  {o['profit_margin']:>6.1%}")
+    print()
+
+
+def _show_revenue(revenue: RevenueEngine) -> None:
+    today = revenue.revenue_today()
+    month = revenue.revenue_month()
+    company = revenue.company_profit()
+    print("\nREVENUE INTELLIGENCE\n")
+    print(f"  Today ({today['period']}):  {today['orders']} order(s)  "
+          f"revenue {today['gross_revenue']:.2f}  net {today['net_profit']:.2f}")
+    print(f"  Month ({month['period']}):  {month['orders']} order(s)  "
+          f"revenue {month['gross_revenue']:.2f}  net {month['net_profit']:.2f}")
+    print(f"  Company total:        revenue {company['gross_revenue']:.2f}  "
+          f"net {company['net_profit']:.2f}  cash {company['cash_balance']:.2f}")
+    print()
+
+
 def _learn(brain: OnassisBrain, db: Database, campaign_arg: int) -> int:
     """Generate knowledge for one campaign, or backfill all missing (arg == 0)."""
     if campaign_arg == 0:
@@ -288,6 +325,14 @@ def main() -> int:
 
     if args.dashboard:
         _show_dashboard(ProfitEngine(config, db))
+        return 0
+
+    if args.orders:
+        _list_orders(RevenueEngine(config, db))
+        return 0
+
+    if args.revenue:
+        _show_revenue(RevenueEngine(config, db))
         return 0
 
     if args.set_status is not None:

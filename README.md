@@ -106,6 +106,48 @@ python main.py                 # start the daily scheduler (long-running)
 Content generation calls the Anthropic API, so an `ANTHROPIC_API_KEY` is
 required. The agents fail with a clear message if it's missing.
 
+## Revenue Intelligence Engine — the financial source of truth
+
+ONASSIS knows exactly how much money it makes. The Revenue Engine
+(`onassis/revenue.py`) records every **order** (a sale) with its full cost
+breakdown and computes its economics. Entities: **Order**, **Product**,
+**Campaign** (already first-class), and the derived **Revenue / Cost /
+Profit**. Each order auto-calculates:
+
+| Metric | Formula |
+|--------|---------|
+| Gross Revenue | sale price × quantity |
+| Gross Profit | gross revenue − production cost (COGS) |
+| Net Profit | gross revenue − all costs |
+| Profit Margin | net profit / gross revenue |
+| ROI | net profit / total cost |
+
+Cost breakdown per order: AI, advertising, production, marketplace fees,
+payment fees, other. Orders **mirror into the ledger**, so the company-wide
+ledger stays the single cash record — which means the **CEO keeps deciding on
+net profit**, now driven by real sales (recording an order raises the cash
+balance the CEO allocates from).
+
+**Connector-ready:** Etsy, Gelato, Pinterest, and ad platforms plug in by
+implementing `onassis.connectors.base.RevenueConnector` (`fetch_orders()` →
+canonical order dicts). `RevenueEngine.ingest(connector)` records them — the
+core engine never changes.
+
+API endpoints:
+
+| Method & path | Purpose |
+|---|---|
+| `GET /revenue/today` | Today's orders: revenue, net profit, margin. |
+| `GET /revenue/month` | This month's orders. |
+| `GET /profit` | Company-wide profit (the bottom line). |
+| `GET /orders` | All orders with computed economics. |
+| `GET /orders/{id}` | One order. |
+
+```bash
+python main.py --orders     # recorded orders with economics
+python main.py --revenue    # today / month / company revenue & profit
+```
+
 ## Profit Engine — the operating philosophy
 
 ONASSIS is a **capital-allocation system**: its purpose is to maximise
@@ -238,6 +280,8 @@ then daily at `08:00` local time. Both are configurable.
 | `onassis/compliance.py` | Compliance Director — risk review with veto power. |
 | `onassis/governance.py` | Routes proposals: Compliance (veto) → CEO → final verdict; batch allocation. |
 | `onassis/profit.py` | The Profit Engine — ledger + profit-first dashboard. |
+| `onassis/revenue.py` | Revenue Intelligence Engine — orders, economics, rollups. |
+| `onassis/connectors/` | Pluggable revenue sources (Etsy/Gelato/Pinterest/ads). |
 | `onassis/api.py` | FastAPI service — thin REST layer over the existing services. |
 | `onassis/orchestrator.py` | Defines the daily pipeline and owns the agents. |
 | `onassis/scheduler.py` | Runs the pipeline daily at a fixed time. |
@@ -299,4 +343,7 @@ in cleanly:
   (compliance score, trademark/copyright/platform risk, brand consistency,
   verdict, corrections). The Compliance Director's learning memory.
 - **`ledger`** — costs and revenue (kind, category, amount, campaign/product,
-  brand, marketplace). The Profit Engine's source of truth for the dashboard.
+  brand, marketplace). The unified cash record (orders mirror into it).
+- **`orders`** — sales with cost breakdown and stored economics (gross
+  revenue, gross/net profit, margin, ROI). The Revenue Engine's source of truth.
+- **`products`** — the product catalogue (sku, name, production cost, …).

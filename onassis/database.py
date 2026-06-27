@@ -154,6 +154,50 @@ CREATE TABLE IF NOT EXISTS ledger (
 CREATE INDEX IF NOT EXISTS idx_ledger_kind ON ledger(kind);
 CREATE INDEX IF NOT EXISTS idx_ledger_category ON ledger(category);
 CREATE INDEX IF NOT EXISTS idx_ledger_date ON ledger(entry_date);
+
+CREATE TABLE IF NOT EXISTS products (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at      TEXT    NOT NULL,
+    sku             TEXT    UNIQUE,
+    name            TEXT,
+    campaign_id     INTEGER,
+    brand           TEXT,
+    marketplace     TEXT,
+    production_cost REAL    NOT NULL DEFAULT 0,
+    active          INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS orders (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at       TEXT    NOT NULL,
+    occurred_at      TEXT    NOT NULL,        -- when the sale happened (ISO)
+    sale_date        TEXT    NOT NULL,        -- YYYY-MM-DD, for day/month rollups
+    order_ref        TEXT,                    -- external marketplace order id
+    product_id       TEXT,                    -- sku / product reference
+    campaign_id      INTEGER,
+    platform         TEXT,                    -- etsy | pinterest | ...
+    sale_price       REAL    NOT NULL DEFAULT 0,
+    currency         TEXT    NOT NULL DEFAULT 'GBP',
+    quantity         INTEGER NOT NULL DEFAULT 1,
+    -- cost breakdown
+    ai_cost          REAL    NOT NULL DEFAULT 0,
+    advertising_cost REAL    NOT NULL DEFAULT 0,
+    production_cost  REAL    NOT NULL DEFAULT 0,
+    marketplace_fees REAL    NOT NULL DEFAULT 0,
+    payment_fees     REAL    NOT NULL DEFAULT 0,
+    other_costs      REAL    NOT NULL DEFAULT 0,
+    -- calculated economics (stored for fast rollups; computed at insert)
+    gross_revenue    REAL    NOT NULL DEFAULT 0,
+    total_cost       REAL    NOT NULL DEFAULT 0,
+    gross_profit     REAL    NOT NULL DEFAULT 0,
+    net_profit       REAL    NOT NULL DEFAULT 0,
+    profit_margin    REAL    NOT NULL DEFAULT 0,
+    roi              REAL    NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_orders_sale_date ON orders(sale_date);
+CREATE INDEX IF NOT EXISTS idx_orders_campaign ON orders(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_orders_product ON orders(product_id);
 """
 
 
@@ -702,6 +746,120 @@ class Database:
                 """
             ).fetchall()
         return [{"product_id": r["product_id"], "net_profit": float(r["net"])} for r in rows]
+
+    # --- Products ---------------------------------------------------
+
+    def insert_product(self, product: dict[str, Any]) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO products
+                    (created_at, sku, name, campaign_id, brand, marketplace,
+                     production_cost, active)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utcnow(),
+                    product.get("sku"),
+                    product.get("name", ""),
+                    product.get("campaign_id"),
+                    product.get("brand"),
+                    product.get("marketplace"),
+                    float(product.get("production_cost", 0) or 0),
+                    1 if product.get("active", True) else 0,
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def get_product(self, product_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM products WHERE id = ?", (product_id,)).fetchone()
+        return dict(row) if row else None
+
+    def get_product_by_sku(self, sku: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM products WHERE sku = ?", (sku,)).fetchone()
+        return dict(row) if row else None
+
+    def list_products(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM products ORDER BY id DESC").fetchall()
+        return [dict(r) for r in rows]
+
+    # --- Orders -----------------------------------------------------
+
+    def insert_order(self, order: dict[str, Any]) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO orders
+                    (created_at, occurred_at, sale_date, order_ref, product_id,
+                     campaign_id, platform, sale_price, currency, quantity,
+                     ai_cost, advertising_cost, production_cost, marketplace_fees,
+                     payment_fees, other_costs, gross_revenue, total_cost,
+                     gross_profit, net_profit, profit_margin, roi)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utcnow(),
+                    order["occurred_at"],
+                    order["sale_date"],
+                    order.get("order_ref"),
+                    order.get("product_id"),
+                    order.get("campaign_id"),
+                    order.get("platform"),
+                    float(order.get("sale_price", 0) or 0),
+                    order.get("currency", "GBP"),
+                    int(order.get("quantity", 1) or 1),
+                    float(order.get("ai_cost", 0) or 0),
+                    float(order.get("advertising_cost", 0) or 0),
+                    float(order.get("production_cost", 0) or 0),
+                    float(order.get("marketplace_fees", 0) or 0),
+                    float(order.get("payment_fees", 0) or 0),
+                    float(order.get("other_costs", 0) or 0),
+                    float(order["gross_revenue"]),
+                    float(order["total_cost"]),
+                    float(order["gross_profit"]),
+                    float(order["net_profit"]),
+                    float(order["profit_margin"]),
+                    float(order["roi"]),
+                ),
+            )
+            order_id = int(cur.lastrowid)
+        log.info(
+            "Stored order #%s (%s) net profit %.2f %s",
+            order_id,
+            order.get("platform"),
+            float(order["net_profit"]),
+            order.get("currency", "GBP"),
+        )
+        return order_id
+
+    def get_order(self, order_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_orders(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM orders ORDER BY id DESC").fetchall()
+        return [dict(r) for r in rows]
+
+    def get_orders_on(self, sale_date: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM orders WHERE sale_date = ? ORDER BY id", (sale_date,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_orders_in_month(self, year_month: str) -> list[dict[str, Any]]:
+        """``year_month`` is 'YYYY-MM'."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM orders WHERE sale_date LIKE ? ORDER BY id",
+                (f"{year_month}-%",),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
 
 def _row_to_brief(row: sqlite3.Row) -> dict[str, Any]:
