@@ -824,6 +824,13 @@ class Database:
             rows = conn.execute("SELECT * FROM products ORDER BY id DESC").fetchall()
         return [dict(r) for r in rows]
 
+    def get_products_for_campaign(self, campaign_id: int) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM products WHERE campaign_id = ? ORDER BY id", (campaign_id,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     # --- Orders -----------------------------------------------------
 
     def insert_order(self, order: dict[str, Any]) -> int:

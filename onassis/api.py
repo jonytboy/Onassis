@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from onassis.config import Config, load_config
 from onassis.connectors.etsy import EtsyConnector
 from onassis.database import Database
+from onassis.listing_factory import ListingError, ListingFactory
 from onassis.logger import get_logger, setup_logging
 from onassis.optimiser import ProductOptimiser
 from onassis.orchestrator import Orchestrator
@@ -78,6 +79,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     revenue = RevenueEngine(config, db)
     etsy = EtsyConnector(config, db)
     optimiser = ProductOptimiser(config, db)
+    listing_factory = ListingFactory(config, db)
 
     app = FastAPI(
         title="ONASSIS API",
@@ -97,6 +99,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.revenue = revenue
     app.state.etsy = etsy
     app.state.optimiser = optimiser
+    app.state.listing_factory = listing_factory
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""
@@ -175,6 +178,18 @@ def create_app(config: Config | None = None) -> FastAPI:
     def etsy_sync() -> dict[str, Any]:
         """Run a read-only Etsy import; updates the Revenue Engine and metrics."""
         return etsy.sync()
+
+    @app.get("/listing/{campaign_id}", tags=["listing"])
+    def listing(campaign_id: int) -> dict[str, Any]:
+        """Build & export a complete, upload-ready Etsy listing package."""
+        try:
+            package = listing_factory.export(campaign_id)
+        except ListingError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        if package.get("status") != "ready":
+            # Approved gate or compliance blocked the export — report why.
+            raise HTTPException(status_code=409, detail=package)
+        return package
 
     @app.get("/optimiser", tags=["optimiser"])
     def optimiser_recommendation() -> dict[str, Any]:

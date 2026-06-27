@@ -101,6 +101,10 @@ def _parse_args() -> argparse.Namespace:
         help="Recommend the single highest-value action for an existing product.",
     )
     parser.add_argument(
+        "--build-listing", type=int, metavar="CAMPAIGN_ID",
+        help="Build & export an upload-ready Etsy listing package for a campaign.",
+    )
+    parser.add_argument(
         "--serve", action="store_true", help="Run the REST API (Swagger at /docs)."
     )
     parser.add_argument("--host", default="0.0.0.0", help="API host (with --serve).")
@@ -370,6 +374,27 @@ def main() -> int:
               f"ROI: {rec['expected_roi']:.2f}")
         print(f"  Confidence : {rec['confidence']}%   CEO: {rec['ceo']['verdict']}")
         print(f"  Reasoning  : {rec['reasoning']}\n")
+        return 0
+
+    if args.build_listing is not None:
+        from onassis.listing_factory import ListingError, ListingFactory
+
+        try:
+            pkg = ListingFactory(config, db).export(args.build_listing)
+        except ListingError as exc:
+            print(f"Error: {exc}")
+            return 1
+        if pkg.get("status") != "ready":
+            print(f"Listing blocked: {pkg.get('reason')}")
+            return 1
+        v = pkg["validation"]
+        print(f"\nLISTING PACKAGE READY — campaign #{pkg['campaign_id']}\n")
+        print(f"  Path     : {pkg['path']}")
+        print(f"  Title    : {pkg['listing']['title']}")
+        print(f"  Tags     : {len(pkg['listing']['tags'])}  Price: "
+              f"{pkg['listing']['price']} {pkg['listing']['currency']}")
+        print(f"  Images   : {v['present_images']}/{v['required_images']} present  "
+              f"(all present: {v['all_images_present']})\n")
         return 0
 
     if args.set_status is not None:

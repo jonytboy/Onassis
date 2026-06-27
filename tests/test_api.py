@@ -272,6 +272,50 @@ def test_etsy_sync_not_configured(app_and_client):
     assert body["configured"] is False
 
 
+# --- Listing endpoint -----------------------------------------------
+
+def test_listing_endpoint(app_and_client):
+    app, client = app_and_client
+    db = app.state.db
+    # An approved campaign is required.
+    brief_id = db.insert_brief({"brief_date": "2026-06-26", "theme": "T",
+                                "campaign_name": "Salt", "concept": "s", "keywords": []})
+    cid = db.insert_campaign({"name": "Salt", "theme": "T", "story": "s", "brief_id": brief_id})
+    db.insert_compliance_report({"campaign_id": cid, "verdict": "APPROVE",
+                                 "reasoning": "ok", "compliance_score": 90})
+    # Inject fakes so the factory runs offline.
+    app.state.listing_factory._llm = FakeLLM({
+        "title": "Linen Throw", "description": "A lovely throw.",
+        "tags": [f"t{i}" for i in range(13)], "materials": ["linen"],
+        "primary_colour": "Ecru", "secondary_colour": "Terracotta",
+        "category": "Home", "seo_keywords": ["linen throw"],
+        "image_alt_texts": ["a", "b", "c", "d", "e"],
+        "product_attributes": [{"name": "room", "value": "Living"}],
+    })
+    app.state.listing_factory.compliance._llm = FakeLLM(make_compliance_response())
+
+    r = client.get(f"/listing/{cid}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ready"
+    assert body["listing"]["title"] == "Linen Throw"
+    assert body["validation"]["all_images_present"] is True
+
+
+def test_listing_endpoint_missing_campaign(app_and_client):
+    _, client = app_and_client
+    assert client.get("/listing/999").status_code == 404
+
+
+def test_listing_endpoint_blocked_when_unapproved(app_and_client):
+    app, client = app_and_client
+    db = app.state.db
+    brief_id = db.insert_brief({"brief_date": "2026-06-26", "theme": "T", "keywords": []})
+    cid = db.insert_campaign({"name": "C", "brief_id": brief_id})  # no compliance approval
+    r = client.get(f"/listing/{cid}")
+    assert r.status_code == 409
+
+
 # --- Optimiser endpoint ---------------------------------------------
 
 def test_optimiser_endpoint(app_and_client):
@@ -306,7 +350,7 @@ def test_swagger_docs_available(app_and_client):
                  "/revenue/today", "/revenue/month", "/profit",
                  "/orders", "/orders/{order_id}",
                  "/etsy/orders", "/etsy/listings", "/etsy/stats", "/etsy/sync",
-                 "/optimiser"):
+                 "/optimiser", "/listing/{campaign_id}"):
         assert path in paths
 
 

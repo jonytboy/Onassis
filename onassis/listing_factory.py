@@ -1,0 +1,352 @@
+"""The Autonomous Listing Factory.
+
+Turns an approved campaign into a complete, **upload-ready** Etsy listing
+package — with zero manual editing required — and writes it to disk. It does
+**not** publish and never touches Etsy; the package is the hand-off point for a
+future automatic publisher.
+
+For an approved campaign it produces every field an Etsy upload needs (title,
+description, 13 tags, materials, colours, category, SEO keywords, image alt
+text, product attributes, pricing recommendation), a mock-up manifest, an
+image order, and a file manifest. It generates a reference (and a placeholder
+file) for every required mock-up, validates that every required image exists,
+validates compliance before export, and writes:
+
+    exports/<campaign_id>/
+        listing.json     # every field required for an Etsy upload
+        manifest.json    # files, image order, validation, compliance
+        images/          # one file per required mock-up
+
+Creative fields are LLM-generated; pricing is deterministic. The approval gate
+(campaign must be compliance-approved) and a fresh pre-export compliance review
+of the generated listing both protect the export.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from onassis.compliance import ComplianceDirector
+from onassis.config import ROOT_DIR, Config
+from onassis.database import Database
+from onassis.llm import LLMClient
+from onassis.logger import get_logger
+from onassis.proposals import APPROVE, Proposal
+
+log = get_logger(__name__)
+
+# A minimal valid 1x1 PNG — placeholder pixels for each required mock-up until a
+# real image generator fills them in. Keeps the package structurally complete.
+_PLACEHOLDER_PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+    "1f15c4890000000a49444154789c6300010000050001"
+    "0d0a2db40000000049454e44ae426082"
+)
+
+_TAG_COUNT = 13
+
+_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "description": {"type": "string"},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "materials": {"type": "array", "items": {"type": "string"}},
+        "primary_colour": {"type": "string"},
+        "secondary_colour": {"type": "string"},
+        "category": {"type": "string"},
+        "seo_keywords": {"type": "array", "items": {"type": "string"}},
+        "image_alt_texts": {"type": "array", "items": {"type": "string"}},
+        "product_attributes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}, "value": {"type": "string"}},
+                "required": ["name", "value"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": [
+        "title", "description", "tags", "materials", "primary_colour",
+        "secondary_colour", "category", "seo_keywords", "image_alt_texts",
+        "product_attributes",
+    ],
+    "additionalProperties": False,
+}
+
+_SYSTEM = (
+    "You are an expert Etsy listing copywriter for a premium Mediterranean "
+    "lifestyle brand. You write upload-ready, conversion-optimised, SEO-strong "
+    "listings that read as authentic and original — never as adverts, never "
+    "infringing trademarks or copyright. Titles are <=140 characters; tags are "
+    "short (<=20 characters) and varied; alt text is descriptive and accessible."
+)
+
+
+def _coerce_len(items: list[str], n: int, filler: list[str], prefix: str) -> list[str]:
+    """Return exactly ``n`` non-empty strings, padding/trimming as needed."""
+    out = [str(s).strip() for s in items if str(s).strip()][:n]
+    pool = [str(s).strip() for s in filler if str(s).strip()]
+    i = 0
+    while len(out) < n:
+        candidate = pool[i] if i < len(pool) else f"{prefix} {len(out) + 1}"
+        if candidate not in out:
+            out.append(candidate)
+        i += 1
+    return out
+
+
+class ListingError(RuntimeError):
+    """Raised when a campaign cannot be turned into a listing."""
+
+
+class ListingFactory:
+    """Builds, validates, and exports complete Etsy listing packages."""
+
+    def __init__(self, config: Config, db: Database) -> None:
+        self.config = config
+        self.db = db
+        self.cfg = config.listing or {}
+        self.compliance = ComplianceDirector(config, db)
+        self.mockups: list[str] = self.cfg.get("mockups") or [
+            "primary", "lifestyle_1", "lifestyle_2", "scale", "detail"
+        ]
+        self._llm: LLMClient | None = None
+
+    @property
+    def llm(self) -> LLMClient:
+        if self._llm is None:
+            self._llm = LLMClient(self.config)
+        return self._llm
+
+    # --- Public entry point -----------------------------------------
+
+    def export(self, campaign_id: int) -> dict[str, Any]:
+        """Build, validate, and write the listing package for a campaign.
+
+        Returns a result dict with ``status`` of ``ready`` or ``blocked``.
+        Raises :class:`ListingError` if the campaign does not exist.
+        """
+        campaign = self.db.get_campaign(campaign_id)
+        if campaign is None:
+            raise ListingError(f"No campaign with id {campaign_id}")
+
+        # Gate 1 — only approved campaigns may proceed (Company Law).
+        approval = self.db.get_compliance_for_campaign(campaign_id)
+        if not approval or approval.get("verdict") != APPROVE:
+            return {
+                "status": "blocked",
+                "campaign_id": campaign_id,
+                "reason": "Campaign is not compliance-approved; cannot prepare a listing.",
+            }
+
+        listing = self._build_listing(campaign)
+
+        # Gate 2 — validate the generated listing's compliance before export.
+        review = self._review_listing(listing, campaign_id)
+        if review["verdict"] != APPROVE:
+            return {
+                "status": "blocked",
+                "campaign_id": campaign_id,
+                "reason": "Generated listing failed compliance review.",
+                "compliance": review,
+            }
+
+        package = self._write_package(campaign_id, listing, review)
+        log.info("Listing package ready for campaign #%s at %s", campaign_id, package["path"])
+        return package
+
+    # --- Build ------------------------------------------------------
+
+    def _build_listing(self, campaign: dict[str, Any]) -> dict[str, Any]:
+        brief = self.db.get_brief(campaign.get("brief_id")) or {}
+        products = self.db.get_products_for_campaign(campaign["id"])
+        product = products[0] if products else None
+        product_id = product["sku"] if product else str(campaign["id"])
+
+        gen = self.llm.generate_json(
+            system=_SYSTEM, prompt=self._prompt(campaign, brief), schema=_SCHEMA
+        )
+
+        # Normalise to exact, upload-ready shapes.
+        tags = _coerce_len(gen["tags"], _TAG_COUNT, gen.get("seo_keywords", []), "tag")
+        alt_texts = _coerce_len(
+            gen["image_alt_texts"], len(self.mockups),
+            [f"{campaign['name']} {m}" for m in self.mockups], "image",
+        )
+        pricing = self._pricing(product)
+
+        images = []
+        for i, mockup in enumerate(self.mockups):
+            images.append(
+                {
+                    "order": i + 1,
+                    "mockup_type": mockup,
+                    "filename": f"{campaign['id']}_{mockup}.png",
+                    "alt_text": alt_texts[i],
+                    "source": "placeholder",  # replaced by the image generator later
+                }
+            )
+        image_order = [img["filename"] for img in images]
+
+        return {
+            "campaign_id": campaign["id"],
+            "campaign_name": campaign.get("name", ""),
+            "product_id": product_id,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            # Etsy upload fields
+            "state": "draft",
+            "type": "physical",
+            "title": gen["title"].strip()[:140],
+            "description": gen["description"].strip(),
+            "tags": tags,
+            "materials": [m.strip() for m in gen["materials"] if str(m).strip()][:13],
+            "primary_colour": gen["primary_colour"],
+            "secondary_colour": gen["secondary_colour"],
+            "category": gen["category"],
+            "seo_keywords": gen["seo_keywords"],
+            "product_attributes": gen["product_attributes"],
+            "who_made": self.cfg.get("who_made", "i_did"),
+            "when_made": self.cfg.get("when_made", "made_to_order"),
+            "is_supply": bool(self.cfg.get("is_supply", False)),
+            "taxonomy_id": self.cfg.get("taxonomy_id"),
+            "shipping_profile_id": self.cfg.get("shipping_profile_id"),
+            "quantity": int(self.cfg.get("quantity", 50)),
+            "price": pricing["price"],
+            "currency": pricing["currency"],
+            "pricing_recommendation": pricing,
+            # Image + file plan
+            "images": images,
+            "image_order": image_order,
+            "mockup_manifest": images,
+            "file_manifest": ["listing.json", "manifest.json", *[f"images/{f}" for f in image_order]],
+        }
+
+    def _pricing(self, product: dict[str, Any] | None) -> dict[str, Any]:
+        margin = float(self.cfg.get("target_margin", 0.60))
+        production_cost = float(
+            product["production_cost"] if product else self.cfg.get("default_production_cost", 12.0)
+        )
+        price = round(production_cost / (1 - margin), 2) if margin < 1 else production_cost
+        return {
+            "price": price,
+            "currency": self.cfg.get("currency", "GBP"),
+            "production_cost": round(production_cost, 2),
+            "target_margin": margin,
+            "rationale": (
+                f"Priced for a {margin:.0%} margin over a {production_cost:.2f} "
+                f"production cost."
+            ),
+        }
+
+    def _prompt(self, campaign: dict[str, Any], brief: dict[str, Any]) -> str:
+        keywords = ", ".join(brief.get("keywords", []))
+        mockups = ", ".join(self.mockups)
+        return f"""Create a complete, upload-ready Etsy listing for this product.
+
+PRODUCT / CAMPAIGN
+- Name: {campaign.get('name', '')}
+- Theme: {campaign.get('theme', '')}
+- Story: {campaign.get('story', '')}
+- Visual direction: {brief.get('visual_direction', '')}
+- Keywords: {keywords}
+
+Produce:
+- `title`: <=140 chars, search-friendly, benefit-led, no ALL CAPS.
+- `description`: a full, persuasive, well-structured description (origin, what
+  it is, materials/feel, sizing/use, care) — authentic, not an advert.
+- `tags`: EXACTLY 13 short tags (each <=20 chars), varied, no duplicates.
+- `materials`: realistic materials list.
+- `primary_colour` and `secondary_colour`.
+- `category`: an Etsy-style category path.
+- `seo_keywords`: 6-10 strong search phrases.
+- `image_alt_texts`: EXACTLY {len(self.mockups)} alt texts, one per mock-up in
+  this order: {mockups}.
+- `product_attributes`: name/value pairs (e.g. style, room, occasion, finish).
+Original, on-brand premium Mediterranean lifestyle. No trademarks, no
+copyrighted characters, no third-party logos.
+"""
+
+    # --- Compliance -------------------------------------------------
+
+    def _review_listing(self, listing: dict[str, Any], campaign_id: int) -> dict[str, Any]:
+        proposal = Proposal(
+            agent_name="ListingFactory",
+            requested_action=f"Prepare Etsy listing '{listing['title']}'",
+            reasoning=(
+                f"{listing['description'][:500]} Tags: {', '.join(listing['tags'])}."
+            ),
+            campaign_id=campaign_id,
+        )
+        return self.compliance.review_proposal(proposal, proposal_id=None)
+
+    # --- Write & validate -------------------------------------------
+
+    def _exports_base(self) -> Path:
+        base = Path(self.cfg.get("exports_dir", "exports"))
+        return base if base.is_absolute() else (ROOT_DIR / base)
+
+    def _write_package(
+        self, campaign_id: int, listing: dict[str, Any], review: dict[str, Any]
+    ) -> dict[str, Any]:
+        folder = self._exports_base() / str(campaign_id)
+        images_dir = folder / "images"
+        images_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write a placeholder file for every required mock-up.
+        for img in listing["images"]:
+            (images_dir / img["filename"]).write_bytes(_PLACEHOLDER_PNG)
+
+        # Validate every required image exists and is non-empty.
+        missing = [
+            img["filename"]
+            for img in listing["images"]
+            if not (images_dir / img["filename"]).exists()
+            or (images_dir / img["filename"]).stat().st_size == 0
+        ]
+        validation = {
+            "required_images": len(listing["images"]),
+            "present_images": len(listing["images"]) - len(missing),
+            "all_images_present": not missing,
+            "missing": missing,
+            "tag_count_ok": len(listing["tags"]) == _TAG_COUNT,
+        }
+
+        (folder / "listing.json").write_text(json.dumps(listing, indent=2), encoding="utf-8")
+
+        manifest = {
+            "campaign_id": campaign_id,
+            "generated_at": listing["generated_at"],
+            "image_order": listing["image_order"],
+            "mockup_manifest": listing["mockup_manifest"],
+            "files": self._file_listing(folder),
+            "validation": validation,
+            "compliance": {
+                "verdict": review["verdict"],
+                "compliance_score": review["compliance_score"],
+            },
+        }
+        (folder / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+        return {
+            "status": "ready",
+            "campaign_id": campaign_id,
+            "path": str(folder),
+            "listing": listing,
+            "manifest": manifest,
+            "validation": validation,
+        }
+
+    @staticmethod
+    def _file_listing(folder: Path) -> list[dict[str, Any]]:
+        files = []
+        for path in sorted(folder.rglob("*")):
+            if path.is_file():
+                files.append(
+                    {"path": str(path.relative_to(folder)), "bytes": path.stat().st_size}
+                )
+        return files

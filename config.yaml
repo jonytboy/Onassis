@@ -124,6 +124,27 @@ optimiser:
     improve_seo: 0.10
     design_variation: 0.20
 
+# --- Listing factory (prepares Etsy listings; never publishes) -------
+listing:
+  exports_dir: exports          # where listing packages are written
+  currency: GBP
+  quantity: 50
+  target_margin: 0.60           # recommended price = production_cost / (1 - margin)
+  default_production_cost: 12.0 # used when no product cost is known
+  # Etsy upload defaults (set once at the account level; not per-listing editing):
+  who_made: i_did               # i_did | someone_else | collective
+  when_made: made_to_order
+  is_supply: false
+  taxonomy_id: 1                # Etsy taxonomy id (account/category specific)
+  shipping_profile_id: null     # set once at account level
+  # The mock-ups every listing requires:
+  mockups:
+    - primary
+    - lifestyle_1
+    - lifestyle_2
+    - scale
+    - detail
+
 # --- Compliance thresholds -------------------------------------------
 # The Compliance Director's veto rules (Sprint 7). Risk scores are 0-100.
 compliance:

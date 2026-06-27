@@ -106,6 +106,31 @@ python main.py                 # start the daily scheduler (long-running)
 Content generation calls the Anthropic API, so an `ANTHROPIC_API_KEY` is
 required. The agents fail with a clear message if it's missing.
 
+## Listing Factory — upload-ready Etsy packages (no publishing)
+
+The Listing Factory (`onassis/listing_factory.py`) turns an **approved**
+campaign into a complete, **upload-ready** Etsy listing package — no manual
+editing — and writes it to disk. It does **not** publish or touch Etsy.
+
+It generates every Etsy upload field (title, description, 13 tags, materials,
+primary/secondary colour, category, SEO keywords, image alt text, product
+attributes, **deterministic** pricing recommendation), a mock-up manifest,
+image order, and file manifest; creates a file for every required mock-up;
+validates every image exists; and **validates compliance before export**.
+Two gates protect it: the campaign must be compliance-approved, and the
+generated listing is re-reviewed by the Compliance Director.
+
+```
+exports/<campaign_id>/
+    listing.json     # every field required for an Etsy upload
+    manifest.json    # files, image order, validation, compliance
+    images/          # one file per required mock-up
+```
+
+`GET /listing/{campaign_id}` builds & exports the package (409 if not approved
+or compliance-blocked); CLI `--build-listing <id>`. (Mock-up images are
+placeholders pending a future image generator; the structure is upload-ready.)
+
 ## Product Optimiser — improve earners before building new ones
 
 The optimiser (`onassis/optimiser.py`) analyses every **live** product and
