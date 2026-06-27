@@ -23,6 +23,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from onassis.analytics import AnalyticsEngine
 from onassis.config import Config, load_config
 from onassis.connectors.etsy import EtsyConnector
 from onassis.database import Database
@@ -82,6 +83,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     optimiser = ProductOptimiser(config, db)
     listing_factory = ListingFactory(config, db)
     publisher = PublisherService(config, db)
+    analytics = AnalyticsEngine(config, db)
 
     app = FastAPI(
         title="ONASSIS API",
@@ -103,6 +105,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.optimiser = optimiser
     app.state.listing_factory = listing_factory
     app.state.publisher = publisher
+    app.state.analytics = analytics
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""
@@ -203,6 +206,21 @@ def create_app(config: Config | None = None) -> FastAPI:
     def publishing_status() -> dict[str, Any]:
         """Publication log summary (counts by status + recent publications)."""
         return publisher.status()
+
+    @app.get("/analytics", tags=["analytics"])
+    def analytics_overall() -> dict[str, Any]:
+        """Collected-analytics summary (snapshot counts, products, platforms)."""
+        return analytics.overall()
+
+    @app.get("/analytics/product/{product_id}", tags=["analytics"])
+    def analytics_product(product_id: str) -> dict[str, Any]:
+        """Historical metrics and trends for one product."""
+        return analytics.product_analytics(product_id)
+
+    @app.get("/analytics/campaign/{campaign_id}", tags=["analytics"])
+    def analytics_campaign(campaign_id: int) -> dict[str, Any]:
+        """Historical metrics and trends for one campaign."""
+        return analytics.campaign_analytics(campaign_id)
 
     @app.get("/optimiser", tags=["optimiser"])
     def optimiser_recommendation() -> dict[str, Any]:

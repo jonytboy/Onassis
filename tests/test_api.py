@@ -359,6 +359,31 @@ def test_listing_endpoint_blocked_when_unapproved(app_and_client):
     assert r.status_code == 409
 
 
+# --- Analytics endpoints --------------------------------------------
+
+def test_analytics_endpoints(app_and_client):
+    app, client = app_and_client
+    db = app.state.db
+    # Seed two days of history for one product.
+    for day, views in (("2026-06-20", 100), ("2026-06-27", 250)):
+        db.insert_metric_snapshots([
+            {"platform": "etsy", "product_id": "P1", "campaign_id": 5, "metric": "views",
+             "value": views, "snapshot_date": day},
+            {"platform": "etsy", "product_id": "P1", "campaign_id": 5, "metric": "revenue",
+             "value": views, "snapshot_date": day},
+        ])
+
+    overall = client.get("/analytics").json()
+    assert overall["snapshots"] == 4
+    assert "P1" in overall["products"]
+
+    product = client.get("/analytics/product/P1").json()
+    assert product["trends"]["traffic_trend"]["label"] == "up"
+
+    campaign = client.get("/analytics/campaign/5").json()
+    assert campaign["history_points"] == 4
+
+
 # --- Optimiser endpoint ---------------------------------------------
 
 def test_optimiser_endpoint(app_and_client):
@@ -394,7 +419,9 @@ def test_swagger_docs_available(app_and_client):
                  "/orders", "/orders/{order_id}",
                  "/etsy/orders", "/etsy/listings", "/etsy/stats", "/etsy/sync",
                  "/optimiser", "/listing/{campaign_id}",
-                 "/publish/{campaign_id}", "/publishing/status"):
+                 "/publish/{campaign_id}", "/publishing/status",
+                 "/analytics", "/analytics/product/{product_id}",
+                 "/analytics/campaign/{campaign_id}"):
         assert path in paths
 
 

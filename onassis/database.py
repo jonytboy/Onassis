@@ -252,6 +252,21 @@ CREATE TABLE IF NOT EXISTS publications (
 
 CREATE INDEX IF NOT EXISTS idx_publications_campaign ON publications(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_publications_status ON publications(status);
+
+CREATE TABLE IF NOT EXISTS metric_snapshots (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at    TEXT    NOT NULL,
+    snapshot_date TEXT    NOT NULL,        -- YYYY-MM-DD
+    platform      TEXT    NOT NULL,        -- etsy | pinterest
+    product_id    TEXT,
+    campaign_id   INTEGER,
+    metric        TEXT    NOT NULL,        -- views | favourites | orders | revenue | ...
+    value         REAL    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_metrics_product ON metric_snapshots(product_id, metric);
+CREATE INDEX IF NOT EXISTS idx_metrics_campaign ON metric_snapshots(campaign_id, metric);
+CREATE INDEX IF NOT EXISTS idx_metrics_date ON metric_snapshots(snapshot_date);
 """
 
 
@@ -1106,6 +1121,67 @@ class Database:
         with self._connect() as conn:
             rows = conn.execute("SELECT * FROM publications ORDER BY id DESC").fetchall()
         return [dict(r) for r in rows]
+
+    # --- Metric snapshots (append-only history) ---------------------
+
+    def insert_metric_snapshots(self, rows: list[dict[str, Any]]) -> int:
+        """Append metric snapshots. History is never overwritten."""
+        now = _utcnow()
+        data = [
+            (
+                now,
+                r.get("snapshot_date") or now[:10],
+                r.get("platform", ""),
+                r.get("product_id"),
+                r.get("campaign_id"),
+                r["metric"],
+                float(r.get("value", 0) or 0),
+            )
+            for r in rows
+        ]
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO metric_snapshots
+                    (created_at, snapshot_date, platform, product_id, campaign_id, metric, value)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                data,
+            )
+        return len(data)
+
+    def get_metric_series(
+        self, *, product_id: str | None = None, campaign_id: int | None = None,
+        metric: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses, params = [], []
+        if product_id is not None:
+            clauses.append("product_id = ?")
+            params.append(product_id)
+        if campaign_id is not None:
+            clauses.append("campaign_id = ?")
+            params.append(campaign_id)
+        if metric is not None:
+            clauses.append("metric = ?")
+            params.append(metric)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM metric_snapshots{where} ORDER BY snapshot_date, id",
+                tuple(params),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_metric_snapshots(self) -> int:
+        with self._connect() as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM metric_snapshots").fetchone()[0])
+
+    def distinct_metric_products(self) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT product_id FROM metric_snapshots WHERE product_id IS NOT NULL"
+            ).fetchall()
+        return [r["product_id"] for r in rows]
 
 
 def _row_to_brief(row: sqlite3.Row) -> dict[str, Any]:

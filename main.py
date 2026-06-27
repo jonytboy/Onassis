@@ -97,6 +97,10 @@ def _parse_args() -> argparse.Namespace:
         "--etsy-sync", action="store_true", help="Import orders/listings from Etsy (read-only)."
     )
     parser.add_argument(
+        "--collect-analytics", action="store_true",
+        help="Collect a fresh snapshot of performance metrics (append-only).",
+    )
+    parser.add_argument(
         "--optimise", action="store_true",
         help="Recommend the single highest-value action for an existing product.",
     )
@@ -402,6 +406,13 @@ def main() -> int:
               f"{pkg['listing']['price']} {pkg['listing']['currency']}")
         print(f"  Images   : {v['present_images']}/{v['required_images']} present  "
               f"(all present: {v['all_images_present']})\n")
+        return 0
+
+    if args.collect_analytics:
+        from onassis.analytics import AnalyticsEngine
+
+        result = AnalyticsEngine(config, db).collect()
+        print(f"Collected {result['collected']} metric snapshot(s): {result['by_source']}")
         return 0
 
     if args.publish is not None:

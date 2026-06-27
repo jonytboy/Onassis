@@ -174,6 +174,32 @@ python main.py --optimise      # the single highest-value product action
 `GET /optimiser` returns the product analysed, recommendation, expected ROI,
 reasoning, confidence (and the CEO's verdict).
 
+## Analytics Collector — historical performance data
+
+The collector (`onassis/analytics.py`) gathers real-world metrics — Etsy
+(views, visits, favourites, orders, revenue) and Pinterest (impressions,
+saves, outbound clicks, CTR) — and stores **every** observation as a
+timestamped snapshot. History is **append-only and never overwritten**. From
+that history it derives, per product, the **Traffic / Conversion / Revenue /
+Profit** trends. It only collects and reports — no dashboards, no advertising,
+no recommendations. Sources are pluggable (`fetch_metrics()`), so new
+marketplaces add data with no engine change.
+
+Crucially, the **CEO and Product Optimiser use these historical trends**, not
+just today's values: the optimiser reads trends from the collected history and
+sets each proposal's risk level from the profit trend, so the CEO discounts the
+ROI of declining products.
+
+| Method & path | Purpose |
+|---|---|
+| `GET /analytics` | Collection summary (snapshots, products, platforms). |
+| `GET /analytics/product/{id}` | A product's metric history and trends. |
+| `GET /analytics/campaign/{id}` | A campaign's metric history and trends. |
+
+```bash
+python main.py --collect-analytics    # append a fresh metric snapshot
+```
+
 ## Etsy connector — read-only observation
 
 ONASSIS observes the real Etsy shop through a **read-only** connector

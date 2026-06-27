@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from onassis.analytics import AnalyticsEngine
 from onassis.ceo import CEOAgent
 from onassis.config import Config
 from onassis.database import Database
@@ -76,6 +77,7 @@ class ProductOptimiser:
         self.costs = {**_DEFAULT_COSTS, **(cfg.get("action_costs") or {})}
         self.uplift = {**_DEFAULT_UPLIFT, **(cfg.get("action_uplift") or {})}
         self.ceo = CEOAgent(config, db)
+        self.analytics = AnalyticsEngine(config, db)
 
     # --- Public API -------------------------------------------------
 
@@ -148,6 +150,20 @@ class ProductOptimiser:
             else (round(len(orders) / views, 4) if views > 0 else 0.0)
         )
 
+        # Default trends from this product's own orders/stats...
+        profit_trend = self._profit_trend(orders)
+        traffic_trend = self._traffic_trend(stats)
+        conversion_trend = {"value": 0.0, "label": "flat"}
+        revenue_trend = {"value": 0.0, "label": "flat"}
+        # ...but prefer historical analytics trends when enough history exists,
+        # so decisions use trends rather than today's values alone.
+        hist = self.analytics.product_trends(sku)
+        if hist:
+            profit_trend = hist["profit_trend"]
+            traffic_trend = hist["traffic_trend"]
+            conversion_trend = hist["conversion_trend"]
+            revenue_trend = hist["revenue_trend"]
+
         return {
             "views": views,
             "visits": visits,
@@ -157,8 +173,10 @@ class ProductOptimiser:
             "net_profit": net_profit,
             "roi": roi,
             "orders": len(orders),
-            "profit_trend": self._profit_trend(orders),
-            "traffic_trend": self._traffic_trend(stats),
+            "profit_trend": profit_trend,
+            "traffic_trend": traffic_trend,
+            "conversion_trend": conversion_trend,
+            "revenue_trend": revenue_trend,
             "_stat_snapshots": len(stats),
         }
 
@@ -283,13 +301,17 @@ class ProductOptimiser:
 
     def _ceo_review(self, rec: dict[str, Any]) -> dict[str, Any]:
         """Have the CEO evaluate the recommendation under company policy."""
+        # Risk reflects the historical profit trend: a declining product is a
+        # riskier place to invest, so the CEO discounts its ROI accordingly.
+        trend = rec["metrics"]["profit_trend"]["label"]
+        risk_level = {"down": "high", "up": "low"}.get(trend, "medium")
         proposal = Proposal(
             agent_name="ProductOptimiser",
             requested_action=f"{rec['recommendation']} for {rec['product']}",
             estimated_cost=rec["estimated_cost"],
             expected_revenue=rec["expected_increase_in_profit"],
             confidence=rec["confidence"],
-            risk_level="medium",
+            risk_level=risk_level,
             reasoning=rec["reasoning"],
         )
         return self.ceo.evaluate(proposal, store=False)

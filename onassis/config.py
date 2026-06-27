@@ -68,6 +68,7 @@ class Config:
     optimiser: dict[str, Any] = field(default_factory=dict)
     listing: dict[str, Any] = field(default_factory=dict)
     publishing: dict[str, Any] = field(default_factory=dict)
+    pinterest: dict[str, Any] = field(default_factory=dict)
 
     # secrets / future integrations
     anthropic_api_key: str | None = None
@@ -117,6 +118,12 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
     listing = raw.get("listing", {})
     publishing = raw.get("publishing", {})
     etsy = raw.get("etsy", {})
+    pinterest = raw.get("pinterest", {})
+    pinterest = {
+        **pinterest,
+        "access_token": _env("PINTEREST_ACCESS_TOKEN", pinterest.get("access_token")),
+        "ad_account_id": _env("PINTEREST_AD_ACCOUNT_ID", pinterest.get("ad_account_id")),
+    }
     # Etsy credentials come from the environment.
     etsy = {
         **etsy,
@@ -152,5 +159,6 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         optimiser=optimiser,
         listing=listing,
         publishing=publishing,
+        pinterest=pinterest,
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
     )
