@@ -359,6 +359,21 @@ def test_listing_endpoint_blocked_when_unapproved(app_and_client):
     assert r.status_code == 409
 
 
+# --- Daily cycle endpoints ------------------------------------------
+
+def test_daily_run_and_status_history(app_and_client):
+    _, client = app_and_client
+    r = client.post("/daily/run?mode=dry_run")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["mode"] == "dry_run"
+    assert len(body["stages"]) == 10
+
+    status = client.get("/daily/status").json()
+    assert status["mode"] == "dry_run"
+    assert len(client.get("/daily/history").json()) == 1
+
+
 # --- Experiments endpoints ------------------------------------------
 
 def test_experiments_endpoints(app_and_client):
@@ -451,7 +466,8 @@ def test_swagger_docs_available(app_and_client):
                  "/publish/{campaign_id}", "/publishing/status",
                  "/analytics", "/analytics/product/{product_id}",
                  "/analytics/campaign/{campaign_id}",
-                 "/experiments", "/experiments/{experiment_id}", "/experiments/active"):
+                 "/experiments", "/experiments/{experiment_id}", "/experiments/active",
+                 "/daily/run", "/daily/status", "/daily/history"):
         assert path in paths
 
 

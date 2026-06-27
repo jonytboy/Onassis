@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from onassis.analytics import AnalyticsEngine
 from onassis.config import Config, load_config
 from onassis.connectors.etsy import EtsyConnector
+from onassis.daily_cycle import DailyCycle
 from onassis.database import Database
 from onassis.experiments import ExperimentEngine, ExperimentError
 from onassis.listing_factory import ListingError, ListingFactory
@@ -86,6 +87,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     publisher = PublisherService(config, db)
     analytics = AnalyticsEngine(config, db)
     experiments = ExperimentEngine(config, db)
+    daily = DailyCycle(config, db)
 
     app = FastAPI(
         title="ONASSIS API",
@@ -109,6 +111,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.publisher = publisher
     app.state.analytics = analytics
     app.state.experiments = experiments
+    app.state.daily = daily
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""
@@ -122,6 +125,21 @@ def create_app(config: Config | None = None) -> FastAPI:
     def root() -> dict[str, str]:
         """Service banner with a pointer to the docs."""
         return {"service": "ONASSIS API", "version": config.version, "docs": "/docs"}
+
+    @app.post("/daily/run", tags=["daily"])
+    def daily_run(mode: str = "production") -> dict[str, Any]:
+        """Run the full daily operating cycle (mode: production | dry_run)."""
+        return daily.run(mode=mode)
+
+    @app.get("/daily/status", tags=["daily"])
+    def daily_status() -> dict[str, Any]:
+        """The most recent daily run."""
+        return daily.status()
+
+    @app.get("/daily/history", tags=["daily"])
+    def daily_history() -> list[dict[str, Any]]:
+        """Past daily runs (newest first)."""
+        return daily.history()
 
     @app.get("/health", response_model=HealthResponse, tags=["meta"])
     def health() -> dict[str, Any]:

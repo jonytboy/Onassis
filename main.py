@@ -104,6 +104,10 @@ def _parse_args() -> argparse.Namespace:
         "--experiments", action="store_true", help="List experiments and their results."
     )
     parser.add_argument(
+        "--daily-run", action="store_true",
+        help="Run the full daily operating cycle (use --mode dry_run for a dry run).",
+    )
+    parser.add_argument(
         "--optimise", action="store_true",
         help="Recommend the single highest-value action for an existing product.",
     )
@@ -416,6 +420,21 @@ def main() -> int:
 
         result = AnalyticsEngine(config, db).collect()
         print(f"Collected {result['collected']} metric snapshot(s): {result['by_source']}")
+        return 0
+
+    if args.daily_run:
+        from onassis.daily_cycle import DailyCycle
+
+        mode = args.mode or "production"
+        summary = DailyCycle(config, db).run(mode=mode)
+        print(f"\nDAILY CYCLE — run #{summary['run_id']} ({summary['mode']}) "
+              f"— {summary['status']} in {summary['duration_seconds']}s\n")
+        for s in summary["stages"]:
+            line = f"  {s['stage']:<22} {s['status']}"
+            if s.get("error"):
+                line += f"  [error: {s['error']}]"
+            print(line)
+        print()
         return 0
 
     if args.experiments:

@@ -290,6 +290,15 @@ CREATE TABLE IF NOT EXISTS experiments (
 
 CREATE INDEX IF NOT EXISTS idx_experiments_status ON experiments(status);
 CREATE INDEX IF NOT EXISTS idx_experiments_product ON experiments(product_id, variable);
+
+CREATE TABLE IF NOT EXISTS daily_runs (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at       TEXT    NOT NULL,
+    mode             TEXT    NOT NULL,        -- production | dry_run
+    status           TEXT    NOT NULL,        -- completed | completed_with_failures
+    duration_seconds REAL    NOT NULL,
+    stages           TEXT    NOT NULL         -- JSON list of stage results
+);
 """
 
 
@@ -1308,6 +1317,37 @@ class Database:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    # --- Daily runs -------------------------------------------------
+
+    def insert_daily_run(self, run: dict[str, Any]) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO daily_runs (created_at, mode, status, duration_seconds, stages)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    _utcnow(),
+                    run.get("mode", "production"),
+                    run.get("status", "completed"),
+                    float(run.get("duration_seconds", 0) or 0),
+                    json.dumps(run.get("stages", [])),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def get_latest_daily_run(self) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM daily_runs ORDER BY id DESC LIMIT 1").fetchone()
+        return _row_to_daily_run(row) if row else None
+
+    def list_daily_runs(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM daily_runs ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [_row_to_daily_run(r) for r in rows]
+
 
 def _row_to_brief(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
@@ -1347,6 +1387,12 @@ def _row_to_ledger(row: sqlite3.Row) -> dict[str, Any]:
 def _row_to_listing(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
     data["raw"] = json.loads(data.get("raw") or "{}")
+    return data
+
+
+def _row_to_daily_run(row: sqlite3.Row) -> dict[str, Any]:
+    data = dict(row)
+    data["stages"] = json.loads(data.get("stages") or "[]")
     return data
 
 

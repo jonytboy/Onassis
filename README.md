@@ -334,6 +334,33 @@ python main.py --dashboard     # the profit-first company scoreboard
 ```
 `GET /dashboard` exposes the same metrics over the API.
 
+## Daily Cycle — the single execution entry point
+
+The Daily Cycle (`onassis/daily_cycle.py`) is pure **orchestration** — it adds
+no business logic and makes no decisions of its own; each stage delegates to a
+module that already owns that responsibility. It runs, in order:
+
+1. Sync Etsy → 2. Sync Pinterest → 3. Import Revenue → 4. Import Analytics →
+5. Run Product Optimiser → 6. CEO Decision → 7. Generate Campaign (if approved)
+→ 8. Build Listing Package → 9. Publish Draft (if approved) → 10. Record Results
+
+Every stage logs start/finish, records its duration, captures failures, and the
+cycle **continues safely** past a failed stage. Two modes: **dry_run**
+(observation + decision only — no generation, listing, or publishing) and
+**production** (the full cycle). No scheduling, cron, or timers — just
+coordination; the independent modules stay independent.
+
+| Method & path | Purpose |
+|---|---|
+| `POST /daily/run?mode=` | Run the cycle (`production` or `dry_run`). |
+| `GET /daily/status` | The most recent run. |
+| `GET /daily/history` | Past runs. |
+
+```bash
+python main.py --daily-run                 # production
+python main.py --daily-run --mode dry_run  # observation + decision only
+```
+
 ## Governance — Compliance Director & CEO
 
 No agent acts on its own. Each submits a structured **proposal**
@@ -439,7 +466,8 @@ then daily at `08:00` local time. Both are configurable.
 | `onassis/optimiser.py` | Product Optimiser — one highest-value action per product. |
 | `onassis/connectors/` | Pluggable revenue sources: base contract + read-only Etsy connector. |
 | `onassis/api.py` | FastAPI service — thin REST layer over the existing services. |
-| `onassis/orchestrator.py` | Defines the daily pipeline and owns the agents. |
+| `onassis/orchestrator.py` | Defines the content pipeline and owns the agents. |
+| `onassis/daily_cycle.py` | The Daily Cycle — single entry point; orchestrates all modules. |
 | `onassis/scheduler.py` | Runs the pipeline daily at a fixed time. |
 | `onassis/agents/base.py` | `BaseAgent` — the agent framework foundation. |
 | `onassis/agents/content_director.py` | LLM-generates the daily campaign brief (working). |
