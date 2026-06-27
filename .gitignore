@@ -6,6 +6,7 @@
 data/*.db
 data/*.sqlite3
 logs/*.log
+logs/*.log.*
 
 # --- Python ---
 __pycache__/
