@@ -29,6 +29,7 @@ from onassis.compliance import ComplianceDirector
 from onassis.config import Config
 from onassis.database import Database
 from onassis.logger import get_logger
+from onassis.profit import ProfitEngine
 
 log = get_logger(__name__)
 
@@ -50,6 +51,8 @@ class Orchestrator:
         self.brain = OnassisBrain(config, db)
         # The Compliance Director reviews every campaign (veto authority).
         self.compliance = ComplianceDirector(config, db)
+        # The Profit Engine records the economics of each run.
+        self.profit = ProfitEngine(config, db)
 
     def run_daily(self, *, for_date: date | None = None) -> dict[str, Any]:
         """Run one full pass of the daily pipeline.
@@ -63,6 +66,12 @@ class Orchestrator:
         items = self.creator.execute(brief=brief)
         knowledge = self.brain.generate_for_campaign(campaign, brief)
         compliance = self.compliance.review_campaign(campaign, items)
+
+        # Record the campaign's estimated AI cost in the profit ledger.
+        ai_cost = float((self.config.profit or {}).get("ai_cost_per_campaign", 0) or 0)
+        if ai_cost:
+            self.profit.record_campaign_ai_cost(campaign["id"], ai_cost)
+
         publish_result = self.publisher.execute(brief_id=brief["id"])
         analytics_result = self.analytics.execute(brief_id=brief["id"])
 
@@ -76,6 +85,8 @@ class Orchestrator:
             "confidence": knowledge["confidence"],
             "compliance_score": compliance["compliance_score"],
             "compliance_verdict": compliance["verdict"],
+            "ai_cost": ai_cost,
+            "cash_balance": self.profit.cash_balance(),
             "published": publish_result["published"],
             "analytics": analytics_result,
         }

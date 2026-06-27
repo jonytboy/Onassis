@@ -106,6 +106,38 @@ python main.py                 # start the daily scheduler (long-running)
 Content generation calls the Anthropic API, so an `ANTHROPIC_API_KEY` is
 required. The agents fail with a clear message if it's missing.
 
+## Profit Engine — the operating philosophy
+
+ONASSIS is a **capital-allocation system**: its purpose is to maximise
+long-term sustainable net profit. Every proposal is an **investment** — it
+carries cost, expected revenue, net profit, ROI, confidence, time-to-payback,
+and a risk level (`onassis/proposals.py`). The CEO ranks proposals by
+**risk-adjusted ROI** (`roi × confidence × risk weight`) and allocates the
+daily budget to the highest returns first, asking of each:
+
+> "If I invest £1 here, is this the highest expected return currently
+> available?" — if it fails the ROI hurdle (`policy.min_roi`), it's rejected.
+
+`Governance.allocate([...])` decides a whole batch competing for one budget:
+Compliance screens each, survivors are ranked, and capital is committed
+best-first until the daily AI budget or cash reserve runs out.
+
+**Company policies** (enforced): never breach copyright/trademark/platform
+policy (Compliance), never exceed the daily AI budget, never fall below the
+minimum cash reserve, always prefer long-term profit over vanity metrics.
+
+The **profit dashboard** (`onassis/profit.py`) prioritises, in order:
+Net Profit · ROI · Cash Balance · AI Cost · Advertising Cost · Active
+Products · Profit Per Product · Profit Per Campaign. Followers/likes/reach are
+deliberately absent. It's fed by a `ledger` table of costs and revenue, and
+is brand-/marketplace-/product-tagged so multiple brands and marketplaces roll
+up through the same engine **without changing the decision logic**.
+
+```bash
+python main.py --dashboard     # the profit-first company scoreboard
+```
+`GET /dashboard` exposes the same metrics over the API.
+
 ## Governance — Compliance Director & CEO
 
 No agent acts on its own. Each submits a structured **proposal**
@@ -159,6 +191,7 @@ Interactive **Swagger docs at `/docs`**, OpenAPI schema at `/openapi.json`.
 | `GET /campaigns` | All campaigns (the dashboard). |
 | `GET /campaign/{id}` | One campaign with all assets + its prediction. |
 | `GET /campaign/latest` | The most recently generated campaign, with assets. |
+| `GET /dashboard` | The profit-first company dashboard. |
 
 `POST /campaign/create` returns exactly:
 
@@ -203,7 +236,8 @@ then daily at `08:00` local time. Both are configurable.
 | `onassis/proposals.py` | The `Proposal` structure + shared verdict vocabulary. |
 | `onassis/ceo.py` | CEO Agent — deterministic company-policy decision engine. |
 | `onassis/compliance.py` | Compliance Director — risk review with veto power. |
-| `onassis/governance.py` | Routes proposals: Compliance (veto) → CEO → final verdict. |
+| `onassis/governance.py` | Routes proposals: Compliance (veto) → CEO → final verdict; batch allocation. |
+| `onassis/profit.py` | The Profit Engine — ledger + profit-first dashboard. |
 | `onassis/api.py` | FastAPI service — thin REST layer over the existing services. |
 | `onassis/orchestrator.py` | Defines the daily pipeline and owns the agents. |
 | `onassis/scheduler.py` | Runs the pipeline daily at a fixed time. |
@@ -264,3 +298,5 @@ in cleanly:
 - **`compliance_reports`** — per-proposal/per-campaign risk reviews
   (compliance score, trademark/copyright/platform risk, brand consistency,
   verdict, corrections). The Compliance Director's learning memory.
+- **`ledger`** — costs and revenue (kind, category, amount, campaign/product,
+  brand, marketplace). The Profit Engine's source of truth for the dashboard.

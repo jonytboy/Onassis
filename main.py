@@ -29,6 +29,7 @@ from onassis.config import load_config
 from onassis.database import Database
 from onassis.logger import get_logger, setup_logging
 from onassis.orchestrator import Orchestrator
+from onassis.profit import ProfitEngine
 from onassis.scheduler import DailyScheduler
 
 
@@ -81,6 +82,9 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--compliance", action="store_true", help="List compliance reports."
+    )
+    parser.add_argument(
+        "--dashboard", action="store_true", help="Show the profit dashboard."
     )
     parser.add_argument(
         "--serve", action="store_true", help="Run the REST API (Swagger at /docs)."
@@ -204,6 +208,21 @@ def _list_compliance(db: Database) -> None:
     print()
 
 
+def _show_dashboard(profit: ProfitEngine) -> None:
+    d = profit.dashboard()
+    print("\nONASSIS PROFIT DASHBOARD\n")
+    print(f"  1. Net Profit          : {d['net_profit']:.2f}")
+    print(f"  2. ROI                 : {d['roi']:.2%}")
+    print(f"  3. Cash Balance        : {d['cash_balance']:.2f}")
+    print(f"  4. AI Cost             : {d['ai_cost']:.2f}")
+    print(f"  5. Advertising Cost    : {d['advertising_cost']:.2f}")
+    print(f"  6. Active Products     : {d['active_products']}")
+    print(f"  7. Profit Per Product  : {d['profit_per_product'] or '—'}")
+    print(f"  8. Profit Per Campaign : {d['profit_per_campaign'] or '—'}")
+    print(f"\n  (today: AI spend {d['ai_spend_today']:.2f} / "
+          f"budget remaining {d['remaining_ai_budget_today']:.2f})\n")
+
+
 def _learn(brain: OnassisBrain, db: Database, campaign_arg: int) -> int:
     """Generate knowledge for one campaign, or backfill all missing (arg == 0)."""
     if campaign_arg == 0:
@@ -265,6 +284,10 @@ def main() -> int:
 
     if args.compliance:
         _list_compliance(db)
+        return 0
+
+    if args.dashboard:
+        _show_dashboard(ProfitEngine(config, db))
         return 0
 
     if args.set_status is not None:

@@ -63,6 +63,7 @@ class Config:
     # governance: CEO company policy + Compliance thresholds
     policy: dict[str, Any] = field(default_factory=dict)
     compliance: dict[str, Any] = field(default_factory=dict)
+    profit: dict[str, Any] = field(default_factory=dict)
 
     # secrets / future integrations
     anthropic_api_key: str | None = None
@@ -107,6 +108,7 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
     content_targets = raw.get("content_targets", {})
     policy = raw.get("policy", {})
     compliance = raw.get("compliance", {})
+    profit = raw.get("profit", {})
 
     # Environment variables win over YAML.
     brand = {**brand, "name": _env("ONASSIS_BRAND_NAME", brand.get("name", "Onassis"))}
@@ -130,5 +132,6 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         content_targets=content_targets,
         policy=policy,
         compliance=compliance,
+        profit=profit,
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
     )

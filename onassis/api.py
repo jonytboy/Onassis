@@ -27,6 +27,7 @@ from onassis.config import Config, load_config
 from onassis.database import Database
 from onassis.logger import get_logger, setup_logging
 from onassis.orchestrator import Orchestrator
+from onassis.profit import ProfitEngine
 
 log = get_logger(__name__)
 
@@ -70,6 +71,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     db = orchestrator.db
     campaigns = orchestrator.campaigns
     brain = orchestrator.brain
+    profit = ProfitEngine(config, db)
 
     app = FastAPI(
         title="ONASSIS API",
@@ -85,6 +87,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.db = db
     app.state.campaigns = campaigns
     app.state.brain = brain
+    app.state.profit = profit
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""
@@ -110,6 +113,11 @@ def create_app(config: Config | None = None) -> FastAPI:
             "campaigns": len(db.list_campaigns()),
             "knowledge": len(db.list_knowledge()),
         }
+
+    @app.get("/dashboard", tags=["profit"])
+    def dashboard() -> dict[str, Any]:
+        """The profit-first company dashboard (net profit, ROI, cash, costs…)."""
+        return profit.dashboard()
 
     @app.post(
         "/campaign/create", response_model=CampaignCreateResponse, tags=["campaigns"]

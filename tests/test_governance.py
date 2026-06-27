@@ -16,6 +16,9 @@ _POLICY = {
     "max_experiment_budget": 200,
     "min_confidence": 50,
     "brand_consistency_min": 70,
+    "daily_ai_budget": 100,
+    "min_roi": 0.50,
+    "risk_weights": {"low": 1.0, "medium": 0.7, "high": 0.4},
 }
 
 
@@ -99,3 +102,37 @@ def test_get_proposal_decisions_bundle(config, db):
     assert bundle["proposal"]["id"] == pid
     assert bundle["compliance"] is not None
     assert len(bundle["decisions"]) == 2
+
+
+# --- Capital allocation (batch) -------------------------------------
+
+def test_allocate_funds_highest_roi_within_budget(config, db):
+    config.policy = dict(_POLICY, daily_ai_budget=50, max_ai_spend=100)
+    config.compliance = {"high_risk_threshold": 70, "medium_risk_threshold": 40,
+                         "brand_consistency_min": 70}
+    gov = Governance(config, db)
+    gov.compliance._llm = FakeLLM(make_compliance_response())  # all clear compliance
+
+    better = _sound_proposal(estimated_cost=40, expected_revenue=400)  # ROI 9
+    worse = _sound_proposal(estimated_cost=40, expected_revenue=120)   # ROI 2
+    results = gov.allocate([worse, better])
+
+    # Ranked best-first; only the top fits the £50 budget.
+    ranked = sorted(results, key=lambda r: r["rank"])
+    assert ranked[0]["final_verdict"] == APPROVE
+    assert ranked[0]["final_authority"] == "CEO"
+    assert ranked[1]["final_verdict"] == REJECT
+
+
+def test_allocate_excludes_compliance_vetoed(config, db):
+    config.policy = dict(_POLICY)
+    config.compliance = {"high_risk_threshold": 70, "medium_risk_threshold": 40,
+                         "brand_consistency_min": 70}
+    gov = Governance(config, db)
+    # Every proposal in this batch trips a copyright veto.
+    gov.compliance._llm = FakeLLM(make_compliance_response(copyright=95))
+
+    results = gov.allocate([_sound_proposal(), _sound_proposal()])
+    assert all(r["final_verdict"] == REJECT for r in results)
+    assert all(r["final_authority"] == "Compliance" for r in results)
+    assert all(r["ceo"] is None for r in results)  # CEO never funds a vetoed bid

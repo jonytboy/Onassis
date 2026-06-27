@@ -1,17 +1,21 @@
-"""The CEO Agent — the single business decision-making authority.
+"""The CEO Agent — the capital-allocation decision authority.
 
-No other agent executes actions directly. Each submits a structured
-:class:`~onassis.proposals.Proposal`; the CEO evaluates it against company
-policy and returns one of APPROVE / REJECT / REQUEST_MORE_INFO, with written
-reasoning, and stores the decision.
+ONASSIS exists to maximise long-term sustainable net profit. Every proposal
+is treated as an **investment**: the CEO evaluates its risk-adjusted ROI,
+ranks competing proposals, and allocates the available daily budget to the
+highest expected returns first. Before funding anything it asks:
 
-The engine is **deterministic** — a transparent rule check against policy —
-so decisions are explainable, reproducible, and fully testable without any
-external calls. (The Compliance Director, Sprint 7, can overrule the CEO.)
+    "If I invest £1 here, is this the highest expected return currently
+     available?" — if not (it fails the ROI hurdle), it is rejected.
+
+The engine is **deterministic** — a transparent rule + ranking check against
+company policy — so decisions are explainable, reproducible, and testable.
+(The Compliance Director, Sprint 7, can still overrule the CEO.)
 
 Company policy (from ``config.yaml -> policy``):
     available_cash, cash_reserve, min_profit_margin, max_ai_spend,
-    max_experiment_budget, min_confidence, brand_consistency_min.
+    max_experiment_budget, min_confidence, brand_consistency_min,
+    daily_ai_budget, min_roi (the risk-adjusted ROI hurdle), risk_weights.
 """
 
 from __future__ import annotations
@@ -21,7 +25,13 @@ from typing import Any
 from onassis.config import Config
 from onassis.database import Database
 from onassis.logger import get_logger
-from onassis.proposals import APPROVE, REJECT, REQUEST_MORE_INFO, Proposal
+from onassis.proposals import (
+    APPROVE,
+    DEFAULT_RISK_WEIGHTS,
+    REJECT,
+    REQUEST_MORE_INFO,
+    Proposal,
+)
 
 log = get_logger(__name__)
 
@@ -33,11 +43,13 @@ _DEFAULTS = {
     "max_experiment_budget": 200.0,
     "min_confidence": 50,
     "brand_consistency_min": 70,
+    "daily_ai_budget": 100.0,
+    "min_roi": 0.50,  # minimum risk-adjusted ROI to fund (the "£1" hurdle)
 }
 
 
 class CEOAgent:
-    """Evaluates proposals against company policy and records the decision."""
+    """Ranks proposals by risk-adjusted ROI and allocates capital to the best."""
 
     name = "CEO"
 
@@ -45,6 +57,9 @@ class CEOAgent:
         self.config = config
         self.db = db
         self.policy = {**_DEFAULTS, **(config.policy or {})}
+        self.risk_weights = self.policy.get("risk_weights") or DEFAULT_RISK_WEIGHTS
+
+    # --- Single-proposal evaluation ---------------------------------
 
     def evaluate(
         self,
@@ -52,44 +67,104 @@ class CEOAgent:
         *,
         proposal_id: int | None = None,
         brand_consistency_score: int | None = None,
+        remaining_budget: float | None = None,
+        available_cash: float | None = None,
         store: bool = True,
     ) -> dict[str, Any]:
-        """Decide on a proposal. Returns the decision (and stores it).
-
-        Args:
-            proposal: the proposal under review.
-            proposal_id: the stored proposal's id (required to persist).
-            brand_consistency_score: optional score (0-100) from Compliance;
-                if given, it's checked against the brand-consistency policy.
-            store: whether to persist the decision.
-        """
+        """Decide on a single proposal as an investment, and record it."""
         p = proposal if isinstance(proposal, Proposal) else Proposal.from_dict(proposal)
-        checks = self._run_checks(p, brand_consistency_score)
+        econ = p.economics(self.risk_weights)
+        budget = self.policy["daily_ai_budget"] if remaining_budget is None else remaining_budget
+        cash = self.policy["available_cash"] if available_cash is None else available_cash
 
-        verdict, reasoning = self._decide(p, checks)
+        checks = self._run_checks(p, econ, brand_consistency_score, budget, cash)
+        verdict, reasoning = self._decide(p, econ, checks)
 
         decision: dict[str, Any] = {
             "proposal_id": proposal_id,
             "authority": self.name,
             "verdict": verdict,
             "reasoning": reasoning,
+            "economics": econ,
             "policy_checks": checks,
         }
         if store and proposal_id is not None:
             decision["id"] = self.db.insert_decision(decision)
-        log.info("CEO verdict on proposal #%s: %s", proposal_id, verdict)
+        log.info(
+            "CEO verdict on proposal #%s: %s (risk-adj ROI %.2f)",
+            proposal_id,
+            verdict,
+            econ["risk_adjusted_roi"],
+        )
         return decision
+
+    # --- Ranking & capital allocation -------------------------------
+
+    def rank(self, proposals: list[Proposal]) -> list[Proposal]:
+        """Order proposals by risk-adjusted ROI, highest first."""
+        return sorted(
+            proposals, key=lambda p: p.risk_adjusted_roi(self.risk_weights), reverse=True
+        )
+
+    def allocate(
+        self,
+        candidates: list[dict[str, Any]],
+        *,
+        available_budget: float | None = None,
+        available_cash: float | None = None,
+        store: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Allocate the daily budget across competing proposals, best first.
+
+        Each candidate is ``{"proposal": Proposal, "proposal_id": int|None,
+        "brand_consistency_score": int|None}``. Proposals are ranked by
+        risk-adjusted ROI; capital is committed to the highest returns until
+        the daily AI budget or cash reserve is exhausted. Returns one decision
+        per candidate, in ranked order, annotated with ``rank``.
+        """
+        ranked = sorted(
+            candidates,
+            key=lambda c: c["proposal"].risk_adjusted_roi(self.risk_weights),
+            reverse=True,
+        )
+        remaining = self.policy["daily_ai_budget"] if available_budget is None else available_budget
+        cash = self.policy["available_cash"] if available_cash is None else available_cash
+
+        results: list[dict[str, Any]] = []
+        for rank, c in enumerate(ranked, start=1):
+            p: Proposal = c["proposal"]
+            decision = self.evaluate(
+                p,
+                proposal_id=c.get("proposal_id"),
+                brand_consistency_score=c.get("brand_consistency_score"),
+                remaining_budget=remaining,
+                available_cash=cash,
+                store=store,
+            )
+            decision["rank"] = rank
+            if decision["verdict"] == APPROVE:
+                spend = float(p.estimated_cost or 0)
+                remaining -= spend
+                cash -= spend
+            results.append(decision)
+        return results
 
     # --- Policy checks ----------------------------------------------
 
     def _run_checks(
-        self, p: Proposal, brand_consistency_score: int | None
+        self,
+        p: Proposal,
+        econ: dict[str, Any],
+        brand_consistency_score: int | None,
+        budget: float,
+        cash: float,
     ) -> list[dict[str, Any]]:
-        """Evaluate every policy rule and return a transparent checklist."""
         pol = self.policy
-        cost = float(p.estimated_cost or 0)
-        benefit = float(p.expected_benefit or 0)
-        margin = (benefit - cost) / benefit if benefit > 0 else -1.0
+        cost = econ["estimated_cost"]
+        revenue = econ["expected_revenue"]
+        net = econ["expected_net_profit"]
+        rar = econ["risk_adjusted_roi"]
+        margin = (revenue - cost) / revenue if revenue > 0 else -1.0
 
         checks: list[dict[str, Any]] = [
             {
@@ -99,37 +174,52 @@ class CEOAgent:
                 "detail": f"confidence {p.confidence} vs. minimum {pol['min_confidence']}",
             },
             {
+                "name": "positive_net_profit",
+                "passed": net > 0,
+                "blocking": True,
+                "detail": f"expected net profit {net:g}",
+            },
+            {
+                "name": "roi_hurdle",
+                "passed": rar >= pol["min_roi"],
+                "blocking": True,
+                "detail": (
+                    f"risk-adjusted ROI {rar:.2f} vs. hurdle {pol['min_roi']:.2f} "
+                    f"(is £1 here the best available return?)"
+                ),
+            },
+            {
+                "name": "daily_ai_budget",
+                "passed": cost <= budget,
+                "blocking": True,
+                "detail": f"cost {cost:g} vs. remaining daily AI budget {budget:g}",
+            },
+            {
                 "name": "max_ai_spend",
                 "passed": cost <= pol["max_ai_spend"],
                 "blocking": True,
-                "detail": f"estimated cost {cost:g} vs. max AI spend {pol['max_ai_spend']:g}",
+                "detail": f"cost {cost:g} vs. max AI spend {pol['max_ai_spend']:g}",
             },
             {
                 "name": "max_experiment_budget",
                 "passed": cost <= pol["max_experiment_budget"],
                 "blocking": True,
-                "detail": (
-                    f"estimated cost {cost:g} vs. max experiment budget "
-                    f"{pol['max_experiment_budget']:g}"
-                ),
+                "detail": f"cost {cost:g} vs. max experiment budget {pol['max_experiment_budget']:g}",
             },
             {
                 "name": "cash_reserve",
-                "passed": (pol["available_cash"] - cost) >= pol["cash_reserve"],
+                "passed": (cash - cost) >= pol["cash_reserve"],
                 "blocking": True,
                 "detail": (
-                    f"cash after spend {pol['available_cash'] - cost:g} vs. "
-                    f"required reserve {pol['cash_reserve']:g}"
+                    f"cash after spend {cash - cost:g} vs. required reserve "
+                    f"{pol['cash_reserve']:g}"
                 ),
             },
             {
                 "name": "min_profit_margin",
                 "passed": margin >= pol["min_profit_margin"],
                 "blocking": True,
-                "detail": (
-                    f"projected margin {margin:.0%} vs. minimum "
-                    f"{pol['min_profit_margin']:.0%}"
-                ),
+                "detail": f"projected margin {margin:.0%} vs. minimum {pol['min_profit_margin']:.0%}",
             },
         ]
         if brand_consistency_score is not None:
@@ -146,8 +236,9 @@ class CEOAgent:
             )
         return checks
 
-    def _decide(self, p: Proposal, checks: list[dict[str, Any]]) -> tuple[str, str]:
-        """Turn the checklist into a verdict + written reasoning."""
+    def _decide(
+        self, p: Proposal, econ: dict[str, Any], checks: list[dict[str, Any]]
+    ) -> tuple[str, str]:
         failed_blocking = [c for c in checks if c["blocking"] and not c["passed"]]
         confidence_ok = next(c["passed"] for c in checks if c["name"] == "confidence")
 
@@ -155,23 +246,27 @@ class CEOAgent:
             reasons = "; ".join(f"{c['name']} ({c['detail']})" for c in failed_blocking)
             verdict = REJECT
             reasoning = (
-                f"REJECTED '{p.requested_action}' from {p.agent_name}. It violates "
-                f"company policy on: {reasons}. Per policy these are hard limits, so "
-                f"the action cannot proceed as proposed."
+                f"REJECTED '{p.requested_action}' from {p.agent_name}. As an investment "
+                f"(cost {econ['estimated_cost']:g}, expected net profit "
+                f"{econ['expected_net_profit']:g}, risk-adjusted ROI "
+                f"{econ['risk_adjusted_roi']:.2f}) it fails: {reasons}. Capital is better "
+                f"deployed elsewhere."
             )
         elif not confidence_ok:
             conf_detail = next(c["detail"] for c in checks if c["name"] == "confidence")
             verdict = REQUEST_MORE_INFO
             reasoning = (
                 f"MORE INFORMATION NEEDED for '{p.requested_action}' from {p.agent_name}. "
-                f"It is within budget and margin policy, but {conf_detail} is below the "
-                f"bar to commit. Provide stronger evidence or a tighter estimate to proceed."
+                f"The investment case clears policy and the ROI hurdle, but {conf_detail} "
+                f"is too low to commit capital. Provide stronger evidence to proceed."
             )
         else:
             verdict = APPROVE
             reasoning = (
-                f"APPROVED '{p.requested_action}' from {p.agent_name}. It satisfies every "
-                f"company-policy check: spend within limits, cash reserve preserved, "
-                f"projected margin above the minimum, and sufficient confidence."
+                f"APPROVED '{p.requested_action}' from {p.agent_name} as a sound investment: "
+                f"expected net profit {econ['expected_net_profit']:g} on cost "
+                f"{econ['estimated_cost']:g} (risk-adjusted ROI {econ['risk_adjusted_roi']:.2f} "
+                f"clears the {self.policy['min_roi']:.2f} hurdle). Spend is within the daily AI "
+                f"budget and limits, and the cash reserve is preserved."
             )
         return verdict, reasoning

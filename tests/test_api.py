@@ -141,6 +141,28 @@ def test_latest_campaign_empty(app_and_client):
     assert client.get("/campaign/latest").status_code == 404
 
 
+# --- GET /dashboard -------------------------------------------------
+
+def test_dashboard_endpoint(app_and_client):
+    _, client = app_and_client
+    r = client.get("/dashboard")
+    assert r.status_code == 200
+    body = r.json()
+    # Profit-first priority order.
+    assert list(body)[:8] == [
+        "net_profit", "roi", "cash_balance", "ai_cost", "advertising_cost",
+        "active_products", "profit_per_product", "profit_per_campaign",
+    ]
+
+
+def test_dashboard_reflects_campaign_ai_cost(app_and_client):
+    _, client = app_and_client
+    client.post("/campaign/create")  # records the per-campaign AI cost
+    body = client.get("/dashboard").json()
+    assert body["ai_cost"] > 0
+    assert body["cash_balance"] < 10000  # starting cash reduced by AI cost
+
+
 # --- Swagger / OpenAPI docs -----------------------------------------
 
 def test_swagger_docs_available(app_and_client):
@@ -150,7 +172,7 @@ def test_swagger_docs_available(app_and_client):
     assert schema.status_code == 200
     paths = schema.json()["paths"]
     for path in ("/health", "/campaign/create", "/campaigns",
-                 "/campaign/{campaign_id}", "/campaign/latest"):
+                 "/campaign/{campaign_id}", "/campaign/latest", "/dashboard"):
         assert path in paths
 
 

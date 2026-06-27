@@ -66,15 +66,29 @@ content_targets:
   image_prompts: 3
 
 # --- Company policy --------------------------------------------------
-# The rules the CEO evaluates every proposal against (Sprint 6).
+# The rules the CEO evaluates every proposal against (Sprints 6 & 8).
+# ONASSIS is a capital-allocation system: every proposal is an investment,
+# ranked by risk-adjusted ROI, funded highest-return-first.
 policy:
   available_cash: 10000          # current cash on hand (for the reserve check)
   cash_reserve: 5000             # never let cash fall below this
-  min_profit_margin: 0.30        # (benefit - cost) / benefit must be >= this
+  min_profit_margin: 0.30        # (revenue - cost) / revenue must be >= this
   max_ai_spend: 50               # max cost for a single AI-spend action
   max_experiment_budget: 200     # max cost for an experiment
   min_confidence: 50             # below this, the CEO requests more information
   brand_consistency_min: 70      # min brand-consistency score (0-100) to approve
+  daily_ai_budget: 100           # never spend beyond this on AI per day
+  min_roi: 0.50                  # hurdle: min risk-adjusted ROI to fund (the "£1" test)
+  risk_weights:                  # discount applied to ROI by risk level
+    low: 1.0
+    medium: 0.7
+    high: 0.4
+
+# --- Profit engine ---------------------------------------------------
+# Drives the profit dashboard. Cash balance starts from policy.available_cash
+# and moves with ledger costs/revenue.
+profit:
+  ai_cost_per_campaign: 0.50     # estimated AI cost recorded per campaign run
 
 # --- Compliance thresholds -------------------------------------------
 # The Compliance Director's veto rules (Sprint 7). Risk scores are 0-100.

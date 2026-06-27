@@ -136,6 +136,24 @@ CREATE TABLE IF NOT EXISTS compliance_reports (
 
 CREATE INDEX IF NOT EXISTS idx_decisions_proposal ON decisions(proposal_id);
 CREATE INDEX IF NOT EXISTS idx_compliance_verdict ON compliance_reports(verdict);
+
+CREATE TABLE IF NOT EXISTS ledger (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at  TEXT    NOT NULL,
+    entry_date  TEXT    NOT NULL,          -- YYYY-MM-DD, for daily budgeting
+    kind        TEXT    NOT NULL,          -- revenue | cost
+    category    TEXT    NOT NULL,          -- ai | advertising | cogs | sale | other
+    amount      REAL    NOT NULL,          -- positive magnitude
+    campaign_id INTEGER,
+    product_id  TEXT,
+    brand       TEXT,
+    marketplace TEXT,
+    note        TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_ledger_kind ON ledger(kind);
+CREATE INDEX IF NOT EXISTS idx_ledger_category ON ledger(category);
+CREATE INDEX IF NOT EXISTS idx_ledger_date ON ledger(entry_date);
 """
 
 
@@ -588,6 +606,103 @@ class Database:
             ).fetchall()
         return [_row_to_compliance(r) for r in rows]
 
+    # --- Profit ledger (costs & revenue) ----------------------------
+
+    def insert_ledger_entry(self, entry: dict[str, Any]) -> int:
+        """Record a cost or revenue entry; returns its row id."""
+        now = _utcnow()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO ledger
+                    (created_at, entry_date, kind, category, amount, campaign_id,
+                     product_id, brand, marketplace, note)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    now,
+                    entry.get("entry_date") or now[:10],
+                    entry["kind"],
+                    entry.get("category", "other"),
+                    float(entry.get("amount", 0) or 0),
+                    entry.get("campaign_id"),
+                    entry.get("product_id"),
+                    entry.get("brand"),
+                    entry.get("marketplace"),
+                    entry.get("note", ""),
+                ),
+            )
+            entry_id = int(cur.lastrowid)
+        log.info(
+            "Ledger %s %s %.2f (campaign %s)",
+            entry["kind"],
+            entry.get("category"),
+            float(entry.get("amount", 0) or 0),
+            entry.get("campaign_id"),
+        )
+        return entry_id
+
+    def list_ledger(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM ledger ORDER BY id DESC").fetchall()
+        return [_row_to_ledger(r) for r in rows]
+
+    def _sum(self, where: str, params: tuple) -> float:
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT COALESCE(SUM(amount), 0) FROM ledger WHERE {where}", params
+            ).fetchone()
+        return float(row[0])
+
+    def total_revenue(self) -> float:
+        return self._sum("kind = 'revenue'", ())
+
+    def total_cost(self) -> float:
+        return self._sum("kind = 'cost'", ())
+
+    def cost_by_category(self, category: str) -> float:
+        return self._sum("kind = 'cost' AND category = ?", (category,))
+
+    def ai_cost_on(self, entry_date: str) -> float:
+        """AI cost recorded on a given YYYY-MM-DD (for the daily AI budget)."""
+        return self._sum(
+            "kind = 'cost' AND category = 'ai' AND entry_date = ?", (entry_date,)
+        )
+
+    def net_by_campaign(self) -> list[dict[str, Any]]:
+        """Net profit (revenue - cost) grouped by campaign_id."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT campaign_id,
+                       COALESCE(SUM(CASE WHEN kind='revenue' THEN amount ELSE 0 END), 0)
+                       - COALESCE(SUM(CASE WHEN kind='cost' THEN amount ELSE 0 END), 0)
+                       AS net
+                FROM ledger
+                WHERE campaign_id IS NOT NULL
+                GROUP BY campaign_id
+                ORDER BY campaign_id
+                """
+            ).fetchall()
+        return [{"campaign_id": r["campaign_id"], "net_profit": float(r["net"])} for r in rows]
+
+    def net_by_product(self) -> list[dict[str, Any]]:
+        """Net profit grouped by product_id (products may be a future entity)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT product_id,
+                       COALESCE(SUM(CASE WHEN kind='revenue' THEN amount ELSE 0 END), 0)
+                       - COALESCE(SUM(CASE WHEN kind='cost' THEN amount ELSE 0 END), 0)
+                       AS net
+                FROM ledger
+                WHERE product_id IS NOT NULL
+                GROUP BY product_id
+                ORDER BY product_id
+                """
+            ).fetchall()
+        return [{"product_id": r["product_id"], "net_profit": float(r["net"])} for r in rows]
+
 
 def _row_to_brief(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
@@ -612,7 +727,16 @@ def _row_to_knowledge(row: sqlite3.Row) -> dict[str, Any]:
 def _row_to_proposal(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
     data["risks"] = json.loads(data.get("risks") or "[]")
+    # Surface investment economics stored in the JSON payload (kept there so no
+    # schema migration is needed) without overriding column-authoritative fields.
+    payload = json.loads(data.get("payload") or "{}")
+    for key, value in payload.items():
+        data.setdefault(key, value)
     return data
+
+
+def _row_to_ledger(row: sqlite3.Row) -> dict[str, Any]:
+    return dict(row)
 
 
 def _row_to_decision(row: sqlite3.Row) -> dict[str, Any]:
