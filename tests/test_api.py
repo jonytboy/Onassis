@@ -272,6 +272,49 @@ def test_etsy_sync_not_configured(app_and_client):
     assert body["configured"] is False
 
 
+# --- Publishing endpoints -------------------------------------------
+
+def test_publish_and_status_endpoints(app_and_client, tmp_path):
+    import json as _json
+    from pathlib import Path
+
+    app, client = app_and_client
+    db = app.state.db
+    # Approved campaign + a listing package on disk (isolated temp exports dir).
+    brief_id = db.insert_brief({"brief_date": "2026-06-26", "theme": "T", "keywords": []})
+    cid = db.insert_campaign({"name": "Salt", "brief_id": brief_id})
+    db.insert_compliance_report({"campaign_id": cid, "verdict": "APPROVE",
+                                 "reasoning": "ok", "compliance_score": 90})
+    app.state.publisher.listing_cfg = {"exports_dir": str(tmp_path / "exports")}
+    folder = Path(tmp_path / "exports") / str(cid)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "listing.json").write_text(_json.dumps(
+        {"campaign_id": cid, "product_id": "SKU1", "title": "T", "description": "d",
+         "tags": ["a"], "price": 30.0, "quantity": 50}))
+
+    # Inject a stub write client so a real draft "publishes" offline.
+    class _Stub:
+        def create_draft(self, listing):
+            return {"listing_id": 999}
+    app.state.publisher._draft_client = _Stub()
+
+    r = client.post(f"/publish/{cid}?mode=draft")
+    assert r.status_code == 200
+    assert r.json()["status"] == "draft"
+
+    status = client.get("/publishing/status").json()
+    assert status["total"] == 1
+    assert status["by_status"]["draft"] == 1
+
+
+def test_publish_unapproved_blocked(app_and_client):
+    app, client = app_and_client
+    db = app.state.db
+    brief_id = db.insert_brief({"brief_date": "2026-06-26", "theme": "T", "keywords": []})
+    cid = db.insert_campaign({"name": "C", "brief_id": brief_id})  # no approval
+    assert client.post(f"/publish/{cid}").json()["status"] == "blocked"
+
+
 # --- Listing endpoint -----------------------------------------------
 
 def test_listing_endpoint(app_and_client):
@@ -350,7 +393,8 @@ def test_swagger_docs_available(app_and_client):
                  "/revenue/today", "/revenue/month", "/profit",
                  "/orders", "/orders/{order_id}",
                  "/etsy/orders", "/etsy/listings", "/etsy/stats", "/etsy/sync",
-                 "/optimiser", "/listing/{campaign_id}"):
+                 "/optimiser", "/listing/{campaign_id}",
+                 "/publish/{campaign_id}", "/publishing/status"):
         assert path in paths
 
 

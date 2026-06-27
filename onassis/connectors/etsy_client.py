@@ -80,3 +80,33 @@ class EtsyClient:
         return self._paginate(
             f"/shops/{self.shop_id}/listings", {"state": state, "includes": "Inventory"}
         )
+
+
+class EtsyDraftClient(EtsyClient):
+    """Write client that creates Etsy listings as **drafts** only.
+
+    The Publisher uses this for Draft-mode publishing. It maps a listing
+    package onto Etsy's createDraftListing fields and always sets
+    ``state=draft`` — it never lists a product live.
+    """
+
+    def create_draft(self, listing: dict[str, Any]) -> dict[str, Any]:
+        """Create a draft listing on Etsy and return ``{listing_id, ...}``."""
+        body = {
+            "quantity": listing.get("quantity", 1),
+            "title": listing["title"],
+            "description": listing["description"],
+            "price": listing.get("price"),
+            "who_made": listing.get("who_made", "i_did"),
+            "when_made": listing.get("when_made", "made_to_order"),
+            "taxonomy_id": listing.get("taxonomy_id"),
+            "shipping_profile_id": listing.get("shipping_profile_id"),
+            "tags": listing.get("tags", []),
+            "materials": listing.get("materials", []),
+            "type": "physical",
+            "state": "draft",  # NEVER publish live from here
+        }
+        url = f"{self.base_url}/shops/{self.shop_id}/listings"
+        resp = httpx.post(url, headers=self._headers(), data=body, timeout=self.timeout)
+        resp.raise_for_status()
+        return resp.json()

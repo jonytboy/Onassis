@@ -236,6 +236,22 @@ CREATE TABLE IF NOT EXISTS sync_cursors (
 );
 
 CREATE INDEX IF NOT EXISTS idx_listing_stats_listing ON listing_stats(listing_id);
+
+CREATE TABLE IF NOT EXISTS publications (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at     TEXT    NOT NULL,
+    platform       TEXT    NOT NULL,        -- etsy
+    product_id     TEXT,
+    campaign_id    INTEGER NOT NULL,
+    listing_id     TEXT,                     -- external listing id (when created)
+    mode           TEXT    NOT NULL,         -- dry_run | draft | live
+    status         TEXT    NOT NULL,         -- draft | published | dry_run | failed
+    attempts       INTEGER NOT NULL DEFAULT 1,
+    failure_reason TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_publications_campaign ON publications(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_publications_status ON publications(status);
 """
 
 
@@ -1039,6 +1055,57 @@ class Database:
                 """,
                 (resource, cursor, _utcnow()),
             )
+
+    # --- Publications -----------------------------------------------
+
+    def insert_publication(self, pub: dict[str, Any]) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO publications
+                    (created_at, platform, product_id, campaign_id, listing_id,
+                     mode, status, attempts, failure_reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utcnow(),
+                    pub.get("platform", "etsy"),
+                    pub.get("product_id"),
+                    pub["campaign_id"],
+                    pub.get("listing_id"),
+                    pub.get("mode", "draft"),
+                    pub["status"],
+                    int(pub.get("attempts", 1)),
+                    pub.get("failure_reason"),
+                ),
+            )
+            pub_id = int(cur.lastrowid)
+        log.info(
+            "Recorded publication #%s: campaign %s -> %s (%s)",
+            pub_id, pub["campaign_id"], pub["status"], pub.get("mode"),
+        )
+        return pub_id
+
+    def get_active_publication(
+        self, campaign_id: int, platform: str = "etsy"
+    ) -> dict[str, Any] | None:
+        """The latest non-failed real publication (draft/published) — for
+        duplicate prevention."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM publications
+                WHERE campaign_id = ? AND platform = ? AND status IN ('draft', 'published')
+                ORDER BY id DESC LIMIT 1
+                """,
+                (campaign_id, platform),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_publications(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM publications ORDER BY id DESC").fetchall()
+        return [dict(r) for r in rows]
 
 
 def _row_to_brief(row: sqlite3.Row) -> dict[str, Any]:

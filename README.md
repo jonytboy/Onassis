@@ -106,6 +106,25 @@ python main.py                 # start the daily scheduler (long-running)
 Content generation calls the Anthropic API, so an `ANTHROPIC_API_KEY` is
 required. The agents fail with a clear message if it's missing.
 
+## Publisher — automatic Etsy drafts (Draft mode)
+
+The publisher (`onassis/publishing.py`) reads an exported listing package and
+publishes it to Etsy as a **draft**. Modes are Dry Run, Draft, and Live —
+only Dry Run and Draft are enabled; **Live is intentionally not implemented**.
+It publishes only **compliance-approved** campaigns, **logs every
+publication** (platform, product, campaign, date/time, listing id, status),
+**retries safely** on transient failures and records the reason, and **never
+creates a duplicate** (an existing draft/published record short-circuits).
+Etsy *write* access is injected (`EtsyDraftClient`), so it runs live with write
+credentials and is fully tested offline. No advertising; products aren't
+modified after publication.
+
+```bash
+python main.py --publish <campaign_id> --mode draft   # or --mode dry_run
+```
+`POST /publish/{campaign_id}` publishes; `GET /publishing/status` returns the
+publication log summary.
+
 ## Listing Factory — upload-ready Etsy packages (no publishing)
 
 The Listing Factory (`onassis/listing_factory.py`) turns an **approved**

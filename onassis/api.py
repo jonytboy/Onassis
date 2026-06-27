@@ -31,6 +31,7 @@ from onassis.logger import get_logger, setup_logging
 from onassis.optimiser import ProductOptimiser
 from onassis.orchestrator import Orchestrator
 from onassis.profit import ProfitEngine
+from onassis.publishing import PublisherService
 from onassis.revenue import RevenueEngine
 
 log = get_logger(__name__)
@@ -80,6 +81,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     etsy = EtsyConnector(config, db)
     optimiser = ProductOptimiser(config, db)
     listing_factory = ListingFactory(config, db)
+    publisher = PublisherService(config, db)
 
     app = FastAPI(
         title="ONASSIS API",
@@ -100,6 +102,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.etsy = etsy
     app.state.optimiser = optimiser
     app.state.listing_factory = listing_factory
+    app.state.publisher = publisher
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""
@@ -190,6 +193,16 @@ def create_app(config: Config | None = None) -> FastAPI:
             # Approved gate or compliance blocked the export — report why.
             raise HTTPException(status_code=409, detail=package)
         return package
+
+    @app.post("/publish/{campaign_id}", tags=["publishing"])
+    def publish(campaign_id: int, mode: str | None = None) -> dict[str, Any]:
+        """Publish a campaign's listing package (Draft mode) — never duplicates."""
+        return publisher.publish(campaign_id, mode=mode)
+
+    @app.get("/publishing/status", tags=["publishing"])
+    def publishing_status() -> dict[str, Any]:
+        """Publication log summary (counts by status + recent publications)."""
+        return publisher.status()
 
     @app.get("/optimiser", tags=["optimiser"])
     def optimiser_recommendation() -> dict[str, Any]:

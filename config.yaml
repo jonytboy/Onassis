@@ -145,6 +145,14 @@ listing:
     - scale
     - detail
 
+# --- Publisher -------------------------------------------------------
+# Publishes approved listing packages. Only Draft (and Dry Run) are enabled;
+# Live publishing is intentionally not implemented yet.
+publishing:
+  default_mode: draft            # dry_run | draft
+  enabled_modes: [dry_run, draft]
+  max_retries: 3                 # safe retries on transient publish failures
+
 # --- Compliance thresholds -------------------------------------------
 # The Compliance Director's veto rules (Sprint 7). Risk scores are 0-100.
 compliance:

@@ -105,6 +105,13 @@ def _parse_args() -> argparse.Namespace:
         help="Build & export an upload-ready Etsy listing package for a campaign.",
     )
     parser.add_argument(
+        "--publish", type=int, metavar="CAMPAIGN_ID",
+        help="Publish a campaign's listing package (Draft mode).",
+    )
+    parser.add_argument(
+        "--mode", default=None, help="Publishing mode (dry_run | draft).",
+    )
+    parser.add_argument(
         "--serve", action="store_true", help="Run the REST API (Swagger at /docs)."
     )
     parser.add_argument("--host", default="0.0.0.0", help="API host (with --serve).")
@@ -396,6 +403,16 @@ def main() -> int:
         print(f"  Images   : {v['present_images']}/{v['required_images']} present  "
               f"(all present: {v['all_images_present']})\n")
         return 0
+
+    if args.publish is not None:
+        from onassis.publishing import PublisherService
+
+        result = PublisherService(config, db).publish(args.publish, mode=args.mode)
+        print(f"Publish campaign #{args.publish}: {result['status']}"
+              + (f" — {result['reason']}" if result.get("reason") else "")
+              + (f" (listing {result['publication']['listing_id']})"
+                 if result.get("publication", {}).get("listing_id") else ""))
+        return 0 if result["status"] in ("draft", "dry_run") else 1
 
     if args.set_status is not None:
         cid, status = args.set_status
