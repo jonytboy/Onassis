@@ -8,5 +8,13 @@ the core revenue/decision engine.
 """
 
 from onassis.connectors.base import ManualConnector, RevenueConnector
+from onassis.connectors.etsy import EtsyConnector
+from onassis.connectors.etsy_client import EtsyClient, EtsyConfigError
 
-__all__ = ["RevenueConnector", "ManualConnector"]
+__all__ = [
+    "RevenueConnector",
+    "ManualConnector",
+    "EtsyConnector",
+    "EtsyClient",
+    "EtsyConfigError",
+]

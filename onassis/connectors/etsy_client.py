@@ -1,0 +1,82 @@
+"""Thin, read-only client for the Etsy Open API v3.
+
+This is the only place that talks HTTP to Etsy. It is **read-only** — it issues
+GET requests for receipts (orders) and listings and never writes to Etsy.
+
+Credentials come from config/env (``ETSY_API_KEY``, ``ETSY_ACCESS_TOKEN``,
+``ETSY_SHOP_ID``). The connector accepts any object with the same method
+surface, so tests inject a stub and never touch the network.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import httpx
+
+from onassis.logger import get_logger
+
+log = get_logger(__name__)
+
+
+class EtsyConfigError(RuntimeError):
+    """Raised when Etsy credentials are missing."""
+
+
+class EtsyClient:
+    """Read-only wrapper over the Etsy Open API v3."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None,
+        access_token: str | None,
+        shop_id: str | None,
+        base_url: str = "https://openapi.etsy.com/v3/application",
+        timeout: float = 30.0,
+    ) -> None:
+        if not (api_key and access_token and shop_id):
+            raise EtsyConfigError(
+                "Etsy credentials missing. Set ETSY_API_KEY, ETSY_ACCESS_TOKEN, "
+                "and ETSY_SHOP_ID."
+            )
+        self.api_key = api_key
+        self.access_token = access_token
+        self.shop_id = str(shop_id)
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+
+    def _headers(self) -> dict[str, str]:
+        return {"x-api-key": self.api_key, "Authorization": f"Bearer {self.access_token}"}
+
+    def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        url = f"{self.base_url}{path}"
+        resp = httpx.get(url, headers=self._headers(), params=params or {}, timeout=self.timeout)
+        resp.raise_for_status()
+        return resp.json()
+
+    def _paginate(self, path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        """Walk Etsy's limit/offset pagination, collecting all results."""
+        results: list[dict[str, Any]] = []
+        offset, limit = 0, 100
+        while True:
+            page = self._get(path, {**params, "limit": limit, "offset": offset})
+            batch = page.get("results", []) or []
+            results.extend(batch)
+            if len(batch) < limit:
+                break
+            offset += limit
+        return results
+
+    def get_receipts(self, min_created: int | None = None) -> list[dict[str, Any]]:
+        """Shop receipts (orders). ``min_created`` is a unix timestamp filter."""
+        params: dict[str, Any] = {}
+        if min_created:
+            params["min_created"] = min_created
+        return self._paginate(f"/shops/{self.shop_id}/receipts", params)
+
+    def get_listings(self, state: str = "active") -> list[dict[str, Any]]:
+        """Shop listings in the given state (active|inactive|draft|expired)."""
+        return self._paginate(
+            f"/shops/{self.shop_id}/listings", {"state": state, "includes": "Inventory"}
+        )

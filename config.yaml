@@ -90,6 +90,15 @@ policy:
 profit:
   ai_cost_per_campaign: 0.50     # estimated AI cost recorded per campaign run
 
+# --- Etsy connector (read-only, observation only) --------------------
+# Credentials come from the environment (never commit them):
+#   ETSY_API_KEY, ETSY_ACCESS_TOKEN, ETSY_SHOP_ID
+etsy:
+  base_url: "https://openapi.etsy.com/v3/application"
+  # Used to estimate fees when a receipt doesn't itemise them.
+  transaction_fee_rate: 0.065    # Etsy transaction fee
+  payment_fee_rate: 0.04         # payment processing
+
 # --- Compliance thresholds -------------------------------------------
 # The Compliance Director's veto rules (Sprint 7). Risk scores are 0-100.
 compliance:

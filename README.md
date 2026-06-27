@@ -106,6 +106,39 @@ python main.py                 # start the daily scheduler (long-running)
 Content generation calls the Anthropic API, so an `ANTHROPIC_API_KEY` is
 required. The agents fail with a clear message if it's missing.
 
+## Etsy connector — read-only observation
+
+ONASSIS observes the real Etsy shop through a **read-only** connector
+(`onassis/connectors/etsy.py`) built on the `RevenueConnector` architecture.
+It **never modifies Etsy** (no listing creation/editing/publishing). A sync:
+
+- imports new **orders** (receipts → canonical orders → Revenue Engine),
+- imports **listings**, **listing stats**, **favourites**, **visits**, and
+  **conversion** (where available),
+- is **incremental** (per-resource cursor) and **idempotent** (orders dedupe
+  by external ref; listings/stats upsert) — a re-sync never duplicates,
+- timestamps every imported record,
+- links every listing to its **Product**, **Campaign**, **Revenue**, and
+  **Profit** (from the orders it generated),
+- updates the Revenue Engine automatically, so the **CEO's business metrics
+  refresh after every sync** (they read the live ledger).
+
+Etsy access is injected (`EtsyClient`, real Open API v3) and configured via
+env (`ETSY_API_KEY`, `ETSY_ACCESS_TOKEN`, `ETSY_SHOP_ID`); without credentials
+a sync is a safe no-op. Future marketplaces implement the same connector
+contract — the core engine never changes.
+
+| Method & path | Purpose |
+|---|---|
+| `GET /etsy/orders` | Orders imported from Etsy. |
+| `GET /etsy/listings` | Listings linked to revenue & profit. |
+| `GET /etsy/stats` | Listing stats (views, favourites, conversion). |
+| `GET /etsy/sync` | Run a read-only import; refreshes metrics. |
+
+```bash
+python main.py --etsy-sync     # import orders & listings (read-only)
+```
+
 ## Revenue Intelligence Engine — the financial source of truth
 
 ONASSIS knows exactly how much money it makes. The Revenue Engine
@@ -281,7 +314,7 @@ then daily at `08:00` local time. Both are configurable.
 | `onassis/governance.py` | Routes proposals: Compliance (veto) → CEO → final verdict; batch allocation. |
 | `onassis/profit.py` | The Profit Engine — ledger + profit-first dashboard. |
 | `onassis/revenue.py` | Revenue Intelligence Engine — orders, economics, rollups. |
-| `onassis/connectors/` | Pluggable revenue sources (Etsy/Gelato/Pinterest/ads). |
+| `onassis/connectors/` | Pluggable revenue sources: base contract + read-only Etsy connector. |
 | `onassis/api.py` | FastAPI service — thin REST layer over the existing services. |
 | `onassis/orchestrator.py` | Defines the daily pipeline and owns the agents. |
 | `onassis/scheduler.py` | Runs the pipeline daily at a fixed time. |
@@ -347,3 +380,5 @@ in cleanly:
 - **`orders`** — sales with cost breakdown and stored economics (gross
   revenue, gross/net profit, margin, ROI). The Revenue Engine's source of truth.
 - **`products`** — the product catalogue (sku, name, production cost, …).
+- **`etsy_listings`** / **`listing_stats`** / **`sync_cursors`** — imported Etsy
+  listings, dated stat snapshots, and per-resource incremental sync cursors.

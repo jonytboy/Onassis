@@ -221,6 +221,57 @@ def test_profit_endpoint(app_and_client):
     assert body["orders"] == 1
 
 
+# --- Etsy endpoints -------------------------------------------------
+
+class _StubEtsy:
+    def __init__(self, receipts, listings):
+        self._receipts, self._listings = receipts, listings
+
+    def get_receipts(self, min_created=None):
+        return list(self._receipts)
+
+    def get_listings(self, state="active"):
+        return list(self._listings)
+
+
+def test_etsy_sync_and_reads(app_and_client):
+    app, client = app_and_client
+    # Inject a stub Etsy client into the app's connector (no network).
+    app.state.etsy._client = _StubEtsy(
+        receipts=[{
+            "receipt_id": 1, "created_timestamp": 1782950400,
+            "transactions": [{
+                "transaction_id": 7, "listing_id": 9001, "quantity": 1,
+                "price": {"amount": 4800, "divisor": 100, "currency_code": "GBP"},
+            }],
+        }],
+        listings=[{
+            "listing_id": 9001, "title": "Linen Throw", "state": "active",
+            "price": {"amount": 4800, "divisor": 100, "currency_code": "GBP"},
+            "views": 200, "num_favorers": 12, "created_timestamp": 1782950400,
+        }],
+    )
+
+    sync = client.get("/etsy/sync").json()
+    assert sync["configured"] is True
+    assert sync["imported_orders"] == 1
+    assert "metrics" in sync  # CEO business metrics returned after sync
+
+    assert len(client.get("/etsy/orders").json()) == 1
+    listings = client.get("/etsy/listings").json()
+    assert listings[0]["revenue"] == 48.0
+    stats = client.get("/etsy/stats").json()
+    assert stats[0]["favourites"] == 12
+
+
+def test_etsy_sync_not_configured(app_and_client):
+    app, client = app_and_client
+    app.state.etsy._client = None
+    app.state.etsy.etsy_cfg = {}  # no credentials
+    body = client.get("/etsy/sync").json()
+    assert body["configured"] is False
+
+
 # --- Swagger / OpenAPI docs -----------------------------------------
 
 def test_swagger_docs_available(app_and_client):
@@ -232,7 +283,8 @@ def test_swagger_docs_available(app_and_client):
     for path in ("/health", "/campaign/create", "/campaigns",
                  "/campaign/{campaign_id}", "/campaign/latest", "/dashboard",
                  "/revenue/today", "/revenue/month", "/profit",
-                 "/orders", "/orders/{order_id}"):
+                 "/orders", "/orders/{order_id}",
+                 "/etsy/orders", "/etsy/listings", "/etsy/stats", "/etsy/sync"):
         assert path in paths
 
 

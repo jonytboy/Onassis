@@ -64,6 +64,7 @@ class Config:
     policy: dict[str, Any] = field(default_factory=dict)
     compliance: dict[str, Any] = field(default_factory=dict)
     profit: dict[str, Any] = field(default_factory=dict)
+    etsy: dict[str, Any] = field(default_factory=dict)
 
     # secrets / future integrations
     anthropic_api_key: str | None = None
@@ -109,6 +110,14 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
     policy = raw.get("policy", {})
     compliance = raw.get("compliance", {})
     profit = raw.get("profit", {})
+    etsy = raw.get("etsy", {})
+    # Etsy credentials come from the environment.
+    etsy = {
+        **etsy,
+        "api_key": _env("ETSY_API_KEY", etsy.get("api_key")),
+        "access_token": _env("ETSY_ACCESS_TOKEN", etsy.get("access_token")),
+        "shop_id": _env("ETSY_SHOP_ID", etsy.get("shop_id")),
+    }
 
     # Environment variables win over YAML.
     brand = {**brand, "name": _env("ONASSIS_BRAND_NAME", brand.get("name", "Onassis"))}
@@ -133,5 +142,6 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         policy=policy,
         compliance=compliance,
         profit=profit,
+        etsy=etsy,
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
     )

@@ -24,6 +24,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from onassis.config import Config, load_config
+from onassis.connectors.etsy import EtsyConnector
 from onassis.database import Database
 from onassis.logger import get_logger, setup_logging
 from onassis.orchestrator import Orchestrator
@@ -74,6 +75,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     brain = orchestrator.brain
     profit = ProfitEngine(config, db)
     revenue = RevenueEngine(config, db)
+    etsy = EtsyConnector(config, db)
 
     app = FastAPI(
         title="ONASSIS API",
@@ -91,6 +93,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.brain = brain
     app.state.profit = profit
     app.state.revenue = revenue
+    app.state.etsy = etsy
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""
@@ -149,6 +152,26 @@ def create_app(config: Config | None = None) -> FastAPI:
         if order is None:
             raise HTTPException(status_code=404, detail=f"No order with id {order_id}.")
         return order
+
+    @app.get("/etsy/orders", tags=["etsy"])
+    def etsy_orders() -> list[dict[str, Any]]:
+        """Orders imported from Etsy."""
+        return etsy.imported_orders()
+
+    @app.get("/etsy/listings", tags=["etsy"])
+    def etsy_listings() -> list[dict[str, Any]]:
+        """Imported Etsy listings, each linked to its revenue and profit."""
+        return etsy.listings()
+
+    @app.get("/etsy/stats", tags=["etsy"])
+    def etsy_stats() -> list[dict[str, Any]]:
+        """Imported listing statistics (views, favourites, conversion)."""
+        return etsy.stats()
+
+    @app.get("/etsy/sync", tags=["etsy"])
+    def etsy_sync() -> dict[str, Any]:
+        """Run a read-only Etsy import; updates the Revenue Engine and metrics."""
+        return etsy.sync()
 
     @app.post(
         "/campaign/create", response_model=CampaignCreateResponse, tags=["campaigns"]

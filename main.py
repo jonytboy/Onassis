@@ -94,6 +94,9 @@ def _parse_args() -> argparse.Namespace:
         "--revenue", action="store_true", help="Show today/month/company revenue & profit."
     )
     parser.add_argument(
+        "--etsy-sync", action="store_true", help="Import orders/listings from Etsy (read-only)."
+    )
+    parser.add_argument(
         "--serve", action="store_true", help="Run the REST API (Swagger at /docs)."
     )
     parser.add_argument("--host", default="0.0.0.0", help="API host (with --serve).")
@@ -333,6 +336,19 @@ def main() -> int:
 
     if args.revenue:
         _show_revenue(RevenueEngine(config, db))
+        return 0
+
+    if args.etsy_sync:
+        from onassis.connectors.etsy import EtsyConnector
+
+        result = EtsyConnector(config, db).sync()
+        if not result.get("configured"):
+            print("Etsy is not configured. Set ETSY_API_KEY, ETSY_ACCESS_TOKEN, "
+                  "ETSY_SHOP_ID.")
+            return 1
+        print(f"Etsy sync complete: {result['imported_orders']} new order(s), "
+              f"{result['imported_listings']} listing(s). "
+              f"Net profit now {result['metrics']['net_profit']:.2f}.")
         return 0
 
     if args.set_status is not None:

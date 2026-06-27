@@ -198,6 +198,44 @@ CREATE TABLE IF NOT EXISTS orders (
 CREATE INDEX IF NOT EXISTS idx_orders_sale_date ON orders(sale_date);
 CREATE INDEX IF NOT EXISTS idx_orders_campaign ON orders(campaign_id);
 CREATE INDEX IF NOT EXISTS idx_orders_product ON orders(product_id);
+
+CREATE TABLE IF NOT EXISTS etsy_listings (
+    listing_id   INTEGER PRIMARY KEY,          -- Etsy's listing id (dedupe key)
+    imported_at  TEXT    NOT NULL,
+    product_id   TEXT,                          -- linked product (sku)
+    campaign_id  INTEGER,                       -- linked campaign
+    title        TEXT,
+    state        TEXT,
+    price        REAL,
+    currency     TEXT,
+    url          TEXT,
+    num_favorers INTEGER NOT NULL DEFAULT 0,
+    views        INTEGER NOT NULL DEFAULT 0,
+    created_ts   TEXT,
+    raw          TEXT
+);
+
+CREATE TABLE IF NOT EXISTS listing_stats (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    imported_at     TEXT    NOT NULL,
+    listing_id      INTEGER NOT NULL,
+    stat_date       TEXT    NOT NULL,           -- YYYY-MM-DD snapshot
+    views           INTEGER NOT NULL DEFAULT 0,
+    visits          INTEGER NOT NULL DEFAULT 0,
+    favourites      INTEGER NOT NULL DEFAULT 0,
+    orders          INTEGER NOT NULL DEFAULT 0,
+    revenue         REAL    NOT NULL DEFAULT 0,
+    conversion_rate REAL    NOT NULL DEFAULT 0,
+    UNIQUE (listing_id, stat_date)
+);
+
+CREATE TABLE IF NOT EXISTS sync_cursors (
+    resource   TEXT PRIMARY KEY,
+    cursor     TEXT,
+    updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_listing_stats_listing ON listing_stats(listing_id);
 """
 
 
@@ -861,6 +899,131 @@ class Database:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_orders_by_platform(self, platform: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM orders WHERE platform = ? ORDER BY id DESC", (platform,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_orders_for_product(self, product_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM orders WHERE product_id = ? ORDER BY id", (product_id,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_existing_order_refs(self) -> set[str]:
+        """All known external order refs — used to never import a duplicate."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT order_ref FROM orders WHERE order_ref IS NOT NULL"
+            ).fetchall()
+        return {r["order_ref"] for r in rows}
+
+    # --- Etsy: listings, stats, sync cursors ------------------------
+
+    def upsert_etsy_listing(self, listing: dict[str, Any]) -> None:
+        """Insert or update a listing snapshot (deduped by listing_id)."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO etsy_listings
+                    (listing_id, imported_at, product_id, campaign_id, title, state,
+                     price, currency, url, num_favorers, views, created_ts, raw)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(listing_id) DO UPDATE SET
+                    imported_at=excluded.imported_at, product_id=excluded.product_id,
+                    campaign_id=excluded.campaign_id, title=excluded.title,
+                    state=excluded.state, price=excluded.price, currency=excluded.currency,
+                    url=excluded.url, num_favorers=excluded.num_favorers,
+                    views=excluded.views, created_ts=excluded.created_ts, raw=excluded.raw
+                """,
+                (
+                    listing["listing_id"],
+                    _utcnow(),
+                    listing.get("product_id"),
+                    listing.get("campaign_id"),
+                    listing.get("title"),
+                    listing.get("state"),
+                    listing.get("price"),
+                    listing.get("currency"),
+                    listing.get("url"),
+                    int(listing.get("num_favorers", 0) or 0),
+                    int(listing.get("views", 0) or 0),
+                    listing.get("created_ts"),
+                    json.dumps(listing.get("raw", {})),
+                ),
+            )
+
+    def get_etsy_listing(self, listing_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM etsy_listings WHERE listing_id = ?", (listing_id,)
+            ).fetchone()
+        return _row_to_listing(row) if row else None
+
+    def list_etsy_listings(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM etsy_listings ORDER BY listing_id DESC"
+            ).fetchall()
+        return [_row_to_listing(r) for r in rows]
+
+    def upsert_listing_stat(self, stat: dict[str, Any]) -> None:
+        """Insert or update a daily listing-stat snapshot (deduped per day)."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO listing_stats
+                    (imported_at, listing_id, stat_date, views, visits, favourites,
+                     orders, revenue, conversion_rate)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(listing_id, stat_date) DO UPDATE SET
+                    imported_at=excluded.imported_at, views=excluded.views,
+                    visits=excluded.visits, favourites=excluded.favourites,
+                    orders=excluded.orders, revenue=excluded.revenue,
+                    conversion_rate=excluded.conversion_rate
+                """,
+                (
+                    _utcnow(),
+                    stat["listing_id"],
+                    stat["stat_date"],
+                    int(stat.get("views", 0) or 0),
+                    int(stat.get("visits", 0) or 0),
+                    int(stat.get("favourites", 0) or 0),
+                    int(stat.get("orders", 0) or 0),
+                    float(stat.get("revenue", 0) or 0),
+                    float(stat.get("conversion_rate", 0) or 0),
+                ),
+            )
+
+    def list_listing_stats(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM listing_stats ORDER BY id DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_sync_cursor(self, resource: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT cursor FROM sync_cursors WHERE resource = ?", (resource,)
+            ).fetchone()
+        return row["cursor"] if row else None
+
+    def set_sync_cursor(self, resource: str, cursor: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO sync_cursors (resource, cursor, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(resource) DO UPDATE SET
+                    cursor=excluded.cursor, updated_at=excluded.updated_at
+                """,
+                (resource, cursor, _utcnow()),
+            )
+
 
 def _row_to_brief(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
@@ -895,6 +1058,12 @@ def _row_to_proposal(row: sqlite3.Row) -> dict[str, Any]:
 
 def _row_to_ledger(row: sqlite3.Row) -> dict[str, Any]:
     return dict(row)
+
+
+def _row_to_listing(row: sqlite3.Row) -> dict[str, Any]:
+    data = dict(row)
+    data["raw"] = json.loads(data.get("raw") or "{}")
+    return data
 
 
 def _row_to_decision(row: sqlite3.Row) -> dict[str, Any]:
