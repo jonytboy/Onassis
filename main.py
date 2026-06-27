@@ -97,6 +97,10 @@ def _parse_args() -> argparse.Namespace:
         "--etsy-sync", action="store_true", help="Import orders/listings from Etsy (read-only)."
     )
     parser.add_argument(
+        "--optimise", action="store_true",
+        help="Recommend the single highest-value action for an existing product.",
+    )
+    parser.add_argument(
         "--serve", action="store_true", help="Run the REST API (Swagger at /docs)."
     )
     parser.add_argument("--host", default="0.0.0.0", help="API host (with --serve).")
@@ -349,6 +353,23 @@ def main() -> int:
         print(f"Etsy sync complete: {result['imported_orders']} new order(s), "
               f"{result['imported_listings']} listing(s). "
               f"Net profit now {result['metrics']['net_profit']:.2f}.")
+        return 0
+
+    if args.optimise:
+        from onassis.optimiser import ProductOptimiser
+
+        rec = ProductOptimiser(config, db).top_recommendation()
+        if rec is None:
+            print("No live products to analyse.")
+            return 0
+        print(f"\nPRODUCT OPTIMISER\n")
+        print(f"  Product    : {rec['product']} ({rec['product_name']})")
+        print(f"  Recommend  : {rec['recommendation']}")
+        print(f"  Est. cost  : {rec['estimated_cost']:.2f}  "
+              f"Expected +profit: {rec['expected_increase_in_profit']:.2f}  "
+              f"ROI: {rec['expected_roi']:.2f}")
+        print(f"  Confidence : {rec['confidence']}%   CEO: {rec['ceo']['verdict']}")
+        print(f"  Reasoning  : {rec['reasoning']}\n")
         return 0
 
     if args.set_status is not None:

@@ -65,6 +65,7 @@ class Config:
     compliance: dict[str, Any] = field(default_factory=dict)
     profit: dict[str, Any] = field(default_factory=dict)
     etsy: dict[str, Any] = field(default_factory=dict)
+    optimiser: dict[str, Any] = field(default_factory=dict)
 
     # secrets / future integrations
     anthropic_api_key: str | None = None
@@ -110,6 +111,7 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
     policy = raw.get("policy", {})
     compliance = raw.get("compliance", {})
     profit = raw.get("profit", {})
+    optimiser = raw.get("optimiser", {})
     etsy = raw.get("etsy", {})
     # Etsy credentials come from the environment.
     etsy = {
@@ -143,5 +145,6 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         compliance=compliance,
         profit=profit,
         etsy=etsy,
+        optimiser=optimiser,
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
     )

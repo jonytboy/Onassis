@@ -99,6 +99,31 @@ etsy:
   transaction_fee_rate: 0.065    # Etsy transaction fee
   payment_fee_rate: 0.04         # payment processing
 
+# --- Product optimiser -----------------------------------------------
+# Increase profit from existing products before creating new ones.
+optimiser:
+  min_views: 100                 # below this, a product is traffic-starved
+  good_conversion: 0.02          # 2% — below this, a product converts poorly
+  potential_profit_floor: 5.0    # assumed upside for a product with no profit yet
+  action_costs:                  # estimated cost of each recommended action
+    leave_unchanged: 0
+    pinterest_campaign: 5
+    fresh_images: 8
+    lifestyle_mockups: 6
+    rewrite_title: 1
+    rewrite_description: 1
+    improve_seo: 1
+    design_variation: 10
+    archive: 0
+  action_uplift:                 # expected fractional profit uplift per action
+    pinterest_campaign: 0.25
+    fresh_images: 0.15
+    lifestyle_mockups: 0.12
+    rewrite_title: 0.08
+    rewrite_description: 0.08
+    improve_seo: 0.10
+    design_variation: 0.20
+
 # --- Compliance thresholds -------------------------------------------
 # The Compliance Director's veto rules (Sprint 7). Risk scores are 0-100.
 compliance:

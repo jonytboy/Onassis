@@ -272,6 +272,27 @@ def test_etsy_sync_not_configured(app_and_client):
     assert body["configured"] is False
 
 
+# --- Optimiser endpoint ---------------------------------------------
+
+def test_optimiser_endpoint(app_and_client):
+    app, client = app_and_client
+    db = app.state.db
+    db.insert_product({"sku": "9001", "name": "Linen Throw", "production_cost": 14})
+    app.state.revenue.record_order(_order(product_id="9001"))
+
+    body = client.get("/optimiser").json()
+    for key in ("product_analysed", "recommendation", "expected_roi",
+                "reasoning", "confidence"):
+        assert key in body
+    assert body["product_analysed"] == "9001"
+    assert body["ceo_verdict"] in ("APPROVE", "REJECT", "REQUEST_MORE_INFO")
+
+
+def test_optimiser_endpoint_no_products(app_and_client):
+    _, client = app_and_client
+    assert "message" in client.get("/optimiser").json()
+
+
 # --- Swagger / OpenAPI docs -----------------------------------------
 
 def test_swagger_docs_available(app_and_client):
@@ -284,7 +305,8 @@ def test_swagger_docs_available(app_and_client):
                  "/campaign/{campaign_id}", "/campaign/latest", "/dashboard",
                  "/revenue/today", "/revenue/month", "/profit",
                  "/orders", "/orders/{order_id}",
-                 "/etsy/orders", "/etsy/listings", "/etsy/stats", "/etsy/sync"):
+                 "/etsy/orders", "/etsy/listings", "/etsy/stats", "/etsy/sync",
+                 "/optimiser"):
         assert path in paths
 
 

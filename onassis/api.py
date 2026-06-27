@@ -27,6 +27,7 @@ from onassis.config import Config, load_config
 from onassis.connectors.etsy import EtsyConnector
 from onassis.database import Database
 from onassis.logger import get_logger, setup_logging
+from onassis.optimiser import ProductOptimiser
 from onassis.orchestrator import Orchestrator
 from onassis.profit import ProfitEngine
 from onassis.revenue import RevenueEngine
@@ -76,6 +77,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     profit = ProfitEngine(config, db)
     revenue = RevenueEngine(config, db)
     etsy = EtsyConnector(config, db)
+    optimiser = ProductOptimiser(config, db)
 
     app = FastAPI(
         title="ONASSIS API",
@@ -94,6 +96,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.profit = profit
     app.state.revenue = revenue
     app.state.etsy = etsy
+    app.state.optimiser = optimiser
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""
@@ -172,6 +175,24 @@ def create_app(config: Config | None = None) -> FastAPI:
     def etsy_sync() -> dict[str, Any]:
         """Run a read-only Etsy import; updates the Revenue Engine and metrics."""
         return etsy.sync()
+
+    @app.get("/optimiser", tags=["optimiser"])
+    def optimiser_recommendation() -> dict[str, Any]:
+        """The single highest-value action for an existing product (CEO-reviewed)."""
+        rec = optimiser.top_recommendation()
+        if rec is None:
+            return {"message": "No live products to analyse."}
+        return {
+            "product_analysed": rec["product"],
+            "recommendation": rec["recommendation"],
+            "expected_roi": rec["expected_roi"],
+            "reasoning": rec["reasoning"],
+            "confidence": rec["confidence"],
+            "estimated_cost": rec["estimated_cost"],
+            "expected_increase_in_profit": rec["expected_increase_in_profit"],
+            "ceo_verdict": rec["ceo"]["verdict"],
+            "metrics": rec["metrics"],
+        }
 
     @app.post(
         "/campaign/create", response_model=CampaignCreateResponse, tags=["campaigns"]

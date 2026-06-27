@@ -106,6 +106,30 @@ python main.py                 # start the daily scheduler (long-running)
 Content generation calls the Anthropic API, so an `ANTHROPIC_API_KEY` is
 required. The agents fail with a clear message if it's missing.
 
+## Product Optimiser — improve earners before building new ones
+
+The optimiser (`onassis/optimiser.py`) analyses every **live** product and
+recommends the **single** highest-value action — increasing profit from what
+already exists. It's a deterministic analytics module (no AI agent), so it's
+explainable and fully tested. Per product it computes: views, visits,
+favourites, conversion rate, revenue, net profit, ROI, profit trend, traffic
+trend, and a confidence.
+
+It recommends exactly one of: *leave unchanged · new Pinterest campaign ·
+fresh product images · new lifestyle mockups · rewrite Etsy title · rewrite
+Etsy description · improve SEO keywords · one design variation · archive
+product* — each with estimated cost, expected profit increase, confidence, and
+reasoning. The **CEO then evaluates** the recommendation under existing company
+policy; **nothing is executed automatically**. Recommendations on profitable
+products are always preferred. Marketplace-agnostic — traffic comes from
+listing stats and profit from orders, so new marketplaces need no logic change.
+
+```bash
+python main.py --optimise      # the single highest-value product action
+```
+`GET /optimiser` returns the product analysed, recommendation, expected ROI,
+reasoning, confidence (and the CEO's verdict).
+
 ## Etsy connector — read-only observation
 
 ONASSIS observes the real Etsy shop through a **read-only** connector
@@ -267,6 +291,7 @@ Interactive **Swagger docs at `/docs`**, OpenAPI schema at `/openapi.json`.
 | `GET /campaign/{id}` | One campaign with all assets + its prediction. |
 | `GET /campaign/latest` | The most recently generated campaign, with assets. |
 | `GET /dashboard` | The profit-first company dashboard. |
+| `GET /optimiser` | Highest-value action for an existing product (CEO-reviewed). |
 
 `POST /campaign/create` returns exactly:
 
@@ -314,6 +339,7 @@ then daily at `08:00` local time. Both are configurable.
 | `onassis/governance.py` | Routes proposals: Compliance (veto) → CEO → final verdict; batch allocation. |
 | `onassis/profit.py` | The Profit Engine — ledger + profit-first dashboard. |
 | `onassis/revenue.py` | Revenue Intelligence Engine — orders, economics, rollups. |
+| `onassis/optimiser.py` | Product Optimiser — one highest-value action per product. |
 | `onassis/connectors/` | Pluggable revenue sources: base contract + read-only Etsy connector. |
 | `onassis/api.py` | FastAPI service — thin REST layer over the existing services. |
 | `onassis/orchestrator.py` | Defines the daily pipeline and owns the agents. |

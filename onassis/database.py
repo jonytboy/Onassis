@@ -1005,6 +1005,15 @@ class Database:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_listing_stats_for(self, listing_id: int) -> list[dict[str, Any]]:
+        """A listing's stat snapshots, oldest first (for trend analysis)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM listing_stats WHERE listing_id = ? ORDER BY stat_date, id",
+                (listing_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
     def get_sync_cursor(self, resource: str) -> str | None:
         with self._connect() as conn:
             row = conn.execute(
