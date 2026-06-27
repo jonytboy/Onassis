@@ -359,6 +359,35 @@ def test_listing_endpoint_blocked_when_unapproved(app_and_client):
     assert r.status_code == 409
 
 
+# --- Experiments endpoints ------------------------------------------
+
+def test_experiments_endpoints(app_and_client):
+    app, client = app_and_client
+
+    started = client.post("/experiments", json={
+        "product_id": "SKU1", "variable": "title",
+        "hypothesis": "Better title sells more", "success_metric": "conversion_rate",
+        "baseline_value": 0.02,
+    }).json()
+    eid = started["id"]
+    assert started["status"] == "active"
+
+    # Duplicate active experiment on the same variable -> 409.
+    dup = client.post("/experiments", json={
+        "product_id": "SKU1", "variable": "title",
+        "hypothesis": "again", "success_metric": "conversion_rate"})
+    assert dup.status_code == 409
+
+    assert len(client.get("/experiments/active").json()) == 1
+    assert client.get(f"/experiments/{eid}").json()["id"] == eid
+
+    done = client.post(f"/experiments/{eid}/complete",
+                       json={"result_value": 0.05}).json()
+    assert done["result"] == "win"
+    assert client.get("/experiments/active").json() == []
+    assert client.get("/experiments/999").status_code == 404
+
+
 # --- Analytics endpoints --------------------------------------------
 
 def test_analytics_endpoints(app_and_client):
@@ -421,7 +450,8 @@ def test_swagger_docs_available(app_and_client):
                  "/optimiser", "/listing/{campaign_id}",
                  "/publish/{campaign_id}", "/publishing/status",
                  "/analytics", "/analytics/product/{product_id}",
-                 "/analytics/campaign/{campaign_id}"):
+                 "/analytics/campaign/{campaign_id}",
+                 "/experiments", "/experiments/{experiment_id}", "/experiments/active"):
         assert path in paths
 
 

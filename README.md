@@ -174,6 +174,33 @@ python main.py --optimise      # the single highest-value product action
 `GET /optimiser` returns the product analysed, recommendation, expected ROI,
 reasoning, confidence (and the CEO's verdict).
 
+## Experiment Engine — every optimisation is a measurable test
+
+The Experiment Engine (`onassis/experiments.py`) turns each optimisation into a
+business experiment: a hypothesis about **one changed variable** (title,
+thumbnail, mock-up, price, keywords, new Pinterest campaign, …), a success
+metric, and — once it ends — a result, a **statistical confidence** (two-
+proportion z-test for rate metrics), and a learning. It enforces **one active
+experiment per (product, variable)** (no duplicates), and on a win **promotes
+the learning into company knowledge**.
+
+Completed experiments feed future decisions: the Product Optimiser won't
+re-run a variable already under test, lowers confidence for variables that
+*lost*, and raises it for ones that *won* — and that adjusted confidence flows
+into the CEO's evaluation.
+
+| Method & path | Purpose |
+|---|---|
+| `GET /experiments` | All experiments. |
+| `GET /experiments/active` | Currently-running experiments. |
+| `GET /experiments/{id}` | One experiment. |
+| `POST /experiments` | Start an experiment (409 on a duplicate). |
+| `POST /experiments/{id}/complete` | Record result, confidence, learning. |
+
+```bash
+python main.py --experiments    # list experiments and results
+```
+
 ## Analytics Collector — historical performance data
 
 The collector (`onassis/analytics.py`) gathers real-world metrics — Etsy

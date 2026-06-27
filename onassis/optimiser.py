@@ -26,8 +26,20 @@ from onassis.analytics import AnalyticsEngine
 from onassis.ceo import CEOAgent
 from onassis.config import Config
 from onassis.database import Database
+from onassis.experiments import ExperimentEngine
 from onassis.logger import get_logger
 from onassis.proposals import Proposal
+
+# Maps each optimiser action to the experiment variable it would change.
+_ACTION_VARIABLE = {
+    "rewrite_title": "title",
+    "rewrite_description": "description",
+    "improve_seo": "keywords",
+    "fresh_images": "images",
+    "lifestyle_mockups": "mockup",
+    "design_variation": "design",
+    "pinterest_campaign": "pinterest_campaign",
+}
 
 log = get_logger(__name__)
 
@@ -78,6 +90,7 @@ class ProductOptimiser:
         self.uplift = {**_DEFAULT_UPLIFT, **(cfg.get("action_uplift") or {})}
         self.ceo = CEOAgent(config, db)
         self.analytics = AnalyticsEngine(config, db)
+        self.experiments = ExperimentEngine(config, db)
 
     # --- Public API -------------------------------------------------
 
@@ -101,18 +114,39 @@ class ProductOptimiser:
 
     def analyse_product(self, product: dict[str, Any]) -> dict[str, Any]:
         """Compute a product's metrics and its single best action."""
+        sku = str(product.get("sku") or product.get("id") or "")
         metrics = self._metrics(product)
         action = self._decide(metrics)
+
+        # Use completed/active experiments: never re-run a variable already
+        # under test, and adjust confidence from what past experiments learned.
+        variable = _ACTION_VARIABLE.get(action)
+        note = ""
+        if variable and self.experiments.has_active(sku, variable):
+            note = f"An experiment on '{variable}' is already running; awaiting its result."
+            action, variable = "leave_unchanged", None
+
         cost = float(self.costs.get(action, 0.0))
         expected_increase = self._expected_increase(action, metrics)
         expected_roi = round(expected_increase / cost, 4) if cost > 0 else (
             round(expected_increase, 4) if expected_increase > 0 else 0.0
         )
         confidence = self._confidence(metrics)
+        if variable:
+            last = self.experiments.last_result(sku, variable)
+            if last == "loss":
+                confidence = max(0, confidence - 20)
+                note += " A previous experiment on this variable lost — lower confidence."
+            elif last == "win":
+                confidence = min(100, confidence + 10)
+                note += " A previous experiment on this variable won — higher confidence."
+
         reasoning = self._reasoning(product, metrics, action, expected_increase)
+        if note:
+            reasoning = f"{reasoning} {note.strip()}"
 
         return {
-            "product": product.get("sku") or str(product.get("id")),
+            "product": sku,
             "product_name": product.get("name", ""),
             "marketplace": product.get("marketplace"),
             "metrics": metrics,

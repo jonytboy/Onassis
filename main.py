@@ -101,6 +101,9 @@ def _parse_args() -> argparse.Namespace:
         help="Collect a fresh snapshot of performance metrics (append-only).",
     )
     parser.add_argument(
+        "--experiments", action="store_true", help="List experiments and their results."
+    )
+    parser.add_argument(
         "--optimise", action="store_true",
         help="Recommend the single highest-value action for an existing product.",
     )
@@ -413,6 +416,24 @@ def main() -> int:
 
         result = AnalyticsEngine(config, db).collect()
         print(f"Collected {result['collected']} metric snapshot(s): {result['by_source']}")
+        return 0
+
+    if args.experiments:
+        from onassis.experiments import ExperimentEngine
+
+        rows = ExperimentEngine(config, db).list()
+        if not rows:
+            print("No experiments yet.")
+            return 0
+        print(f"\nEXPERIMENTS — {len(rows)}\n")
+        for e in rows:
+            tail = (f"result {e['result']}"
+                    + (f" @ {e['confidence']}% conf" if e.get("confidence") else "")
+                    ) if e["status"] == "completed" else e["status"]
+            print(f"  #{e['id']}  {e['product_id']}/{e['variable']:<16}  {tail}")
+            if e.get("learning"):
+                print(f"        learning: {e['learning']}")
+        print()
         return 0
 
     if args.publish is not None:

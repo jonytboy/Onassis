@@ -267,6 +267,29 @@ CREATE TABLE IF NOT EXISTS metric_snapshots (
 CREATE INDEX IF NOT EXISTS idx_metrics_product ON metric_snapshots(product_id, metric);
 CREATE INDEX IF NOT EXISTS idx_metrics_campaign ON metric_snapshots(campaign_id, metric);
 CREATE INDEX IF NOT EXISTS idx_metrics_date ON metric_snapshots(snapshot_date);
+
+CREATE TABLE IF NOT EXISTS experiments (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at       TEXT    NOT NULL,
+    product_id       TEXT,
+    campaign_id      INTEGER,
+    hypothesis       TEXT    NOT NULL,
+    variable         TEXT    NOT NULL,     -- title | thumbnail | mockup | price | keywords | ...
+    expected_outcome TEXT,
+    success_metric   TEXT,
+    start_date       TEXT    NOT NULL,
+    end_date         TEXT,
+    status           TEXT    NOT NULL DEFAULT 'active',  -- active | completed | abandoned
+    result           TEXT,                 -- win | loss | inconclusive
+    learning         TEXT,
+    baseline_value   REAL,
+    result_value     REAL,
+    confidence       REAL,                 -- statistical confidence (0-100) where computed
+    promoted         INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_experiments_status ON experiments(status);
+CREATE INDEX IF NOT EXISTS idx_experiments_product ON experiments(product_id, variable);
 """
 
 
@@ -1182,6 +1205,108 @@ class Database:
                 "SELECT DISTINCT product_id FROM metric_snapshots WHERE product_id IS NOT NULL"
             ).fetchall()
         return [r["product_id"] for r in rows]
+
+    # --- Experiments ------------------------------------------------
+
+    def insert_experiment(self, exp: dict[str, Any]) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO experiments
+                    (created_at, product_id, campaign_id, hypothesis, variable,
+                     expected_outcome, success_metric, start_date, end_date, status,
+                     result, learning, baseline_value, result_value, confidence, promoted)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utcnow(),
+                    exp.get("product_id"),
+                    exp.get("campaign_id"),
+                    exp["hypothesis"],
+                    exp["variable"],
+                    exp.get("expected_outcome"),
+                    exp.get("success_metric"),
+                    exp["start_date"],
+                    exp.get("end_date"),
+                    exp.get("status", "active"),
+                    exp.get("result"),
+                    exp.get("learning"),
+                    exp.get("baseline_value"),
+                    exp.get("result_value"),
+                    exp.get("confidence"),
+                    1 if exp.get("promoted") else 0,
+                ),
+            )
+            exp_id = int(cur.lastrowid)
+        log.info("Started experiment #%s (%s on %s)", exp_id, exp["variable"],
+                 exp.get("product_id"))
+        return exp_id
+
+    def update_experiment(self, experiment_id: int, fields: dict[str, Any]) -> bool:
+        allowed = {"status", "result", "learning", "end_date", "baseline_value",
+                   "result_value", "confidence", "promoted"}
+        sets = {k: v for k, v in fields.items() if k in allowed}
+        if not sets:
+            return False
+        columns = ", ".join(f"{k} = ?" for k in sets)
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"UPDATE experiments SET {columns} WHERE id = ?",
+                (*sets.values(), experiment_id),
+            )
+            return cur.rowcount > 0
+
+    def get_experiment(self, experiment_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM experiments WHERE id = ?", (experiment_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_experiments(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM experiments ORDER BY id DESC").fetchall()
+        return [dict(r) for r in rows]
+
+    def list_active_experiments(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM experiments WHERE status = 'active' ORDER BY id DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_active_experiment(self, product_id: str, variable: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM experiments
+                WHERE product_id = ? AND variable = ? AND status = 'active'
+                ORDER BY id DESC LIMIT 1
+                """,
+                (product_id, variable),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_last_completed_experiment(
+        self, product_id: str, variable: str
+    ) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM experiments
+                WHERE product_id = ? AND variable = ? AND status = 'completed'
+                ORDER BY id DESC LIMIT 1
+                """,
+                (product_id, variable),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_promoted_learnings(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM experiments WHERE promoted = 1 ORDER BY id DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]
 
 
 def _row_to_brief(row: sqlite3.Row) -> dict[str, Any]:

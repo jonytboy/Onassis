@@ -27,6 +27,7 @@ from onassis.analytics import AnalyticsEngine
 from onassis.config import Config, load_config
 from onassis.connectors.etsy import EtsyConnector
 from onassis.database import Database
+from onassis.experiments import ExperimentEngine, ExperimentError
 from onassis.listing_factory import ListingError, ListingFactory
 from onassis.logger import get_logger, setup_logging
 from onassis.optimiser import ProductOptimiser
@@ -84,6 +85,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     listing_factory = ListingFactory(config, db)
     publisher = PublisherService(config, db)
     analytics = AnalyticsEngine(config, db)
+    experiments = ExperimentEngine(config, db)
 
     app = FastAPI(
         title="ONASSIS API",
@@ -106,6 +108,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.listing_factory = listing_factory
     app.state.publisher = publisher
     app.state.analytics = analytics
+    app.state.experiments = experiments
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""
@@ -206,6 +209,40 @@ def create_app(config: Config | None = None) -> FastAPI:
     def publishing_status() -> dict[str, Any]:
         """Publication log summary (counts by status + recent publications)."""
         return publisher.status()
+
+    @app.get("/experiments/active", tags=["experiments"])
+    def experiments_active() -> list[dict[str, Any]]:
+        """All currently-running experiments."""
+        return experiments.active()
+
+    @app.get("/experiments", tags=["experiments"])
+    def experiments_list() -> list[dict[str, Any]]:
+        """All experiments (newest first)."""
+        return experiments.list()
+
+    @app.get("/experiments/{experiment_id}", tags=["experiments"])
+    def experiments_get(experiment_id: int) -> dict[str, Any]:
+        """One experiment by id."""
+        exp = experiments.get(experiment_id)
+        if exp is None:
+            raise HTTPException(status_code=404, detail=f"No experiment {experiment_id}.")
+        return exp
+
+    @app.post("/experiments", tags=["experiments"])
+    def experiments_start(payload: dict[str, Any]) -> dict[str, Any]:
+        """Start an experiment (rejects a duplicate active test on the variable)."""
+        try:
+            return experiments.start(**payload)
+        except (ExperimentError, TypeError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+
+    @app.post("/experiments/{experiment_id}/complete", tags=["experiments"])
+    def experiments_complete(experiment_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        """Complete an experiment: store result, confidence, and learning."""
+        try:
+            return experiments.complete(experiment_id, **payload)
+        except (ExperimentError, TypeError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
 
     @app.get("/analytics", tags=["analytics"])
     def analytics_overall() -> dict[str, Any]:
