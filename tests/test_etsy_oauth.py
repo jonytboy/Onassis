@@ -13,7 +13,7 @@ import stat
 
 import pytest
 
-from onassis.connectors.etsy_client import EtsyClient, EtsyConfigError
+from onassis.connectors.etsy_client import EtsyClient, EtsyConfigError, api_key_header
 from onassis.connectors.etsy_oauth import (
     EtsyAuthError,
     EtsyOAuth,
@@ -253,6 +253,27 @@ def test_client_requires_a_token_or_provider():
 def test_static_access_token_still_works():
     client = EtsyClient(api_key="k", shop_id="9", access_token="static-tok")
     assert client._headers()["Authorization"] == "Bearer static-tok"
+
+
+# --- x-api-key format (Etsy shared-secret enforcement, 9 Feb 2026) ---
+
+def test_api_key_header_combines_keystring_and_secret():
+    assert api_key_header("KEY", "SECRET") == "KEY:SECRET"
+    assert api_key_header("KEY", None) == "KEY"      # backward-compatible fallback
+    assert api_key_header("KEY", "") == "KEY"
+
+
+def test_client_sends_keystring_colon_secret(oauth):
+    oauth.create_authorization_url()
+    oauth.exchange_code("auth-code")
+    client = EtsyClient(api_key="KEY", shop_id="9", shared_secret="SECRET",
+                        token_provider=oauth.valid_access_token)
+    assert client._headers()["x-api-key"] == "KEY:SECRET"
+
+
+def test_oauth_token_request_sends_keystring_colon_secret(oauth):
+    # The token exchange/refresh must carry x-api-key=keystring:secret too.
+    assert oauth.api_key_header() == "key-123:secret-xyz"
 
 
 # --- build_etsy_oauth from config -----------------------------------

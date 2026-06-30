@@ -82,6 +82,7 @@ class EtsyConnector(RevenueConnector):
                     None if self.etsy_cfg.get("access_token")
                     else self.oauth.valid_access_token
                 ),
+                shared_secret=self.etsy_cfg.get("client_secret"),
                 base_url=self.etsy_cfg.get("base_url", "https://openapi.etsy.com/v3/application"),
             )
         return self._client

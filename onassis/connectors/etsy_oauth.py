@@ -295,8 +295,19 @@ class EtsyOAuth:
         self.store.save(bundle)
         return bundle
 
+    def api_key_header(self) -> str | None:
+        """Etsy's ``x-api-key`` value — ``keystring:shared_secret`` when the
+        secret is available (Etsy enforces this format since 9 Feb 2026)."""
+        from onassis.connectors.etsy_client import api_key_header
+
+        return api_key_header(self.client_id, self.client_secret)
+
     def _default_post(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
-        resp = httpx.post(url, data=payload, timeout=30.0)
+        headers = {}
+        key = self.api_key_header()
+        if key:
+            headers["x-api-key"] = key
+        resp = httpx.post(url, data=payload, headers=headers, timeout=30.0)
         if resp.status_code >= 400:
             raise EtsyAuthError(
                 f"Etsy token endpoint returned {resp.status_code}: {resp.text[:300]}"

@@ -169,6 +169,7 @@ class PublisherService:
             self._draft_client = EtsyDraftClient(
                 api_key=e.get("api_key"), shop_id=e.get("shop_id"),
                 access_token=e.get("access_token"), token_provider=token_provider,
+                shared_secret=e.get("client_secret"),
                 base_url=e.get("base_url", "https://openapi.etsy.com/v3/application"),
             )
         return self._draft_client

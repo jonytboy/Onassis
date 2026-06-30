@@ -23,12 +23,25 @@ class EtsyConfigError(RuntimeError):
     """Raised when Etsy credentials are missing."""
 
 
+def api_key_header(keystring: str | None, shared_secret: str | None = None) -> str | None:
+    """The value for Etsy's ``x-api-key`` header.
+
+    Etsy enforces (since 9 Feb 2026) that the header be ``keystring:shared_secret``.
+    When a shared secret is available we send the combined form; otherwise we
+    fall back to the bare keystring (older behaviour / tests).
+    """
+    if keystring and shared_secret:
+        return f"{keystring}:{shared_secret}"
+    return keystring
+
+
 class EtsyClient:
     """Read-only wrapper over the Etsy Open API v3.
 
     Authentication is either a static ``access_token`` or, preferably, a
     ``token_provider`` callable (e.g. ``EtsyOAuth.valid_access_token``) that
-    returns a fresh, auto-refreshed token on every request.
+    returns a fresh, auto-refreshed token on every request. Etsy's ``x-api-key``
+    header is the ``keystring:shared_secret`` pair (see :func:`api_key_header`).
     """
 
     def __init__(
@@ -38,6 +51,7 @@ class EtsyClient:
         shop_id: str | None,
         access_token: str | None = None,
         token_provider: Callable[[], str] | None = None,
+        shared_secret: str | None = None,
         base_url: str = "https://openapi.etsy.com/v3/application",
         timeout: float = 30.0,
     ) -> None:
@@ -47,6 +61,7 @@ class EtsyClient:
                 "authorise via OAuth (or supply ETSY_ACCESS_TOKEN)."
             )
         self.api_key = api_key
+        self.shared_secret = shared_secret
         self.access_token = access_token
         self._token_provider = token_provider
         self.shop_id = str(shop_id)
@@ -58,7 +73,10 @@ class EtsyClient:
         return self._token_provider() if self._token_provider else self.access_token
 
     def _headers(self) -> dict[str, str]:
-        return {"x-api-key": self.api_key, "Authorization": f"Bearer {self._bearer()}"}
+        return {
+            "x-api-key": api_key_header(self.api_key, self.shared_secret),
+            "Authorization": f"Bearer {self._bearer()}",
+        }
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
