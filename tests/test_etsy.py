@@ -81,6 +81,12 @@ def test_unconfigured_without_creds(config, db):
     assert EtsyConnector(config, db).is_configured is False
 
 
+def test_configured_without_shop_id(config, db):
+    # A valid token is enough; the shop id is resolved from getMe when reading.
+    config.etsy = {"api_key": "k", "access_token": "t"}  # no shop_id
+    assert EtsyConnector(config, db).is_configured is True
+
+
 def test_unconfigured_sync_is_safe(config, db):
     config.etsy = {}
     result = EtsyConnector(config, db).sync()

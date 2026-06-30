@@ -66,9 +66,10 @@ class EtsyConnector(RevenueConnector):
         if self._client is not None:
             return True
         c = self.etsy_cfg
-        if not (c.get("api_key") and c.get("shop_id")):
+        if not c.get("api_key"):
             return False
-        # Ready if we have a static token, or OAuth has been authorised.
+        # Ready with a static token or an OAuth grant. The shop id is optional —
+        # it is resolved from the token (getMe) when not configured.
         return bool(c.get("access_token")) or self.oauth.is_authorised
 
     @property

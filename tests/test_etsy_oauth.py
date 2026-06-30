@@ -255,6 +255,17 @@ def test_static_access_token_still_works():
     assert client._headers()["Authorization"] == "Bearer static-tok"
 
 
+def test_client_resolves_shop_id_from_get_me():
+    # No shop id configured -> the client resolves it from the token via getMe.
+    client = EtsyClient(api_key="k", access_token="t")  # shop_id optional now
+    assert client.shop_id is None
+    client.get_me = lambda: {"user_id": 1, "shop_id": 778899}
+    assert client.resolve_shop_id() == "778899"
+    # Cached — getMe is not called again.
+    client.get_me = lambda: {"shop_id": 0}
+    assert client.resolve_shop_id() == "778899"
+
+
 # --- x-api-key format (Etsy shared-secret enforcement, 9 Feb 2026) ---
 
 def test_api_key_header_combines_keystring_and_secret():
