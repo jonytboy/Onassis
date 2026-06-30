@@ -34,6 +34,7 @@ from onassis.logger import get_logger, setup_logging
 from onassis.operations import OperationsManager
 from onassis.optimiser import ProductOptimiser
 from onassis.orchestrator import Orchestrator
+from onassis.production_readiness import ProductionReadiness
 from onassis.profit import ProfitEngine
 from onassis.publishing import PublisherService
 from onassis.revenue import RevenueEngine
@@ -90,6 +91,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     experiments = ExperimentEngine(config, db)
     daily = DailyCycle(config, db)
     operations = OperationsManager(config, db, cycle=daily)
+    readiness = ProductionReadiness(config, db)
 
     app = FastAPI(
         title="ONASSIS API",
@@ -115,6 +117,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.experiments = experiments
     app.state.daily = daily
     app.state.operations = operations
+    app.state.readiness = readiness
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""
@@ -148,6 +151,11 @@ def create_app(config: Config | None = None) -> FastAPI:
     def operations_report() -> dict[str, Any]:
         """The latest full Operations Report (SYSTEM / BUSINESS / RECOMMENDATIONS)."""
         return operations.report()
+
+    @app.get("/production/readiness", tags=["operations"])
+    def production_readiness() -> dict[str, Any]:
+        """Production Readiness Report: per-module status, blockers, checklist."""
+        return readiness.report()
 
     @app.get("/daily/status", tags=["daily"])
     def daily_status() -> dict[str, Any]:

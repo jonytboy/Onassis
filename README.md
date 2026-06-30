@@ -365,6 +365,33 @@ python main.py --ops-check               # pre-flight health checks
 python main.py --daily-run --mode dry_run  # guarded cycle (pre-flight + report)
 ```
 
+## Production Readiness — what's real vs. dev-only
+
+The Production Readiness audit (`onassis/production_readiness.py`) is
+**read-only** — it adds no business logic. It inspects the existing
+configuration and modules and reports how close ONASSIS is to operating in the
+real world. Every module is graded **Production Ready** / **Partially Ready** /
+**Development Only**, every blocker carries a *description, priority, estimated
+effort, and recommended fix*, and the report finishes with a single ✅/❌
+checklist plus a verification of the nine named subsystems (Etsy reading, Etsy
+publishing, Pinterest publishing, Analytics collection, Revenue collection,
+Compliance, CEO, Daily Cycle, Operations Manager).
+
+Grades are derived from what is actually configured: the AI provider is ready
+when `ANTHROPIC_API_KEY` is set; Etsy reading/publishing are ready once Etsy
+credentials are present; the Pinterest connector stays **Development Only**
+(its live fetch is a no-op and there is no publishing path); the Listing
+Factory is **Partially Ready** because mock-up images are placeholder PNGs; and
+live publishing is intentionally disabled (Draft mode only).
+
+| Method & path | Purpose |
+|---|---|
+| `GET /production/readiness` | Full Production Readiness Report. |
+
+```bash
+python main.py --readiness               # print the report (modules, blockers, checklist)
+```
+
 ## Daily Cycle — the single execution entry point
 
 The Daily Cycle (`onassis/daily_cycle.py`) is pure **orchestration** — it adds
@@ -500,6 +527,7 @@ then daily at `08:00` local time. Both are configurable.
 | `onassis/orchestrator.py` | Defines the content pipeline and owns the agents. |
 | `onassis/daily_cycle.py` | The Daily Cycle — orchestrates all modules in order. |
 | `onassis/operations.py` | Operations Manager — health gate + Operations Report. |
+| `onassis/production_readiness.py` | Production Readiness audit — per-module grades, blockers, checklist (read-only). |
 | `onassis/scheduler.py` | Runs the pipeline daily at a fixed time. |
 | `onassis/agents/base.py` | `BaseAgent` — the agent framework foundation. |
 | `onassis/agents/content_director.py` | LLM-generates the daily campaign brief (working). |

@@ -112,6 +112,10 @@ def _parse_args() -> argparse.Namespace:
         help="Run operational pre-flight health checks (no cycle).",
     )
     parser.add_argument(
+        "--readiness", action="store_true",
+        help="Print the Production Readiness Report (modules, blockers, checklist).",
+    )
+    parser.add_argument(
         "--optimise", action="store_true",
         help="Recommend the single highest-value action for an existing product.",
     )
@@ -437,6 +441,31 @@ def main() -> int:
             flag = "*" if c["critical"] else " "
             print(f"  [{c['status']:<4}]{flag} {c['label']:<22} {c['detail']}")
         print("\n  (* = critical: failure aborts the cycle)\n")
+        return 0
+
+    if args.readiness:
+        from onassis.production_readiness import ProductionReadiness
+
+        report = ProductionReadiness(config, db).report()
+        s = report["summary"]
+        print(f"\nPRODUCTION READINESS ({report['environment']}) — "
+              f"{'PRODUCTION READY' if report['production_ready'] else 'NOT READY'}\n")
+        print(f"  Modules: {s['production_ready']} ready / "
+              f"{s['partially_ready']} partial / {s['development_only']} dev-only\n")
+        for m in report["modules"]:
+            print(f"  [{m['status']:<16}] {m['name']}")
+        print("\n  SUBSYSTEMS")
+        for sub in report["subsystems"]:
+            print(f"    [{sub['status']:<16}] {sub['subsystem']}")
+        if report["blockers"]:
+            print(f"\n  BLOCKERS ({len(report['blockers'])})")
+            for b in report["blockers"]:
+                print(f"    ({b['priority']}) {b['module']}: {b['description']}")
+                print(f"        fix: {b['recommended_fix']}  [{b['estimated_effort']}]")
+        print("\n  CHECKLIST")
+        for c in report["checklist"]:
+            print(f"    {c['mark']} {c['item']}")
+        print()
         return 0
 
     if args.daily_run:

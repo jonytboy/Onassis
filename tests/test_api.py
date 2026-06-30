@@ -381,6 +381,15 @@ def test_operations_check_status_report(app_and_client):
     assert set(report["business"]) and "system" in report
 
 
+def test_production_readiness_endpoint(app_and_client):
+    _, client = app_and_client
+    report = client.get("/production/readiness").json()
+    assert set(report) >= {"modules", "subsystems", "blockers", "checklist",
+                           "summary", "production_ready"}
+    assert len(report["subsystems"]) == 9
+    assert all(c["mark"] in ("✅", "❌") for c in report["checklist"])
+
+
 # --- Daily cycle endpoints ------------------------------------------
 
 def test_daily_run_and_status_history(app_and_client):
@@ -490,7 +499,8 @@ def test_swagger_docs_available(app_and_client):
                  "/analytics/campaign/{campaign_id}",
                  "/experiments", "/experiments/{experiment_id}", "/experiments/active",
                  "/daily/run", "/daily/status", "/daily/history",
-                 "/operations/check", "/operations/status", "/operations/report"):
+                 "/operations/check", "/operations/status", "/operations/report",
+                 "/production/readiness"):
         assert path in paths
 
 
