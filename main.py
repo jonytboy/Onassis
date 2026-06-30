@@ -28,7 +28,7 @@ from onassis.campaign_manager import STATUSES, CampaignError, CampaignManager
 from onassis.config import load_config
 from onassis.database import Database
 from onassis.logger import get_logger, setup_logging
-from onassis.orchestrator import Orchestrator
+from onassis.daily_cycle import DailyCycle
 from onassis.profit import ProfitEngine
 from onassis.revenue import RevenueEngine
 from onassis.scheduler import DailyScheduler
@@ -349,7 +349,7 @@ def main() -> int:
     log.info("Starting %s v%s (env=%s)", config.app_name, config.version, config.environment)
 
     db = Database(config.db_path)
-    orchestrator = Orchestrator(config, db)
+    cycle = DailyCycle(config, db)
     campaigns = CampaignManager(config, db)
     brain = OnassisBrain(config, db)
 
@@ -673,10 +673,19 @@ def main() -> int:
         return 0
 
     if args.once:
-        orchestrator.run_daily()
+        result = cycle.run("production")
+        print(f"\nProduction cycle #{result['run_id']} — {result['status']} "
+              f"in {result['duration_seconds']}s")
+        if result.get("opportunity_id"):
+            print(f"  Product opportunity : {result['opportunity_id']}")
+        if result.get("campaign_id"):
+            print(f"  Campaign            : #{result['campaign_id']} "
+                  f"(listing {'ready' if result['listing_ready'] else 'not built'}, "
+                  f"{result['assets_created']} marketing asset(s))")
+        print()
         return 0
 
-    DailyScheduler(config, orchestrator).start()
+    DailyScheduler(config, cycle).start()
     return 0
 
 

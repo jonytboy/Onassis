@@ -23,24 +23,16 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from onassis.analytics import AnalyticsEngine
 from onassis.config import Config, load_config
-from onassis.connectors.etsy import EtsyConnector
 from onassis.connectors.etsy_oauth import EtsyAuthError
 from onassis.daily_cycle import DailyCycle
 from onassis.database import Database
-from onassis.design_package import DesignPackageBuilder, DesignPackageError
+from onassis.design_package import DesignPackageError
 from onassis.experiments import ExperimentEngine, ExperimentError
-from onassis.listing_factory import ListingError, ListingFactory
+from onassis.listing_factory import ListingError
 from onassis.logger import get_logger, setup_logging
 from onassis.operations import OperationsManager
-from onassis.opportunities import OpportunityEngine
-from onassis.optimiser import ProductOptimiser
-from onassis.orchestrator import Orchestrator
 from onassis.production_readiness import ProductionReadiness
-from onassis.profit import ProfitEngine
-from onassis.publishing import PublisherService
-from onassis.revenue import RevenueEngine
 
 log = get_logger(__name__)
 
@@ -79,24 +71,26 @@ def create_app(config: Config | None = None) -> FastAPI:
     database (and inject fake LLMs via ``app.state.orchestrator``).
     """
     config = config or load_config()
-    orchestrator = Orchestrator(config, Database(config.db_path))
-    # Reuse the orchestrator's own services so the whole app shares one set.
-    db = orchestrator.db
-    campaigns = orchestrator.campaigns
-    brain = orchestrator.brain
-    profit = ProfitEngine(config, db)
-    revenue = RevenueEngine(config, db)
-    etsy = EtsyConnector(config, db)
-    optimiser = ProductOptimiser(config, db)
-    listing_factory = ListingFactory(config, db)
-    publisher = PublisherService(config, db)
-    analytics = AnalyticsEngine(config, db)
-    experiments = ExperimentEngine(config, db)
+    db = Database(config.db_path)
+    # One product-first workflow (the Daily Cycle). Everything the API exposes
+    # reuses the cycle's own module instances, so there is a single shared set
+    # and a single behaviour — no separate content-first path.
     daily = DailyCycle(config, db)
+    orchestrator = daily.orchestrator
+    campaigns = daily.campaigns
+    brain = daily.brain
+    profit = daily.profit
+    revenue = daily.revenue
+    etsy = daily.etsy
+    optimiser = daily.optimiser
+    listing_factory = daily.listing_factory
+    publisher = daily.publisher
+    analytics = daily.analytics
+    opportunities = daily.opportunities
+    design_builder = daily.design
+    experiments = ExperimentEngine(config, db)
     operations = OperationsManager(config, db, cycle=daily)
     readiness = ProductionReadiness(config, db)
-    opportunities = OpportunityEngine(config, db)
-    design_builder = DesignPackageBuilder(config, db)
 
     app = FastAPI(
         title="ONASSIS API",
@@ -395,17 +389,27 @@ def create_app(config: Config | None = None) -> FastAPI:
         "/campaign/create", response_model=CampaignCreateResponse, tags=["campaigns"]
     )
     def create_campaign() -> dict[str, Any]:
-        """Run the full campaign generation pipeline and return a summary."""
+        """Run the one product-first production workflow and return its campaign.
+
+        Same workflow as ``POST /daily/run``: a sellable product is created
+        first (opportunity → design → Etsy listing); marketing content is
+        generated only afterwards to promote it.
+        """
         started = time.monotonic()
         try:
-            summary = orchestrator.run_daily()
+            result = daily.run("production")
         except Exception as exc:  # surface generation failures as 500s
-            log.exception("Campaign generation failed")
-            raise HTTPException(status_code=500, detail=f"Campaign generation failed: {exc}")
+            log.exception("Production workflow failed")
+            raise HTTPException(status_code=500, detail=f"Production workflow failed: {exc}")
+        if result.get("campaign_id") is None:
+            raise HTTPException(
+                status_code=409,
+                detail="The cycle produced no product/campaign (see /daily/status).",
+            )
         return {
-            "campaign_id": summary["campaign_id"],
+            "campaign_id": result["campaign_id"],
             "status": "completed",
-            "assets_created": summary["items_created"],
+            "assets_created": result.get("assets_created", 0),
             "duration_seconds": round(time.monotonic() - started),
         }
 

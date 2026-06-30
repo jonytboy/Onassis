@@ -107,8 +107,15 @@ class DailyCycle:
                   "stages": stages}
         run_id = self.db.insert_daily_run(record)
         log.info("=== ONASSIS daily cycle DONE (run #%s, %s) ===", run_id, status)
-        return {"run_id": run_id, "mode": mode, "status": status,
-                "started_at": started, "duration_seconds": duration, "stages": stages}
+        return {
+            "run_id": run_id, "mode": mode, "status": status,
+            "started_at": started, "duration_seconds": duration, "stages": stages,
+            # The product this cycle created (the workflow's primary output).
+            "opportunity_id": (ctx.get("opportunity") or {}).get("opportunity_id"),
+            "campaign_id": ctx.get("campaign_id"),
+            "listing_ready": ctx.get("listing_ready", False),
+            "assets_created": ctx.get("content_items", 0),
+        }
 
     # --- Stage runner -----------------------------------------------
 
@@ -216,6 +223,10 @@ class DailyCycle:
         campaign, brief = result["campaign"], result["brief"]
         ctx["campaign_id"] = campaign["id"]
         ctx["brief"] = brief
+        # Record the campaign's estimated AI cost in the profit ledger.
+        ai_cost = float((self.config.profit or {}).get("ai_cost_per_campaign", 0) or 0)
+        if ai_cost:
+            self.profit.record_campaign_ai_cost(campaign["id"], ai_cost)
         # Governance for the marketing campaign: predict + compliance review.
         self.brain.generate_for_campaign(campaign, brief)
         review = self.compliance.review_campaign(campaign, [])

@@ -1,20 +1,15 @@
-"""Tests for the daily pipeline orchestration (all LLMs mocked)."""
+"""Tests for the Orchestrator — the content agents + marketing-content step.
+
+There is one production workflow (the product-first Daily Cycle); the
+orchestrator provides its **last** creative step, ``generate_marketing_content``,
+which promotes an already-created product. (The full cycle is covered in
+``tests/test_daily_cycle.py``.)
+"""
 
 from __future__ import annotations
 
-from datetime import date
-
 from onassis.orchestrator import Orchestrator
-from tests.conftest import FakeLLM, make_compliance_response, make_content_response
-
-_PREDICTION = {
-    "hypothesis": "Authentic slow-living content outperforms aspirational yacht content.",
-    "variables": ["lifestyle", "dining", "golden hour"],
-    "predicted_outcome": "Saves and shares above the rolling average.",
-    "confidence": 74,
-    "success_metrics": ["Pinterest saves", "Instagram shares"],
-    "recommendation": "If saves beat the average by 20%, make three more slow-dining campaigns.",
-}
+from tests.conftest import FakeLLM, make_content_response
 
 
 def _counts(config):
@@ -27,75 +22,29 @@ def _counts(config):
     )
 
 
-def _wired(config, db, brief):
-    """Build an orchestrator with the Director, Creator, and Brain LLMs faked."""
-    n_pin, n_ig, n_fb, n_img = _counts(config)
+def test_orchestrator_exposes_content_agents(config, db):
     orch = Orchestrator(config, db)
-    orch.director._llm = FakeLLM(brief)
+    for attr in ("director", "creator", "brain", "compliance", "campaigns",
+                 "publisher", "analytics", "profit"):
+        assert getattr(orch, attr) is not None
+
+
+def test_generate_marketing_content_creates_and_persists(config, db, sample_brief):
+    n_pin, n_ig, n_fb, n_img = _counts(config)
+    expected = n_pin + n_ig + n_fb + n_img
+
+    orch = Orchestrator(config, db)
     orch.creator._llm = FakeLLM(make_content_response(n_pin, n_ig, n_fb, n_img))
-    orch.brain._llm = FakeLLM(_PREDICTION)
-    orch.compliance._llm = FakeLLM(make_compliance_response())
-    return orch
+    sample_brief["id"] = db.insert_brief(sample_brief)
+
+    result = orch.generate_marketing_content(sample_brief)
+
+    assert len(result["items"]) == expected
+    assert result["published"] == 0  # publisher is a placeholder
+    # The content is persisted and belongs to the brief.
+    assert len(db.get_content_for_brief(sample_brief["id"])) == expected
 
 
-def test_run_daily_wires_agents_end_to_end(config, db, sample_brief):
-    n_pin, n_ig, n_fb, n_img = _counts(config)
-    expected = n_pin + n_ig + n_fb + n_img
-
-    orch = _wired(config, db, sample_brief)
-    summary = orch.run_daily(for_date=date(2026, 6, 26))
-
-    assert summary["theme"] == sample_brief["theme"]
-    assert summary["items_created"] == expected
-    assert summary["published"] == 0  # publisher is a placeholder
-    assert summary["analytics"]["items_this_brief"] == expected
-
-    stored = db.get_content_for_brief(summary["brief_id"])
-    assert len(stored) == expected
-
-
-def test_run_daily_persists_one_brief_per_run(config, db, sample_brief):
-    orch = _wired(config, db, sample_brief)
-    orch.run_daily(for_date=date(2026, 6, 26))
-    orch.run_daily(for_date=date(2026, 6, 27))
-    assert len(db.get_recent_briefs()) == 2
-
-
-def test_run_daily_creates_campaign_with_content(config, db, sample_brief):
-    n_pin, n_ig, n_fb, n_img = _counts(config)
-    expected = n_pin + n_ig + n_fb + n_img
-
-    orch = _wired(config, db, sample_brief)
-    summary = orch.run_daily(for_date=date(2026, 6, 26))
-
-    assert "campaign_id" in summary
-    view = orch.campaigns.get_campaign(summary["campaign_id"])
-    assert view is not None
-    assert view["name"] == sample_brief["campaign_name"]
-    assert view["status"] == "Draft"
-    assert len(view["content_ids"]) == expected  # all content belongs to the campaign
-
-
-def test_run_daily_generates_knowledge_for_campaign(config, db, sample_brief):
-    orch = _wired(config, db, sample_brief)
-    summary = orch.run_daily(for_date=date(2026, 6, 26))
-
-    assert "knowledge_id" in summary
-    assert summary["confidence"] == _PREDICTION["confidence"]
-
-    knowledge = orch.brain.get_for_campaign(summary["campaign_id"])
-    assert knowledge is not None
-    assert knowledge["hypothesis"] == _PREDICTION["hypothesis"]
-    assert knowledge["status"] == "predicted"
-
-
-def test_run_daily_generates_compliance_report(config, db, sample_brief):
-    orch = _wired(config, db, sample_brief)
-    summary = orch.run_daily(for_date=date(2026, 6, 26))
-
-    assert "compliance_verdict" in summary
-    assert summary["compliance_verdict"] == "APPROVE"  # low-risk fake
-    report = orch.compliance.get_for_campaign(summary["campaign_id"])
-    assert report is not None
-    assert report["campaign_id"] == summary["campaign_id"]
-    assert 0 <= report["compliance_score"] <= 100
+def test_no_content_first_pipeline_remains(config, db):
+    # The divergent content-first entry point was removed — one workflow only.
+    assert not hasattr(Orchestrator(config, db), "run_daily")

@@ -598,18 +598,25 @@ Interactive **Swagger docs at `/docs`**, OpenAPI schema at `/openapi.json`.
 | Method & path | Purpose |
 |---|---|
 | `GET /health` | System status (app, version, counts). |
-| `POST /campaign/create` | Run the full generation pipeline; returns a summary. |
+| `POST /campaign/create` | Run the one product-first workflow (same as `/daily/run`); returns the campaign it created. |
 | `GET /campaigns` | All campaigns (the dashboard). |
 | `GET /campaign/{id}` | One campaign with all assets + its prediction. |
 | `GET /campaign/latest` | The most recently generated campaign, with assets. |
 | `GET /dashboard` | The profit-first company dashboard. |
 | `GET /optimiser` | Highest-value action for an existing product (CEO-reviewed). |
 
-`POST /campaign/create` returns exactly:
+`POST /campaign/create` runs the **single, product-first** production workflow
+(a sellable product is created before any marketing content) and returns the
+campaign it produced:
 
 ```json
 { "campaign_id": 17, "status": "completed", "assets_created": 13, "duration_seconds": 47 }
 ```
+
+There is **one** production workflow. Every production entry point —
+`POST /campaign/create`, `POST /daily/run`, `python main.py --once`, and the
+scheduler — runs the same product-first Daily Cycle. There is no separate
+content-first path.
 
 ## Tests
 
@@ -656,7 +663,7 @@ then daily at `08:00` local time. Both are configurable.
 | `onassis/design_package.py` | Design Package Builder — opportunity → print-ready design package. |
 | `onassis/connectors/` | Pluggable revenue sources: base contract, Etsy connector, and Etsy OAuth 2.0 (PKCE). |
 | `onassis/api.py` | FastAPI service — thin REST layer over the existing services. |
-| `onassis/orchestrator.py` | Defines the content pipeline and owns the agents. |
+| `onassis/orchestrator.py` | Owns the content agents + the marketing-content step (the workflow's last creative step). |
 | `onassis/daily_cycle.py` | The Daily Cycle — orchestrates all modules in order. |
 | `onassis/operations.py` | Operations Manager — health gate + Operations Report. |
 | `onassis/production_readiness.py` | Production Readiness audit — per-module grades, blockers, checklist (read-only). |

@@ -1,25 +1,20 @@
-"""Pipeline orchestration.
+"""Content agents + the marketing-content step.
 
-The :class:`Orchestrator` owns the shared resources (config + database),
-instantiates the agents once, and defines the **daily pipeline** that
-wires them together. This is the single place that knows the *order* of
-operations, which keeps the agents themselves decoupled and unaware of
-one another.
+The :class:`Orchestrator` owns the shared resources (config + database) and
+instantiates the content agents once (Director, Creator, Brain, Compliance,
+Campaign Manager, Publisher, Analytics). It exposes the **marketing-content**
+step of the single product-first production workflow.
 
-Daily pipeline::
-
-    Content Director    -> brief
-    Campaign Manager    -> campaign (the brief becomes a campaign; content belongs to it)
-    Content Creator     -> content (stored in SQLite)
-    ONASSIS Brain       -> knowledge (a prediction the campaign will be measured against)
-    Compliance Director -> compliance report (risk/brand review of the campaign)
-    Publisher           -> no-op (placeholder)
-    Analytics Agent     -> local counts (placeholder)
+There is exactly one production workflow — :class:`~onassis.daily_cycle.DailyCycle`
+— and it is product-first: a sellable product (opportunity → design package →
+Etsy listing) is created *before* any marketing content. This module provides
+the last creative step of that workflow, :meth:`Orchestrator.generate_marketing_content`,
+which promotes an already-created, approved product. There is no separate
+content-first pipeline.
 """
 
 from __future__ import annotations
 
-from datetime import date
 from typing import Any
 
 from onassis.agents import AnalyticsAgent, ContentCreator, ContentDirector, Publisher
@@ -30,7 +25,6 @@ from onassis.config import Config
 from onassis.database import Database
 from onassis.logger import get_logger
 from onassis.profit import ProfitEngine
-from onassis.proposals import APPROVE
 
 log = get_logger(__name__)
 
@@ -55,59 +49,14 @@ class Orchestrator:
         # The Profit Engine records the economics of each run.
         self.profit = ProfitEngine(config, db)
 
-    def run_daily(self, *, for_date: date | None = None) -> dict[str, Any]:
-        """Run one full pass of the daily pipeline — **governance before content**.
-
-        The campaign concept is created and reviewed by Compliance *first*;
-        marketing content is generated **only after approval**. (The full
-        product-first cycle lives in :class:`~onassis.daily_cycle.DailyCycle`;
-        this remains the standalone content path.)
-        """
-        log.info("=== ONASSIS daily pipeline START ===")
-
-        brief = self.director.execute(for_date=for_date)
-        campaign = self.campaigns.create_from_brief(brief)
-        knowledge = self.brain.generate_for_campaign(campaign, brief)
-        compliance = self.compliance.review_campaign(campaign, [])
-
-        # Record the campaign's estimated AI cost in the profit ledger.
-        ai_cost = float((self.config.profit or {}).get("ai_cost_per_campaign", 0) or 0)
-        if ai_cost:
-            self.profit.record_campaign_ai_cost(campaign["id"], ai_cost)
-
-        # Marketing is generated only after the campaign is approved.
-        approved = compliance["verdict"] == APPROVE
-        if approved:
-            content = self.generate_marketing_content(brief)
-            items, published = content["items"], content["published"]
-        else:
-            items, published = [], 0
-        analytics_result = self.analytics.execute(brief_id=brief["id"])
-
-        summary = {
-            "campaign_id": campaign["id"],
-            "campaign_name": campaign["name"],
-            "brief_id": brief["id"],
-            "theme": brief["theme"],
-            "items_created": len(items),
-            "knowledge_id": knowledge["id"],
-            "confidence": knowledge["confidence"],
-            "compliance_score": compliance["compliance_score"],
-            "compliance_verdict": compliance["verdict"],
-            "ai_cost": ai_cost,
-            "cash_balance": self.profit.cash_balance(),
-            "published": published,
-            "analytics": analytics_result,
-        }
-        log.info("=== ONASSIS daily pipeline DONE: %s ===", summary)
-        return summary
-
     def generate_marketing_content(self, brief: dict[str, Any]) -> dict[str, Any]:
-        """Generate and persist the marketing content for a brief.
+        """Generate and persist the marketing content for a product's brief.
 
-        This is the **last** step of the pipeline: marketing exists to promote a
-        product/campaign that has already been created and approved. Returns the
-        created content items and the (placeholder) publish result.
+        There is a single, product-first production workflow
+        (:class:`~onassis.daily_cycle.DailyCycle`): a sellable product is created
+        first, and this is the **last** creative step — marketing exists only to
+        promote a product/campaign that already exists and was approved. Returns
+        the created content items and the (placeholder) publish result.
         """
         items = self.creator.execute(brief=brief)
         publish_result = self.publisher.execute(brief_id=brief["id"])

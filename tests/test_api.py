@@ -30,13 +30,51 @@ def _expected_assets(config) -> int:
     )
 
 
+# The one production workflow is product-first: the campaign is created from the
+# top-ranked product opportunity, so the campaign is named after the product.
+_TOP_PRODUCT = "Amalfi Morning Tee"
+
+
+def _opportunity(i: int, score: int) -> dict:
+    return {
+        "theme": f"Theme {i}", "target_customer": "design-loving travellers",
+        "emotional_angle": f"angle {i}", "product_type": f"tee {i}",
+        "search_intent": "mediterranean tee", "seasonal_relevance": "summer",
+        "commercial_score": score, "originality_score": score, "brand_fit_score": score,
+        "estimated_demand": score, "estimated_competition": 20, "confidence": 80,
+        "product_name": _TOP_PRODUCT if i == 0 else f"Product {i}",
+        "concept": "A linen-soft tee for slow Amalfi mornings.",
+        "colour_palette": ["citrus", "whitewash"], "typography_style": "serif",
+        "illustration_style": "watercolour", "photography_style": "morning light",
+        "mockup_style": "terrace flatlay",
+    }
+
+
+_OPPORTUNITIES = {"opportunities": [_opportunity(i, 90 - i * 5) for i in range(6)]}
+_DESIGN = {
+    "shirt_colour": "ecru", "print_colour": "terracotta",
+    "typography_direction": "serif lowercase", "layout_direction": "centred",
+    "print_placement": "centre chest", "print_size_guidance": "25cm wide",
+    "artwork_description": "A line-drawn lemon branch.", "mockup_scene": "tee on linen",
+    "design_rationale": "On theme.", "listing_title_seed": "Amalfi Tee",
+    "listing_tags_seed": ["lemon", "coastal"], "listing_description_seed": "A calm tee.",
+}
+_LISTING = {
+    "title": "Amalfi Morning Tee", "description": "Lovely.",
+    "tags": [f"t{i}" for i in range(13)], "materials": ["cotton"],
+    "primary_colour": "Ecru", "secondary_colour": "Terracotta", "category": "Apparel",
+    "seo_keywords": ["mediterranean tee"], "image_alt_texts": ["a", "b", "c", "d", "e"],
+    "product_attributes": [{"name": "fit", "value": "Relaxed"}],
+}
+
+
 @pytest.fixture
-def app_and_client(config, sample_brief):
-    """An app on a throwaway DB, with the pipeline's LLMs faked."""
+def app_and_client(config, sample_brief, tmp_path):
+    """An app on a throwaway DB, with the product-first workflow's LLMs faked."""
+    config.listing = {**(config.listing or {}), "exports_dir": str(tmp_path / "exports")}
     app = create_app(config)
     orch = app.state.orchestrator
     t = config.content_targets
-    orch.director._llm = FakeLLM(sample_brief)
     orch.creator._llm = FakeLLM(
         make_content_response(
             t.get("pinterest_posts", 5),
@@ -47,6 +85,13 @@ def app_and_client(config, sample_brief):
     )
     orch.brain._llm = FakeLLM(_PREDICTION)
     orch.compliance._llm = FakeLLM(make_compliance_response())
+    # Product-first stages: opportunity, design package, Etsy listing.
+    app.state.opportunities._llm = FakeLLM(_OPPORTUNITIES)
+    app.state.opportunities.generate()  # seed the backlog
+    app.state.design_builder._llm = FakeLLM(_DESIGN)
+    app.state.design_builder.compliance._llm = FakeLLM(make_compliance_response())
+    app.state.listing_factory._llm = FakeLLM(_LISTING)
+    app.state.listing_factory.compliance._llm = FakeLLM(make_compliance_response())
     return app, TestClient(app)
 
 
@@ -104,14 +149,15 @@ def test_list_campaigns_empty(app_and_client):
 
 # --- GET /campaign/{id} ---------------------------------------------
 
-def test_get_campaign_full_view(app_and_client, config, sample_brief):
+def test_get_campaign_full_view(app_and_client, config):
     _, client = app_and_client
     cid = client.post("/campaign/create").json()["campaign_id"]
     r = client.get(f"/campaign/{cid}")
     assert r.status_code == 200
     body = r.json()
     assert body["id"] == cid
-    assert body["name"] == sample_brief["campaign_name"]
+    # Product-first: the campaign is named after the top product opportunity.
+    assert body["name"] == _TOP_PRODUCT
     assert len(body["content_ids"]) == _expected_assets(config)
     assert len(body["content"]) == _expected_assets(config)
     assert body["brief"] is not None
@@ -505,8 +551,11 @@ def test_opportunities_endpoints(app_and_client):
     all_opps = client.get("/opportunities").json()
     assert any(o["opportunity_id"] == oid for o in all_opps)
 
-    top = client.get("/opportunities/top?limit=5").json()
-    assert top[0]["opportunity_id"] == oid
+    # The backlog is ranked by expected commercial value (best first).
+    top = client.get("/opportunities/top?limit=20").json()
+    values = [o["expected_value"] for o in top]
+    assert values == sorted(values, reverse=True)
+    assert any(o["opportunity_id"] == oid for o in top)
 
 
 def test_build_design_package_endpoint(app_and_client, tmp_path):
@@ -575,18 +624,13 @@ def test_swagger_docs_available(app_and_client):
         assert path in paths
 
 
-def test_create_failure_returns_500(config):
-    """If generation raises, the endpoint surfaces a clean 500 (JSON)."""
+def test_create_without_product_returns_409(config):
+    """If the cycle can't create a product (e.g. generation fails), the one
+    workflow returns a clean 409 — never a half-finished campaign."""
     app = create_app(config)
-    # Don't inject fakes — the real LLMClient has no usable key path here.
-    # Force a failure by pointing the director at a raising fake.
-    class _Boom:
-        def generate_json(self, **_):
-            raise RuntimeError("kaboom")
-
-    app.state.orchestrator.director._llm = _Boom()
+    # No fakes — opportunity generation fails, so no product/campaign is created.
     client = TestClient(app, raise_server_exceptions=False)
     r = client.post("/campaign/create")
-    assert r.status_code == 500
+    assert r.status_code == 409
     assert r.headers["content-type"].startswith("application/json")
     assert "detail" in r.json()
