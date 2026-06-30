@@ -493,6 +493,7 @@ def test_swagger_docs_available(app_and_client):
                  "/revenue/today", "/revenue/month", "/profit",
                  "/orders", "/orders/{order_id}",
                  "/etsy/orders", "/etsy/listings", "/etsy/stats", "/etsy/sync",
+                 "/etsy/oauth/login", "/etsy/oauth/callback", "/etsy/oauth/status",
                  "/optimiser", "/listing/{campaign_id}",
                  "/publish/{campaign_id}", "/publishing/status",
                  "/analytics", "/analytics/product/{product_id}",

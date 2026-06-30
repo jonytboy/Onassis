@@ -10,6 +10,12 @@ the core revenue/decision engine.
 from onassis.connectors.base import ManualConnector, RevenueConnector
 from onassis.connectors.etsy import EtsyConnector
 from onassis.connectors.etsy_client import EtsyClient, EtsyConfigError
+from onassis.connectors.etsy_oauth import (
+    EtsyAuthError,
+    EtsyOAuth,
+    TokenStore,
+    build_etsy_oauth,
+)
 
 __all__ = [
     "RevenueConnector",
@@ -17,4 +23,8 @@ __all__ = [
     "EtsyConnector",
     "EtsyClient",
     "EtsyConfigError",
+    "EtsyOAuth",
+    "EtsyAuthError",
+    "TokenStore",
+    "build_etsy_oauth",
 ]

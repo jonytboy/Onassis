@@ -10,7 +10,7 @@ surface, so tests inject a stub and never touch the network.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
@@ -24,30 +24,41 @@ class EtsyConfigError(RuntimeError):
 
 
 class EtsyClient:
-    """Read-only wrapper over the Etsy Open API v3."""
+    """Read-only wrapper over the Etsy Open API v3.
+
+    Authentication is either a static ``access_token`` or, preferably, a
+    ``token_provider`` callable (e.g. ``EtsyOAuth.valid_access_token``) that
+    returns a fresh, auto-refreshed token on every request.
+    """
 
     def __init__(
         self,
         *,
         api_key: str | None,
-        access_token: str | None,
         shop_id: str | None,
+        access_token: str | None = None,
+        token_provider: Callable[[], str] | None = None,
         base_url: str = "https://openapi.etsy.com/v3/application",
         timeout: float = 30.0,
     ) -> None:
-        if not (api_key and access_token and shop_id):
+        if not (api_key and shop_id and (access_token or token_provider)):
             raise EtsyConfigError(
-                "Etsy credentials missing. Set ETSY_API_KEY, ETSY_ACCESS_TOKEN, "
-                "and ETSY_SHOP_ID."
+                "Etsy credentials missing. Set ETSY_CLIENT_ID and ETSY_SHOP_ID, then "
+                "authorise via OAuth (or supply ETSY_ACCESS_TOKEN)."
             )
         self.api_key = api_key
         self.access_token = access_token
+        self._token_provider = token_provider
         self.shop_id = str(shop_id)
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
+    def _bearer(self) -> str:
+        # A token provider (OAuth) wins — it refreshes automatically.
+        return self._token_provider() if self._token_provider else self.access_token
+
     def _headers(self) -> dict[str, str]:
-        return {"x-api-key": self.api_key, "Authorization": f"Bearer {self.access_token}"}
+        return {"x-api-key": self.api_key, "Authorization": f"Bearer {self._bearer()}"}
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         url = f"{self.base_url}{path}"

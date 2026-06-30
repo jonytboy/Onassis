@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from onassis.analytics import AnalyticsEngine
 from onassis.config import Config, load_config
 from onassis.connectors.etsy import EtsyConnector
+from onassis.connectors.etsy_oauth import EtsyAuthError
 from onassis.daily_cycle import DailyCycle
 from onassis.database import Database
 from onassis.experiments import ExperimentEngine, ExperimentError
@@ -231,6 +232,29 @@ def create_app(config: Config | None = None) -> FastAPI:
     def etsy_sync() -> dict[str, Any]:
         """Run a read-only Etsy import; updates the Revenue Engine and metrics."""
         return etsy.sync()
+
+    @app.get("/etsy/oauth/login", tags=["etsy"])
+    def etsy_oauth_login() -> dict[str, Any]:
+        """Start Etsy OAuth — returns the consent URL to open in a browser."""
+        try:
+            auth = etsy.oauth.create_authorization_url()
+        except EtsyAuthError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        return {"authorization_url": auth["url"], "state": auth["state"]}
+
+    @app.get("/etsy/oauth/callback", tags=["etsy"])
+    def etsy_oauth_callback(code: str, state: str | None = None) -> dict[str, Any]:
+        """OAuth redirect target — exchanges the code for tokens (stored securely)."""
+        try:
+            etsy.oauth.exchange_code(code, state=state)
+        except EtsyAuthError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {"status": "authorised", **etsy.oauth.status()}
+
+    @app.get("/etsy/oauth/status", tags=["etsy"])
+    def etsy_oauth_status() -> dict[str, Any]:
+        """Etsy OAuth authorisation status (no secrets)."""
+        return etsy.oauth.status()
 
     @app.get("/listing/{campaign_id}", tags=["listing"])
     def listing(campaign_id: int) -> dict[str, Any]:

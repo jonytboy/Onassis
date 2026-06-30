@@ -124,12 +124,21 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         "access_token": _env("PINTEREST_ACCESS_TOKEN", pinterest.get("access_token")),
         "ad_account_id": _env("PINTEREST_AD_ACCOUNT_ID", pinterest.get("ad_account_id")),
     }
-    # Etsy credentials come from the environment.
+    # Etsy credentials come from the environment. In Etsy's Open API v3 the
+    # "keystring" is both the OAuth client_id and the x-api-key, so ETSY_CLIENT_ID
+    # and ETSY_API_KEY are interchangeable — each falls back to the other.
+    etsy_client_id = _env("ETSY_CLIENT_ID", _env("ETSY_API_KEY", etsy.get("client_id")))
     etsy = {
         **etsy,
-        "api_key": _env("ETSY_API_KEY", etsy.get("api_key")),
+        "client_id": etsy_client_id,
+        "client_secret": _env("ETSY_CLIENT_SECRET", etsy.get("client_secret")),
+        # x-api-key is the keystring; accept either env var name.
+        "api_key": _env("ETSY_API_KEY", etsy_client_id),
+        # A pre-supplied access token still works (e.g. for a quick manual test);
+        # otherwise the OAuth token store provides it.
         "access_token": _env("ETSY_ACCESS_TOKEN", etsy.get("access_token")),
         "shop_id": _env("ETSY_SHOP_ID", etsy.get("shop_id")),
+        "redirect_uri": _env("ETSY_REDIRECT_URI", etsy.get("redirect_uri")),
     }
 
     # Environment variables win over YAML.

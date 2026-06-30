@@ -98,6 +98,23 @@ etsy:
   # Used to estimate fees when a receipt doesn't itemise them.
   transaction_fee_rate: 0.065    # Etsy transaction fee
   payment_fee_rate: 0.04         # payment processing
+  # OAuth 2.0 (Authorization Code + PKCE). Credentials come from env:
+  #   ETSY_CLIENT_ID (keystring), ETSY_CLIENT_SECRET (shared secret),
+  #   ETSY_REDIRECT_URI, ETSY_SHOP_ID.
+  oauth_connect_url: "https://www.etsy.com/oauth/connect"
+  oauth_token_url: "https://api.etsy.com/v3/public/oauth/token"
+  redirect_uri: "http://localhost:8000/etsy/oauth/callback"
+  # Scopes requested during authorisation (read + draft write).
+  scopes:
+    - "email_r"
+    - "shops_r"
+    - "listings_r"
+    - "listings_w"
+    - "transactions_r"
+  # Where the encrypted-at-rest token bundle is written (0600, git-ignored).
+  token_store: "data/etsy_tokens.json"
+  # Refresh the access token this many seconds before it actually expires.
+  token_refresh_leeway: 120
 
 # --- Pinterest (read-only analytics) ---------------------------------
 # Credentials from env: PINTEREST_ACCESS_TOKEN, PINTEREST_AD_ACCOUNT_ID

@@ -47,25 +47,41 @@ class EtsyConnector(RevenueConnector):
         self.profit = ProfitEngine(config, db)
         self.etsy_cfg = config.etsy or {}
         self._client = client
+        self._oauth: Any | None = None
         self.tx_fee = float(self.etsy_cfg.get("transaction_fee_rate", 0.065) or 0)
         self.pay_fee = float(self.etsy_cfg.get("payment_fee_rate", 0.04) or 0)
 
     # --- Configuration / client -------------------------------------
 
     @property
+    def oauth(self) -> Any:
+        if self._oauth is None:
+            from onassis.connectors.etsy_oauth import build_etsy_oauth
+
+            self._oauth = build_etsy_oauth(self.config)
+        return self._oauth
+
+    @property
     def is_configured(self) -> bool:
         if self._client is not None:
             return True
         c = self.etsy_cfg
-        return bool(c.get("api_key") and c.get("access_token") and c.get("shop_id"))
+        if not (c.get("api_key") and c.get("shop_id")):
+            return False
+        # Ready if we have a static token, or OAuth has been authorised.
+        return bool(c.get("access_token")) or self.oauth.is_authorised
 
     @property
     def client(self) -> Any:
         if self._client is None:
             self._client = EtsyClient(
                 api_key=self.etsy_cfg.get("api_key"),
-                access_token=self.etsy_cfg.get("access_token"),
                 shop_id=self.etsy_cfg.get("shop_id"),
+                access_token=self.etsy_cfg.get("access_token"),
+                token_provider=(
+                    None if self.etsy_cfg.get("access_token")
+                    else self.oauth.valid_access_token
+                ),
                 base_url=self.etsy_cfg.get("base_url", "https://openapi.etsy.com/v3/application"),
             )
         return self._client

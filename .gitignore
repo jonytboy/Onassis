@@ -5,6 +5,9 @@
 # --- ONASSIS runtime artifacts ---
 data/*.db
 data/*.sqlite3
+# OAuth token bundles + pending PKCE state — secrets, never commit.
+data/*_tokens.json
+data/*_tokens_pending.json
 logs/*.log
 logs/*.log.*
 exports/

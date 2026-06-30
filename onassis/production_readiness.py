@@ -67,9 +67,22 @@ class ProductionReadiness:
         return bool(self.config.anthropic_api_key)
 
     @property
-    def has_etsy(self) -> bool:
+    def etsy_app_configured(self) -> bool:
+        """The Etsy app keystring + shop id are present (the flow can start)."""
         e = self.config.etsy or {}
-        return bool(e.get("api_key") and e.get("access_token") and e.get("shop_id"))
+        return bool(e.get("api_key") and e.get("shop_id"))
+
+    @property
+    def has_etsy(self) -> bool:
+        """Etsy can actually call the API: a static token or an OAuth grant."""
+        e = self.config.etsy or {}
+        if not self.etsy_app_configured:
+            return False
+        if e.get("access_token"):
+            return True
+        from onassis.connectors.etsy_oauth import build_etsy_oauth
+
+        return build_etsy_oauth(self.config).is_authorised
 
     @property
     def has_pinterest(self) -> bool:
@@ -91,12 +104,23 @@ class ProductionReadiness:
         )
 
     def _etsy_blocker(self) -> dict[str, str]:
+        if self.etsy_app_configured:
+            # App keys are present; only the user-consent step remains.
+            return _blocker(
+                "Etsy app is configured (ETSY_CLIENT_ID + ETSY_SHOP_ID) but no account "
+                "has authorised it yet, so there is no access token.",
+                CRITICAL,
+                "5 minutes (one-time browser consent)",
+                "Run `python main.py --etsy-login`, approve access, then "
+                "`python main.py --etsy-callback \"<redirect URL>\"`.",
+            )
         return _blocker(
-            "Etsy credentials are missing (ETSY_API_KEY / ETSY_ACCESS_TOKEN / ETSY_SHOP_ID).",
+            "Etsy credentials are missing (ETSY_CLIENT_ID / ETSY_SHOP_ID).",
             CRITICAL,
             "1-2 hours (register an Etsy app + complete OAuth)",
-            "Register an Etsy Open API v3 app, complete the OAuth flow, and set "
-            "ETSY_API_KEY, ETSY_ACCESS_TOKEN and ETSY_SHOP_ID.",
+            "Register an Etsy Open API v3 app, set ETSY_CLIENT_ID, "
+            "ETSY_CLIENT_SECRET, ETSY_REDIRECT_URI and ETSY_SHOP_ID, then authorise "
+            "via `python main.py --etsy-login`.",
         )
 
     def _pinterest_creds_blocker(self) -> dict[str, str]:

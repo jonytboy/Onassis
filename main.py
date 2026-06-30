@@ -97,6 +97,18 @@ def _parse_args() -> argparse.Namespace:
         "--etsy-sync", action="store_true", help="Import orders/listings from Etsy (read-only)."
     )
     parser.add_argument(
+        "--etsy-login", action="store_true",
+        help="Start Etsy OAuth: print the authorisation URL to open in a browser.",
+    )
+    parser.add_argument(
+        "--etsy-callback", metavar="CODE_OR_URL",
+        help="Finish Etsy OAuth: paste the redirect URL (or the ?code= value).",
+    )
+    parser.add_argument(
+        "--etsy-auth-status", action="store_true",
+        help="Show the Etsy OAuth authorisation status (no secrets).",
+    )
+    parser.add_argument(
         "--collect-analytics", action="store_true",
         help="Collect a fresh snapshot of performance metrics (append-only).",
     )
@@ -372,13 +384,63 @@ def main() -> int:
         _show_revenue(RevenueEngine(config, db))
         return 0
 
+    if args.etsy_login:
+        from onassis.connectors.etsy_oauth import EtsyAuthError, build_etsy_oauth
+
+        try:
+            auth = build_etsy_oauth(config).create_authorization_url()
+        except EtsyAuthError as exc:
+            print(f"Cannot start Etsy OAuth: {exc}")
+            return 1
+        print("\n1. Open this URL in your browser and approve access:\n")
+        print(f"   {auth['url']}\n")
+        print("2. Etsy redirects to your redirect URI with ?code=...&state=...")
+        print("3. Finish with:\n")
+        print('   python main.py --etsy-callback "<paste the full redirect URL>"\n')
+        return 0
+
+    if args.etsy_callback:
+        from urllib.parse import parse_qs, urlparse
+
+        from onassis.connectors.etsy_oauth import EtsyAuthError, build_etsy_oauth
+
+        raw = args.etsy_callback.strip()
+        # Accept either the full redirect URL or the bare code.
+        code, state = raw, None
+        if "code=" in raw:
+            qs = parse_qs(urlparse(raw).query)
+            code = (qs.get("code") or [raw])[0]
+            state = (qs.get("state") or [None])[0]
+        try:
+            build_etsy_oauth(config).exchange_code(code, state=state)
+        except EtsyAuthError as exc:
+            print(f"Etsy authorisation failed: {exc}")
+            return 1
+        print("Etsy authorisation complete — tokens stored securely. "
+              "Try: python main.py --etsy-auth-status")
+        return 0
+
+    if args.etsy_auth_status:
+        from onassis.connectors.etsy_oauth import build_etsy_oauth
+
+        st = build_etsy_oauth(config).status()
+        print("\nETSY OAUTH STATUS")
+        print(f"  configured : {st['configured']}")
+        print(f"  authorised : {st['authorised']}")
+        if st["authorised"]:
+            exp = st["expires_in"]
+            print(f"  access tok : {'present' if st['has_access_token'] else 'none'} "
+                  f"({'expired' if st['expired'] else f'{exp}s left'})")
+        print(f"  scopes     : {', '.join(st['scopes'])}\n")
+        return 0
+
     if args.etsy_sync:
         from onassis.connectors.etsy import EtsyConnector
 
         result = EtsyConnector(config, db).sync()
         if not result.get("configured"):
-            print("Etsy is not configured. Set ETSY_API_KEY, ETSY_ACCESS_TOKEN, "
-                  "ETSY_SHOP_ID.")
+            print("Etsy is not configured. Set ETSY_CLIENT_ID and ETSY_SHOP_ID, then "
+                  "authorise: python main.py --etsy-login")
             return 1
         print(f"Etsy sync complete: {result['imported_orders']} new order(s), "
               f"{result['imported_listings']} listing(s). "

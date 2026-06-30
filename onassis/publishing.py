@@ -57,7 +57,13 @@ class PublisherService:
         if self._draft_client is not None:
             return True
         e = self.config.etsy or {}
-        return bool(e.get("api_key") and e.get("access_token") and e.get("shop_id"))
+        if not (e.get("api_key") and e.get("shop_id")):
+            return False
+        if e.get("access_token"):
+            return True
+        from onassis.connectors.etsy_oauth import build_etsy_oauth
+
+        return build_etsy_oauth(self.config).is_authorised
 
     # --- Publish ----------------------------------------------------
 
@@ -155,9 +161,14 @@ class PublisherService:
             from onassis.connectors.etsy_client import EtsyDraftClient
 
             e = self.config.etsy or {}
+            token_provider = None
+            if not e.get("access_token"):
+                from onassis.connectors.etsy_oauth import build_etsy_oauth
+
+                token_provider = build_etsy_oauth(self.config).valid_access_token
             self._draft_client = EtsyDraftClient(
-                api_key=e.get("api_key"), access_token=e.get("access_token"),
-                shop_id=e.get("shop_id"),
+                api_key=e.get("api_key"), shop_id=e.get("shop_id"),
+                access_token=e.get("access_token"), token_provider=token_provider,
                 base_url=e.get("base_url", "https://openapi.etsy.com/v3/application"),
             )
         return self._draft_client

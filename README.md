@@ -244,10 +244,10 @@ It **never modifies Etsy** (no listing creation/editing/publishing). A sync:
 - updates the Revenue Engine automatically, so the **CEO's business metrics
   refresh after every sync** (they read the live ledger).
 
-Etsy access is injected (`EtsyClient`, real Open API v3) and configured via
-env (`ETSY_API_KEY`, `ETSY_ACCESS_TOKEN`, `ETSY_SHOP_ID`); without credentials
-a sync is a safe no-op. Future marketplaces implement the same connector
-contract — the core engine never changes.
+Etsy access is injected (`EtsyClient`, real Open API v3) and authenticated via
+**OAuth 2.0** (see below); without authorisation a sync is a safe no-op. Future
+marketplaces implement the same connector contract — the core engine never
+changes.
 
 | Method & path | Purpose |
 |---|---|
@@ -259,6 +259,41 @@ contract — the core engine never changes.
 ```bash
 python main.py --etsy-sync     # import orders & listings (read-only)
 ```
+
+### Etsy OAuth 2.0 (Authorization Code + PKCE)
+
+Etsy's Open API v3 authenticates with **OAuth 2.0 using PKCE**
+(`onassis/connectors/etsy_oauth.py`). The app **keystring** is both the OAuth
+`client_id` and the `x-api-key` header; the access token is short-lived (one
+hour) and is **refreshed automatically** using the stored refresh token, so
+once authorised the connector keeps working without manual steps.
+
+Credentials come only from the environment — **nothing is hardcoded**:
+
+| Env var | Meaning |
+|---|---|
+| `ETSY_CLIENT_ID` | App keystring (Client ID). Also sent as `x-api-key`. |
+| `ETSY_CLIENT_SECRET` | Shared secret. PKCE means it isn't sent on the wire for token requests; read for completeness. |
+| `ETSY_REDIRECT_URI` | Redirect URI registered on the Etsy app (must match exactly). |
+| `ETSY_SHOP_ID` | Numeric shop id for shop-scoped calls. |
+
+One-time authorisation (interactive):
+
+```bash
+python main.py --etsy-login                 # prints the consent URL (PKCE + state)
+# open it, approve, copy the redirect URL Etsy sends you back to
+python main.py --etsy-callback "<redirect URL>"   # exchanges the code for tokens
+python main.py --etsy-auth-status           # shows authorised / token expiry
+```
+
+Or over HTTP — `GET /etsy/oauth/login` returns the consent URL,
+`GET /etsy/oauth/callback?code=...&state=...` is the registered redirect target
+that completes the exchange, and `GET /etsy/oauth/status` reports state.
+
+**Secure storage:** tokens are written to `data/etsy_tokens.json` with `0600`
+permissions, atomically (no readable half-written window), and the path is
+git-ignored — secrets never enter the repo. PKCE `state` is verified on
+callback to defend against CSRF.
 
 ## Revenue Intelligence Engine — the financial source of truth
 
@@ -522,7 +557,7 @@ then daily at `08:00` local time. Both are configurable.
 | `onassis/profit.py` | The Profit Engine — ledger + profit-first dashboard. |
 | `onassis/revenue.py` | Revenue Intelligence Engine — orders, economics, rollups. |
 | `onassis/optimiser.py` | Product Optimiser — one highest-value action per product. |
-| `onassis/connectors/` | Pluggable revenue sources: base contract + read-only Etsy connector. |
+| `onassis/connectors/` | Pluggable revenue sources: base contract, Etsy connector, and Etsy OAuth 2.0 (PKCE). |
 | `onassis/api.py` | FastAPI service — thin REST layer over the existing services. |
 | `onassis/orchestrator.py` | Defines the content pipeline and owns the agents. |
 | `onassis/daily_cycle.py` | The Daily Cycle — orchestrates all modules in order. |
