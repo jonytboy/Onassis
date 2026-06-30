@@ -59,6 +59,12 @@ def test_run_persists_items_with_correct_platforms(creator, config, db, sample_b
 
 
 def test_mapping_shapes(creator, config, db, sample_brief):
+    # Target one of each so the model's single image prompt is on-target
+    # (the count guarantee is exercised separately below).
+    config.content_targets = {
+        "pinterest_posts": 1, "instagram_captions": 1,
+        "facebook_posts": 1, "image_prompts": 1,
+    }
     creator._llm = FakeLLM(make_content_response(1, 1, 1, 1))
     sample_brief["id"] = _with_brief(db)
     items = creator.run(brief=sample_brief)
@@ -73,6 +79,48 @@ def test_mapping_shapes(creator, config, db, sample_brief):
     assert by_platform["image"]["content_type"] == "image_prompt"
     assert by_platform["image"]["body"] == "prompt 0"
     assert by_platform["image"]["metadata"]["aspect_ratio"] == "4:5"
+
+
+def test_image_prompts_shortfall_is_recovered(creator, config, db, sample_brief):
+    # The model returns only 1 image prompt but the config requires n_img.
+    n_pin, n_ig, n_fb, n_img = _targets(config)
+    assert n_img > 1
+    creator._llm = FakeLLM(make_content_response(n_pin, n_ig, n_fb, 1))
+    sample_brief["id"] = _with_brief(db)
+
+    items = creator.run(brief=sample_brief)
+    imgs = [i for i in items if i["platform"] == "image"]
+    assert len(imgs) == n_img                       # never fewer than configured
+    assert all(i["body"].strip() for i in imgs)     # and never an empty prompt
+
+
+def test_image_prompts_filled_deterministically_when_retry_fails(
+    creator, config, db, sample_brief
+):
+    from onassis.llm import LLMError
+
+    n_pin, n_ig, n_fb, n_img = _targets(config)
+
+    class _ShortThenError:
+        """Returns a short set first, then errors on the retry call."""
+
+        def __init__(self, response):
+            self.response = response
+            self.calls = 0
+
+        def generate_json(self, **_):
+            self.calls += 1
+            if self.calls == 1:
+                return self.response
+            raise LLMError("model unavailable")
+
+    creator._llm = _ShortThenError(make_content_response(n_pin, n_ig, n_fb, 1))
+    sample_brief["id"] = _with_brief(db)
+
+    items = creator.run(brief=sample_brief)
+    imgs = [i for i in items if i["platform"] == "image"]
+    assert len(imgs) == n_img                       # deterministic fill guarantees the count
+    assert all(i["body"].strip() for i in imgs)
 
 
 def test_prompt_requests_configured_counts(creator, config, db, sample_brief):

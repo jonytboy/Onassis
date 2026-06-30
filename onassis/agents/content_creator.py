@@ -20,7 +20,7 @@ from __future__ import annotations
 from typing import Any
 
 from onassis.agents.base import BaseAgent
-from onassis.llm import LLMClient
+from onassis.llm import LLMClient, LLMError
 
 _SYSTEM = (
     "You are the Content Creator for a premium Mediterranean lifestyle brand. "
@@ -125,6 +125,13 @@ class ContentCreator(BaseAgent):
             system=_SYSTEM, prompt=prompt, schema=_content_schema()
         )
 
+        # Image prompts are a hard contract: the package downstream needs exactly
+        # the configured number. Never silently accept fewer — recover the
+        # shortfall (retry the model, then deterministically fill).
+        generated["image_prompts"] = self._ensure_image_prompts(
+            generated.get("image_prompts", []), brief, n_img
+        )
+
         items = self._map_to_items(generated)
         self._warn_if_off_target(generated, n_pin, n_ig, n_fb, n_img)
 
@@ -180,6 +187,101 @@ class ContentCreator(BaseAgent):
                 }
             )
         return items
+
+    # --- Image-prompt count guarantee -------------------------------
+
+    def _ensure_image_prompts(
+        self, prompts: list[dict[str, Any]], brief: dict[str, Any], n_img: int
+    ) -> list[dict[str, Any]]:
+        """Return EXACTLY ``n_img`` valid image prompts.
+
+        If the model returned fewer, retry once for just the shortfall, then
+        deterministically generate any still-missing prompts from the brief.
+        Never returns fewer than requested.
+        """
+        clean = [
+            p for p in prompts
+            if isinstance(p, dict) and str(p.get("prompt") or "").strip()
+        ]
+        seen = {str(p["prompt"]).strip() for p in clean}
+        if len(clean) >= n_img:
+            return clean[:n_img]
+
+        self.log.warning(
+            "image_prompts: requested %d, model returned %d — recovering the shortfall",
+            n_img, len(clean),
+        )
+        try:
+            for extra in self._request_image_prompts(brief, n_img - len(clean)):
+                key = str(extra.get("prompt") or "").strip()
+                if key and key not in seen:
+                    clean.append(extra)
+                    seen.add(key)
+                    if len(clean) >= n_img:
+                        break
+        except LLMError as exc:
+            self.log.warning("image_prompts retry failed (%s) — filling deterministically", exc)
+
+        while len(clean) < n_img:
+            clean.append(self._fallback_image_prompt(brief, len(clean) + 1))
+        return clean[:n_img]
+
+    def _request_image_prompts(
+        self, brief: dict[str, Any], count: int
+    ) -> list[dict[str, Any]]:
+        """One focused retry asking the model for ``count`` more image prompts."""
+        image_prompt = {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "prompt": {"type": "string"},
+                "aspect_ratio": {"type": "string"},
+            },
+            "required": ["title", "prompt", "aspect_ratio"],
+            "additionalProperties": False,
+        }
+        schema = {
+            "type": "object",
+            "properties": {"image_prompts": {"type": "array", "items": image_prompt}},
+            "required": ["image_prompts"],
+            "additionalProperties": False,
+        }
+        keywords = ", ".join(brief.get("keywords", []))
+        prompt = (
+            f"Produce EXACTLY {count} more cinematic image prompt(s) for this campaign.\n"
+            f"- Theme: {brief.get('theme', '')}\n"
+            f"- Visual direction: {brief.get('visual_direction', '')}\n"
+            f"- Keywords: {keywords}\n"
+            f"Each `prompt` is a vivid, photographic brief (composition, light, "
+            f"subject, mood, lens feel), faithful to the visual direction, with no "
+            f"text or logos; set a fitting `aspect_ratio` and a short `title`."
+        )
+        result = self.llm.generate_json(system=_SYSTEM, prompt=prompt, schema=schema)
+        return [
+            p for p in result.get("image_prompts", [])
+            if isinstance(p, dict) and str(p.get("prompt") or "").strip()
+        ]
+
+    def _fallback_image_prompt(self, brief: dict[str, Any], index: int) -> dict[str, Any]:
+        """A deterministic, on-brief image prompt used to fill any shortfall."""
+        visual = (
+            brief.get("visual_direction")
+            or brief.get("concept")
+            or brief.get("theme")
+            or "Mediterranean lifestyle"
+        )
+        theme = brief.get("theme", "")
+        keywords = ", ".join(brief.get("keywords", [])[:4])
+        name = brief.get("campaign_name") or "Mediterranean scene"
+        return {
+            "title": f"{name} — scene {index}",
+            "prompt": (
+                f"Cinematic editorial photograph evoking {visual}. {theme}. {keywords}. "
+                f"Soft natural Mediterranean light over sun, sea, stone and linen "
+                f"textures; shallow depth of field, film-like tones; no text, no logos."
+            ),
+            "aspect_ratio": "4:5",
+        }
 
     def _warn_if_off_target(
         self, generated: dict[str, Any], n_pin: int, n_ig: int, n_fb: int, n_img: int
