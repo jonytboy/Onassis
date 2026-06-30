@@ -140,6 +140,10 @@ def _parse_args() -> argparse.Namespace:
         help="Discover new product opportunities (no images/mock-ups/listings).",
     )
     parser.add_argument(
+        "--build-design-package", metavar="OPPORTUNITY_ID",
+        help="Turn one CEO-approved opportunity into a print-ready design package.",
+    )
+    parser.add_argument(
         "--build-listing", type=int, metavar="CAMPAIGN_ID",
         help="Build & export an upload-ready Etsy listing package for a campaign.",
     )
@@ -501,6 +505,35 @@ def main() -> int:
                   f"demand {o['estimated_demand']} / competition "
                   f"{o['estimated_competition']} / conf {o['confidence']}")
         print()
+        return 0
+
+    if args.build_design_package is not None:
+        from onassis.design_package import DesignPackageBuilder, DesignPackageError
+
+        try:
+            pkg = DesignPackageBuilder(config, db).build(args.build_design_package)
+        except DesignPackageError as exc:
+            print(f"Error: {exc}")
+            return 1
+        if pkg.get("status") != "ready":
+            print(f"\nDesign package blocked: {pkg.get('reason')}")
+            if pkg.get("ceo"):
+                print(f"  CEO: {pkg['ceo']['verdict']} — {pkg['ceo']['reasoning']}")
+            if pkg.get("compliance"):
+                print(f"  Compliance: {pkg['compliance']['verdict']} "
+                      f"(score {pkg['compliance']['compliance_score']})")
+            print()
+            return 1
+        b = pkg["design_brief"]
+        print(f"\nDESIGN PACKAGE READY — {args.build_design_package}\n")
+        print(f"  Product    : {b['product_name']}")
+        print(f"  Garment    : {b['shirt_colour']} · print {b['print_colour']}")
+        print(f"  Placement  : {b['print_placement']} ({b['print_size_guidance']})")
+        print(f"  Format     : {b['file_format_requirements']}")
+        print(f"  Transparent: {b['transparent_background_required']}  "
+              f"DPI: {b['dpi_requirement']}")
+        print(f"  Files      : {', '.join(pkg['files'])}")
+        print(f"  Path       : {pkg['path']}\n")
         return 0
 
     if args.build_listing is not None:

@@ -290,6 +290,32 @@ class OpportunityEngine:
             reasoning=reasoning,
         )
 
+    def select(
+        self, opportunity_id: str, *, agent_name: str = "CEO"
+    ) -> dict[str, Any] | None:
+        """Have the CEO decide on a specific opportunity from the queue.
+
+        On APPROVE the opportunity is marked ``selected``; otherwise it stays
+        in the backlog. Returns ``{opportunity, proposal, ceo}`` or ``None`` if
+        the opportunity does not exist.
+        """
+        opp = self.db.get_opportunity(opportunity_id)
+        if opp is None:
+            return None
+        proposal = self.proposal_for(opp, agent_name=agent_name)
+        decision = self.ceo.evaluate(proposal, store=False)
+
+        from onassis.proposals import APPROVE
+
+        if decision["verdict"] == APPROVE and opp["status"] != "selected":
+            self.db.update_opportunity(
+                opportunity_id,
+                {"status": "selected", "selected_by": agent_name,
+                 "selected_at": datetime.now(timezone.utc).isoformat()},
+            )
+            opp = self.db.get_opportunity(opportunity_id) or opp
+        return {"opportunity": opp, "proposal": proposal.to_dict(), "ceo": decision}
+
     def select_next(
         self, *, agent_name: str = "ProductOptimiser", store: bool = False
     ) -> dict[str, Any] | None:
@@ -303,20 +329,7 @@ class OpportunityEngine:
         backlog = self.top(limit=1)
         if not backlog:
             return None
-        opp = backlog[0]
-        proposal = self.proposal_for(opp, agent_name=agent_name)
-        decision = self.ceo.evaluate(proposal, store=False)
-
-        from onassis.proposals import APPROVE
-
-        if decision["verdict"] == APPROVE:
-            self.db.update_opportunity(
-                opp["opportunity_id"],
-                {"status": "selected", "selected_by": agent_name,
-                 "selected_at": datetime.now(timezone.utc).isoformat()},
-            )
-            opp = self.db.get_opportunity(opp["opportunity_id"]) or opp
-        return {"opportunity": opp, "proposal": proposal.to_dict(), "ceo": decision}
+        return self.select(backlog[0]["opportunity_id"], agent_name=agent_name)
 
     # --- Prompt -----------------------------------------------------
 

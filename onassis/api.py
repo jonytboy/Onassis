@@ -29,6 +29,7 @@ from onassis.connectors.etsy import EtsyConnector
 from onassis.connectors.etsy_oauth import EtsyAuthError
 from onassis.daily_cycle import DailyCycle
 from onassis.database import Database
+from onassis.design_package import DesignPackageBuilder, DesignPackageError
 from onassis.experiments import ExperimentEngine, ExperimentError
 from onassis.listing_factory import ListingError, ListingFactory
 from onassis.logger import get_logger, setup_logging
@@ -95,6 +96,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     operations = OperationsManager(config, db, cycle=daily)
     readiness = ProductionReadiness(config, db)
     opportunities = OpportunityEngine(config, db)
+    design_builder = DesignPackageBuilder(config, db)
 
     app = FastAPI(
         title="ONASSIS API",
@@ -122,6 +124,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.operations = operations
     app.state.readiness = readiness
     app.state.opportunities = opportunities
+    app.state.design_builder = design_builder
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""
@@ -364,6 +367,29 @@ def create_app(config: Config | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         """Discover new product opportunities (no images/mock-ups/listings)."""
         return opportunities.generate(count, season=season, focus=focus)
+
+    @app.post("/opportunities/{opportunity_id}/build-design-package", tags=["opportunities"])
+    def build_design_package(opportunity_id: str) -> dict[str, Any]:
+        """Turn one CEO-approved opportunity into a print-ready design package."""
+        try:
+            package = design_builder.build(opportunity_id)
+        except DesignPackageError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        if package.get("status") != "ready":
+            # CEO or compliance gate blocked the build — report why.
+            raise HTTPException(status_code=409, detail=package)
+        return package
+
+    @app.get("/opportunities/{opportunity_id}/design-package", tags=["opportunities"])
+    def get_design_package(opportunity_id: str) -> dict[str, Any]:
+        """Read back a previously built design package."""
+        package = design_builder.get_package(opportunity_id)
+        if package is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No design package for opportunity {opportunity_id}.",
+            )
+        return package
 
     @app.post(
         "/campaign/create", response_model=CampaignCreateResponse, tags=["campaigns"]

@@ -213,6 +213,49 @@ python main.py --generate-opportunities 8   # discover ideas
 python main.py --opportunities               # show the ranked backlog
 ```
 
+## Design Package Builder — one opportunity → a print-ready package
+
+The Design Package Builder (`onassis/design_package.py`) turns **one
+CEO-approved opportunity** into a complete, print-ready **design package** — the
+clean, structured hand-off a future artwork generator needs to produce the
+actual PNG/SVG with zero manual interpretation. It **does not publish, create
+Etsy listings, or create mock-ups**.
+
+Two gates protect every export:
+
+1. **CEO approval** — the opportunity must be CEO-approved before a package is
+   built (a backlog opportunity is evaluated now and only proceeds on approval).
+2. **Compliance** — the generated design brief is reviewed by the Compliance
+   Director *before* anything is written to disk.
+
+It writes `exports/opportunities/<opportunity_id>/`:
+
+| File | Contents |
+|---|---|
+| `design_brief.json` | Every field a designer/generator needs (below). |
+| `print_spec.json` | The deterministic print/production spec. |
+| `artwork_prompt.txt` | Prompt for the artwork generator (the PNG/SVG). |
+| `mockup_prompt.txt` | Prompt for a *future* mock-up generator (not a mock-up). |
+| `listing_seed.json` | Seed material for a *future* listing (not a listing). |
+| `compliance_report.json` | The pre-export compliance review. |
+
+The brief includes product name, target customer, emotional angle, shirt
+colour, print colour, typography direction, layout direction, print placement,
+print size guidance, file-format requirements, transparent-background
+requirement, DPI requirement, safe-margin guidance, and Gelato compatibility
+notes. The creative decisions (colours, typography, layout, placement) are
+LLM-generated; the technical print spec (formats, DPI, transparent background,
+safe margin, Gelato notes) is deterministic from config.
+
+| Method & path | Purpose |
+|---|---|
+| `POST /opportunities/{id}/build-design-package` | Build the package (CEO + compliance gated). |
+| `GET /opportunities/{id}/design-package` | Read back a built package. |
+
+```bash
+python main.py --build-design-package OPP-1234abcd
+```
+
 ## Experiment Engine — every optimisation is a measurable test
 
 The Experiment Engine (`onassis/experiments.py`) turns each optimisation into a
@@ -597,6 +640,7 @@ then daily at `08:00` local time. Both are configurable.
 | `onassis/revenue.py` | Revenue Intelligence Engine — orders, economics, rollups. |
 | `onassis/optimiser.py` | Product Optimiser — one highest-value action per product. |
 | `onassis/opportunities.py` | Product Opportunity Engine — ranked product development backlog. |
+| `onassis/design_package.py` | Design Package Builder — opportunity → print-ready design package. |
 | `onassis/connectors/` | Pluggable revenue sources: base contract, Etsy connector, and Etsy OAuth 2.0 (PKCE). |
 | `onassis/api.py` | FastAPI service — thin REST layer over the existing services. |
 | `onassis/orchestrator.py` | Defines the content pipeline and owns the agents. |

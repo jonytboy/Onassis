@@ -262,6 +262,15 @@ class ProductionReadiness:
 
             # --- Listing + publishing (write path) ---
             self._module(
+                "onassis/design_package.py", "Design Package Builder",
+                READY if ai else DEV_ONLY,
+                "Turns a CEO-approved opportunity into a print-ready design "
+                "package (brief, print spec, prompts, listing seed, compliance); "
+                "CEO + compliance gated." if ai
+                else "Gates + package assembly work; design generation needs the "
+                     "AI provider.",
+                list(ai_b)),
+            self._module(
                 "onassis/listing_factory.py", "Listing Factory",
                 PARTIAL if ai else DEV_ONLY,
                 "Builds upload-ready Etsy listing packages; copy is LLM-generated, "

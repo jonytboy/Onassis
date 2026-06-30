@@ -162,6 +162,26 @@ opportunity:
     demand: 0.20
     competition: 0.10            # applied to (100 - estimated_competition)
 
+# --- Design Package Builder ------------------------------------------
+# Turns ONE CEO-approved opportunity into a print-ready design package. It does
+# NOT publish, create Etsy listings, or create mock-ups — it produces the
+# structured brief + prompts a future artwork generator will consume.
+design:
+  exports_dir: exports          # base export directory
+  subdir: opportunities         # packages live under exports/opportunities/<id>/
+  # Deterministic print/production spec (Gelato DTG friendly):
+  file_formats: ["PNG", "SVG"]  # PNG (raster master), SVG (vector master)
+  dpi: 300
+  transparent_background: true
+  print_area: "30cm x 40cm (A3 DTG print area)"
+  print_size_default: "Up to 30cm wide; keep artwork within the print area."
+  safe_margin: "Keep all critical elements at least 2cm inside the print area; no bleed needed for DTG."
+  gelato_notes: >-
+    Export print files as 300 DPI PNG with a transparent background, sRGB colour,
+    sized to the product's print area with the documented safe margin. Provide an
+    SVG vector master where the artwork is vector-based. No mock-up is created
+    here; Gelato applies the artwork to the chosen garment at fulfilment.
+
 # --- Listing factory (prepares Etsy listings; never publishes) -------
 listing:
   exports_dir: exports          # where listing packages are written

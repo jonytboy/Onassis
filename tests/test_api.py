@@ -509,6 +509,44 @@ def test_opportunities_endpoints(app_and_client):
     assert top[0]["opportunity_id"] == oid
 
 
+def test_build_design_package_endpoint(app_and_client, tmp_path):
+    app, client = app_and_client
+    app.state.config.design = {**app.state.config.design, "exports_dir": str(tmp_path)}
+    app.state.opportunities._llm = FakeLLM({"opportunities": [{
+        "theme": "Slow coastal mornings", "target_customer": "travellers",
+        "emotional_angle": "calm luxury", "product_type": "t-shirt",
+        "search_intent": "mediterranean tee", "seasonal_relevance": "summer",
+        "commercial_score": 85, "originality_score": 80, "brand_fit_score": 90,
+        "estimated_demand": 80, "estimated_competition": 30, "confidence": 80,
+        "product_name": "Amalfi Morning Tee", "concept": "A tee for slow mornings.",
+        "colour_palette": ["citrus"], "typography_style": "serif",
+        "illustration_style": "watercolour", "photography_style": "light",
+        "mockup_style": "flatlay",
+    }]})
+    app.state.design_builder._llm = FakeLLM({
+        "shirt_colour": "ecru", "print_colour": "terracotta",
+        "typography_direction": "serif lowercase", "layout_direction": "centred",
+        "print_placement": "centre chest", "print_size_guidance": "25cm wide",
+        "artwork_description": "A line-drawn lemon branch.",
+        "mockup_scene": "tee on linen", "design_rationale": "On theme.",
+        "listing_title_seed": "Amalfi Tee", "listing_tags_seed": ["lemon", "coastal"],
+        "listing_description_seed": "A calm tee.",
+    })
+    app.state.design_builder.compliance._llm = FakeLLM(make_compliance_response())
+
+    oid = client.post("/opportunities/generate?count=1").json()["opportunities"][0]["opportunity_id"]
+    built = client.post(f"/opportunities/{oid}/build-design-package").json()
+    assert built["status"] == "ready"
+    assert set(built["files"]) == {
+        "design_brief.json", "print_spec.json", "artwork_prompt.txt",
+        "mockup_prompt.txt", "listing_seed.json", "compliance_report.json"}
+
+    fetched = client.get(f"/opportunities/{oid}/design-package").json()
+    assert fetched["design_brief"]["product_name"] == "Amalfi Morning Tee"
+    # A package was never built for an unknown opportunity.
+    assert client.get("/opportunities/OPP-missing/design-package").status_code == 404
+
+
 # --- Swagger / OpenAPI docs -----------------------------------------
 
 def test_swagger_docs_available(app_and_client):
@@ -525,6 +563,8 @@ def test_swagger_docs_available(app_and_client):
                  "/etsy/oauth/login", "/etsy/oauth/callback", "/etsy/oauth/status",
                  "/optimiser", "/listing/{campaign_id}",
                  "/opportunities", "/opportunities/top", "/opportunities/generate",
+                 "/opportunities/{opportunity_id}/build-design-package",
+                 "/opportunities/{opportunity_id}/design-package",
                  "/publish/{campaign_id}", "/publishing/status",
                  "/analytics", "/analytics/product/{product_id}",
                  "/analytics/campaign/{campaign_id}",
