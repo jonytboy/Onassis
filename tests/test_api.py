@@ -359,6 +359,28 @@ def test_listing_endpoint_blocked_when_unapproved(app_and_client):
     assert r.status_code == 409
 
 
+# --- Operations endpoints -------------------------------------------
+
+def test_operations_check_status_report(app_and_client):
+    _, client = app_and_client
+
+    check = client.post("/operations/check?mode=production").json()
+    assert "healthy" in check and "checks" in check
+
+    # Before any run, status reports it's never run.
+    assert client.get("/operations/status").json()["status"] == "never_run"
+
+    # A dry run goes through Operations and produces a report.
+    run = client.post("/daily/run?mode=dry_run").json()
+    assert run["aborted"] is False
+    assert "operations_report" in run
+
+    status = client.get("/operations/status").json()
+    assert status["status"] in ("completed", "completed_with_failures")
+    report = client.get("/operations/report").json()
+    assert set(report["business"]) and "system" in report
+
+
 # --- Daily cycle endpoints ------------------------------------------
 
 def test_daily_run_and_status_history(app_and_client):
@@ -467,7 +489,8 @@ def test_swagger_docs_available(app_and_client):
                  "/analytics", "/analytics/product/{product_id}",
                  "/analytics/campaign/{campaign_id}",
                  "/experiments", "/experiments/{experiment_id}", "/experiments/active",
-                 "/daily/run", "/daily/status", "/daily/history"):
+                 "/daily/run", "/daily/status", "/daily/history",
+                 "/operations/check", "/operations/status", "/operations/report"):
         assert path in paths
 
 

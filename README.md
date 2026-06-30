@@ -334,6 +334,37 @@ python main.py --dashboard     # the profit-first company scoreboard
 ```
 `GET /dashboard` exposes the same metrics over the API.
 
+## Operations Manager — the operational control point
+
+The Operations Manager (`onassis/operations.py`) is the single point of
+operational control. It makes **no commercial decisions** — it verifies the
+business is healthy and able to operate. **Before** every Daily Cycle it
+pre-flights: Etsy, Pinterest, Revenue Engine, Analytics Engine, database
+integrity, exports folder, AI provider, AI budget, and cash reserve. If a
+**critical** dependency fails it **aborts** the cycle, records the reason, and
+notifies the CEO. **After** a cycle it produces an Operations Report:
+
+- **SYSTEM** — overall health, runtime, errors, warnings.
+- **BUSINESS** — campaigns generated, listings built, listings published,
+  revenue imported, orders imported, profit today, AI spend today.
+- **RECOMMENDATIONS** — e.g. "Pinterest connection: not configured.",
+  "Revenue sync successful.", "No action required."
+
+Which checks are critical depends on the mode (a `dry_run` only needs the
+read/decision modules). `POST /daily/run` now runs **through** the Operations
+Manager.
+
+| Method & path | Purpose |
+|---|---|
+| `POST /operations/check?mode=` | Run pre-flight health checks only. |
+| `GET /operations/status` | Latest operational status. |
+| `GET /operations/report` | Latest full Operations Report. |
+
+```bash
+python main.py --ops-check               # pre-flight health checks
+python main.py --daily-run --mode dry_run  # guarded cycle (pre-flight + report)
+```
+
 ## Daily Cycle — the single execution entry point
 
 The Daily Cycle (`onassis/daily_cycle.py`) is pure **orchestration** — it adds
@@ -467,7 +498,8 @@ then daily at `08:00` local time. Both are configurable.
 | `onassis/connectors/` | Pluggable revenue sources: base contract + read-only Etsy connector. |
 | `onassis/api.py` | FastAPI service — thin REST layer over the existing services. |
 | `onassis/orchestrator.py` | Defines the content pipeline and owns the agents. |
-| `onassis/daily_cycle.py` | The Daily Cycle — single entry point; orchestrates all modules. |
+| `onassis/daily_cycle.py` | The Daily Cycle — orchestrates all modules in order. |
+| `onassis/operations.py` | Operations Manager — health gate + Operations Report. |
 | `onassis/scheduler.py` | Runs the pipeline daily at a fixed time. |
 | `onassis/agents/base.py` | `BaseAgent` — the agent framework foundation. |
 | `onassis/agents/content_director.py` | LLM-generates the daily campaign brief (working). |

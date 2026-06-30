@@ -299,6 +299,22 @@ CREATE TABLE IF NOT EXISTS daily_runs (
     duration_seconds REAL    NOT NULL,
     stages           TEXT    NOT NULL         -- JSON list of stage results
 );
+
+CREATE TABLE IF NOT EXISTS operations_reports (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at       TEXT    NOT NULL,
+    mode             TEXT    NOT NULL,
+    status           TEXT    NOT NULL,        -- healthy | aborted | completed | completed_with_failures
+    overall_health   TEXT    NOT NULL,        -- healthy | degraded | critical
+    runtime_seconds  REAL    NOT NULL,
+    errors           INTEGER NOT NULL DEFAULT 0,
+    warnings         INTEGER NOT NULL DEFAULT 0,
+    ceo_notified     INTEGER NOT NULL DEFAULT 0,
+    system           TEXT    NOT NULL,        -- JSON
+    business         TEXT    NOT NULL,        -- JSON
+    recommendations  TEXT    NOT NULL,        -- JSON
+    preflight        TEXT    NOT NULL         -- JSON
+);
 """
 
 
@@ -1348,6 +1364,55 @@ class Database:
             ).fetchall()
         return [_row_to_daily_run(r) for r in rows]
 
+    # --- Operations reports & integrity -----------------------------
+
+    def integrity_ok(self) -> bool:
+        """SQLite integrity check — used by the Operations Manager."""
+        with self._connect() as conn:
+            row = conn.execute("PRAGMA integrity_check").fetchone()
+        return bool(row) and row[0] == "ok"
+
+    def insert_operations_report(self, report: dict[str, Any]) -> int:
+        sys_ = report.get("system", {})
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO operations_reports
+                    (created_at, mode, status, overall_health, runtime_seconds, errors,
+                     warnings, ceo_notified, system, business, recommendations, preflight)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utcnow(),
+                    report.get("mode", "production"),
+                    report.get("status", "completed"),
+                    sys_.get("overall_health", "healthy"),
+                    float(sys_.get("runtime_seconds", 0) or 0),
+                    int(sys_.get("errors", 0)),
+                    int(sys_.get("warnings", 0)),
+                    1 if report.get("ceo_notified") else 0,
+                    json.dumps(sys_),
+                    json.dumps(report.get("business", {})),
+                    json.dumps(report.get("recommendations", [])),
+                    json.dumps(report.get("preflight", {})),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def get_latest_operations_report(self) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM operations_reports ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        return _row_to_operations_report(row) if row else None
+
+    def list_operations_reports(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM operations_reports ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [_row_to_operations_report(r) for r in rows]
+
 
 def _row_to_brief(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
@@ -1393,6 +1458,15 @@ def _row_to_listing(row: sqlite3.Row) -> dict[str, Any]:
 def _row_to_daily_run(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
     data["stages"] = json.loads(data.get("stages") or "[]")
+    return data
+
+
+def _row_to_operations_report(row: sqlite3.Row) -> dict[str, Any]:
+    data = dict(row)
+    data["system"] = json.loads(data.get("system") or "{}")
+    data["business"] = json.loads(data.get("business") or "{}")
+    data["recommendations"] = json.loads(data.get("recommendations") or "[]")
+    data["preflight"] = json.loads(data.get("preflight") or "{}")
     return data
 
 

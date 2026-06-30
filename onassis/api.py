@@ -31,6 +31,7 @@ from onassis.database import Database
 from onassis.experiments import ExperimentEngine, ExperimentError
 from onassis.listing_factory import ListingError, ListingFactory
 from onassis.logger import get_logger, setup_logging
+from onassis.operations import OperationsManager
 from onassis.optimiser import ProductOptimiser
 from onassis.orchestrator import Orchestrator
 from onassis.profit import ProfitEngine
@@ -88,6 +89,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     analytics = AnalyticsEngine(config, db)
     experiments = ExperimentEngine(config, db)
     daily = DailyCycle(config, db)
+    operations = OperationsManager(config, db, cycle=daily)
 
     app = FastAPI(
         title="ONASSIS API",
@@ -112,6 +114,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.analytics = analytics
     app.state.experiments = experiments
     app.state.daily = daily
+    app.state.operations = operations
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""
@@ -128,8 +131,23 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.post("/daily/run", tags=["daily"])
     def daily_run(mode: str = "production") -> dict[str, Any]:
-        """Run the full daily operating cycle (mode: production | dry_run)."""
-        return daily.run(mode=mode)
+        """Run the daily cycle through the Operations Manager (pre-flight + report)."""
+        return operations.run(mode=mode)
+
+    @app.post("/operations/check", tags=["operations"])
+    def operations_check(mode: str = "production") -> dict[str, Any]:
+        """Run pre-flight health checks (no cycle, no decisions)."""
+        return operations.check(mode=mode)
+
+    @app.get("/operations/status", tags=["operations"])
+    def operations_status() -> dict[str, Any]:
+        """Latest operational status (or a live health snapshot if never run)."""
+        return operations.status()
+
+    @app.get("/operations/report", tags=["operations"])
+    def operations_report() -> dict[str, Any]:
+        """The latest full Operations Report (SYSTEM / BUSINESS / RECOMMENDATIONS)."""
+        return operations.report()
 
     @app.get("/daily/status", tags=["daily"])
     def daily_status() -> dict[str, Any]:

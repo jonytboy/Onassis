@@ -105,7 +105,11 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--daily-run", action="store_true",
-        help="Run the full daily operating cycle (use --mode dry_run for a dry run).",
+        help="Run the daily cycle via the Operations Manager (use --mode dry_run).",
+    )
+    parser.add_argument(
+        "--ops-check", action="store_true",
+        help="Run operational pre-flight health checks (no cycle).",
     )
     parser.add_argument(
         "--optimise", action="store_true",
@@ -422,13 +426,34 @@ def main() -> int:
         print(f"Collected {result['collected']} metric snapshot(s): {result['by_source']}")
         return 0
 
-    if args.daily_run:
-        from onassis.daily_cycle import DailyCycle
+    if args.ops_check:
+        from onassis.operations import OperationsManager
 
         mode = args.mode or "production"
-        summary = DailyCycle(config, db).run(mode=mode)
+        result = OperationsManager(config, db).check(mode)
+        print(f"\nOPERATIONS PRE-FLIGHT ({mode}) — "
+              f"{'HEALTHY' if result['healthy'] else 'NOT HEALTHY'}\n")
+        for c in result["checks"]:
+            flag = "*" if c["critical"] else " "
+            print(f"  [{c['status']:<4}]{flag} {c['label']:<22} {c['detail']}")
+        print("\n  (* = critical: failure aborts the cycle)\n")
+        return 0
+
+    if args.daily_run:
+        from onassis.operations import OperationsManager
+
+        mode = args.mode or "production"
+        summary = OperationsManager(config, db).run(mode=mode)
+        if summary.get("aborted"):
+            print(f"\nDAILY CYCLE ABORTED ({mode}) by Operations Manager:")
+            for r in summary["operations_report"]["recommendations"]:
+                print(f"  - {r}")
+            print()
+            return 1
+        rep = summary["operations_report"]
         print(f"\nDAILY CYCLE — run #{summary['run_id']} ({summary['mode']}) "
-              f"— {summary['status']} in {summary['duration_seconds']}s\n")
+              f"— {summary['status']} in {summary['duration_seconds']}s "
+              f"(health: {rep['system']['overall_health']})\n")
         for s in summary["stages"]:
             line = f"  {s['stage']:<22} {s['status']}"
             if s.get("error"):
