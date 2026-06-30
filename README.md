@@ -509,19 +509,32 @@ live publishing is intentionally disabled (Draft mode only).
 python main.py --readiness               # print the report (modules, blockers, checklist)
 ```
 
-## Daily Cycle — the single execution entry point
+## Daily Cycle — the single execution entry point (product-first)
 
 The Daily Cycle (`onassis/daily_cycle.py`) is pure **orchestration** — it adds
-no business logic and makes no decisions of its own; each stage delegates to a
-module that already owns that responsibility. It runs, in order:
+no new agents and makes no decisions of its own; each stage delegates to a
+module that already owns that responsibility. It is **product-first**:
+marketing is generated only **after** a commercially viable product exists. It
+runs, in order:
 
 1. Sync Etsy → 2. Sync Pinterest → 3. Import Revenue → 4. Import Analytics →
-5. Run Product Optimiser → 6. CEO Decision → 7. Generate Campaign (if approved)
-→ 8. Build Listing Package → 9. Publish Draft (if approved) → 10. Record Results
+5. Run Product Optimiser → 6. CEO Decision →
+**7. Create Product Opportunity** (CEO-approved) →
+**8. Build Design Package** (design brief + artwork prompt, compliance-gated) →
+**9. Create Product Campaign** (campaign + product *from the opportunity*) →
+**10. Build Etsy Listing Package** (the upload-ready Etsy product) →
+**11. Generate Marketing Content** (Pinterest/Instagram/Facebook — promotes the product) →
+12. Publish Draft → 13. Record Results
+
+**Marketing is driven by products, not the other way round:** the campaign — and
+all the content generated from it — is created from the approved product
+opportunity, and content generation is the *last* creative step. The output of a
+completed production cycle is at least one upload-ready Etsy product (published
+as a draft where Etsy is authorised) — i.e. every cycle can produce a sale.
 
 Every stage logs start/finish, records its duration, captures failures, and the
 cycle **continues safely** past a failed stage. Two modes: **dry_run**
-(observation + decision only — no generation, listing, or publishing) and
+(observation + decision only — no product creation, content, or publishing) and
 **production** (the full cycle). No scheduling, cron, or timers — just
 coordination; the independent modules stay independent.
 

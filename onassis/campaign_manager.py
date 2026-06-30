@@ -19,6 +19,8 @@ Campaign lifecycle::
 
 from __future__ import annotations
 
+import re
+from datetime import date
 from typing import Any
 
 from onassis.config import Config
@@ -72,6 +74,71 @@ class CampaignManager:
         campaign["id"] = self.db.insert_campaign(campaign)
         log.info("Campaign #%s created from brief #%s", campaign["id"], brief_id)
         return campaign
+
+    def create_from_opportunity(
+        self,
+        opportunity: dict[str, Any],
+        *,
+        design: dict[str, Any] | None = None,
+        for_date: date | None = None,
+    ) -> dict[str, Any]:
+        """Create the marketing campaign **for a product opportunity**.
+
+        This is the product-first bridge: the campaign (and therefore the
+        marketing content generated from it) is driven by an approved product
+        opportunity rather than a generic brief. It derives a brief from the
+        opportunity (and its design package), creates the campaign, and
+        registers a Product linked to it so the listing factory can price it
+        and future Etsy orders link back.
+
+        Returns ``{campaign, brief, product_id}``.
+        """
+        opp = opportunity
+        design_brief = (design or {}).get("design_brief", {}) if design else {}
+        visual = design_brief.get("artwork_description") or ", ".join(
+            x for x in (
+                opp.get("photography_style"),
+                opp.get("illustration_style"),
+                ", ".join(opp.get("colour_palette", []) or []),
+            ) if x
+        )
+        keywords = list(dict.fromkeys(
+            k for k in (
+                [opp.get("product_type", "")]
+                + [s.strip() for s in re.split(r"[,/]", opp.get("search_intent", "")) if s.strip()]
+            ) if k
+        ))
+
+        brief: dict[str, Any] = {
+            "brief_date": (for_date or date.today()).isoformat(),
+            "season": opp.get("seasonal_relevance", ""),
+            "brand": opp.get("brand") or self.config.brand.get("name", "Local Celebrity"),
+            "campaign_name": opp.get("product_name") or "New product",
+            "theme": opp.get("theme", ""),
+            "concept": opp.get("concept", ""),
+            "tone": opp.get("emotional_angle", ""),
+            "audience": opp.get("target_customer", ""),
+            "objective": f"Promote and sell {opp.get('product_name', 'the product')} on Etsy.",
+            "visual_direction": visual,
+            "keywords": keywords,
+        }
+        brief["id"] = self.db.insert_brief(brief)
+        campaign = self.create_from_brief(brief)
+
+        production_cost = float((self.config.listing or {}).get("default_production_cost", 12.0))
+        product_id = self.db.insert_product({
+            "sku": opp.get("opportunity_id"),
+            "name": opp.get("product_name", ""),
+            "campaign_id": campaign["id"],
+            "brand": brief["brand"],
+            "marketplace": "etsy",
+            "production_cost": production_cost,
+        })
+        log.info(
+            "Campaign #%s created from opportunity %s (product #%s)",
+            campaign["id"], opp.get("opportunity_id"), product_id,
+        )
+        return {"campaign": campaign, "brief": brief, "product_id": product_id}
 
     def sync_from_briefs(self) -> int:
         """Backfill campaigns for any briefs that don't have one yet.

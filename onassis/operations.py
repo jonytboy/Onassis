@@ -144,8 +144,8 @@ class OperationsManager:
 
         rev = self.revenue.revenue_today()
         business = {
-            "campaigns_generated": 1 if by_stage.get("Generate Campaign", {}).get("status") == "ok" else 0,
-            "listings_built": 1 if by_stage.get("Build Listing Package", {}).get("status") == "ok" else 0,
+            "campaigns_generated": 1 if by_stage.get("Create Product Campaign", {}).get("status") == "ok" else 0,
+            "listings_built": 1 if by_stage.get("Build Etsy Listing Package", {}).get("status") == "ok" else 0,
             "listings_published": 1 if by_stage.get("Publish Draft", {}).get("status") == "ok" else 0,
             "revenue_imported": rev["gross_revenue"],
             "orders_imported": rev["orders"],

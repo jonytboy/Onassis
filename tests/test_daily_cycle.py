@@ -22,9 +22,32 @@ _LISTING = {
 
 _EXPECTED_STAGES = [
     "Sync Etsy", "Sync Pinterest", "Import Revenue", "Import Analytics",
-    "Run Product Optimiser", "CEO Decision", "Generate Campaign",
-    "Build Listing Package", "Publish Draft", "Record Results",
+    "Run Product Optimiser", "CEO Decision",
+    "Create Product Opportunity", "Build Design Package",
+    "Create Product Campaign", "Build Etsy Listing Package",
+    "Generate Marketing Content", "Publish Draft", "Record Results",
 ]
+
+_OPPORTUNITY = {
+    "theme": "Slow coastal mornings", "target_customer": "design-loving travellers",
+    "emotional_angle": "calm, unhurried luxury", "product_type": "t-shirt",
+    "search_intent": "mediterranean lifestyle tee", "seasonal_relevance": "summer",
+    "commercial_score": 85, "originality_score": 80, "brand_fit_score": 90,
+    "estimated_demand": 80, "estimated_competition": 30, "confidence": 80,
+    "product_name": "Amalfi Morning Tee", "concept": "A tee for slow Amalfi mornings.",
+    "colour_palette": ["citrus", "whitewash"], "typography_style": "serif",
+    "illustration_style": "watercolour", "photography_style": "morning light",
+    "mockup_style": "terrace flatlay",
+}
+
+_DESIGN = {
+    "shirt_colour": "ecru", "print_colour": "terracotta",
+    "typography_direction": "serif lowercase", "layout_direction": "centred",
+    "print_placement": "centre chest", "print_size_guidance": "25cm wide",
+    "artwork_description": "A line-drawn lemon branch.", "mockup_scene": "tee on linen",
+    "design_rationale": "On theme.", "listing_title_seed": "Amalfi Tee",
+    "listing_tags_seed": ["lemon", "coastal"], "listing_description_seed": "A calm tee.",
+}
 
 
 # --- Dry run (fully offline; observation + decision only) -----------
@@ -35,9 +58,11 @@ def test_dry_run_executes_all_stages_without_side_effects(config, db):
 
     assert [s["stage"] for s in summary["stages"]] == _EXPECTED_STAGES
     assert summary["status"] == "completed"
-    # Generation/listing/publishing are skipped in dry run.
+    # Product creation, marketing, and publishing are skipped in dry run.
     by_stage = {s["stage"]: s for s in summary["stages"]}
-    for stage in ("Generate Campaign", "Build Listing Package", "Publish Draft"):
+    for stage in ("Create Product Opportunity", "Build Design Package",
+                  "Create Product Campaign", "Build Etsy Listing Package",
+                  "Generate Marketing Content", "Publish Draft"):
         assert by_stage[stage]["status"] == "skipped"
     # The run is recorded and retrievable.
     assert db.get_latest_daily_run()["mode"] == "dry_run"
@@ -99,6 +124,10 @@ def production_cycle(config, db, tmp_path):
     cycle.orchestrator.compliance._llm = FakeLLM(make_compliance_response())
     cycle.listing_factory._llm = FakeLLM(_LISTING)
     cycle.listing_factory.compliance._llm = FakeLLM(make_compliance_response())
+    # Product-first stages: opportunity discovery + design package generation.
+    cycle.opportunities._llm = FakeLLM({"opportunities": [_OPPORTUNITY]})
+    cycle.design._llm = FakeLLM(_DESIGN)
+    cycle.design.compliance._llm = FakeLLM(make_compliance_response())
 
     class _StubDraft:
         def create_draft(self, listing):
@@ -111,14 +140,21 @@ def test_production_runs_full_pipeline_and_publishes(production_cycle, db):
     summary = production_cycle.run(mode="production")
     by_stage = {s["stage"]: s for s in summary["stages"]}
 
-    assert by_stage["CEO Decision"]["detail"]["approved"] is True
-    assert by_stage["Generate Campaign"]["status"] == "ok"
-    assert by_stage["Build Listing Package"]["status"] == "ok"
+    # Product-first: opportunity -> design -> campaign -> listing, then content.
+    assert by_stage["Create Product Opportunity"]["status"] == "ok"
+    assert by_stage["Build Design Package"]["status"] == "ok"
+    assert by_stage["Create Product Campaign"]["status"] == "ok"
+    assert by_stage["Build Etsy Listing Package"]["status"] == "ok"
+    assert by_stage["Generate Marketing Content"]["status"] == "ok"
     assert by_stage["Publish Draft"]["status"] == "ok"
     assert by_stage["Publish Draft"]["detail"]["status"] == "draft"
     assert summary["status"] == "completed"
 
-    # A real draft publication was recorded.
+    # Marketing was generated only AFTER the product (listing) existed.
+    stage_order = [s["stage"] for s in summary["stages"]]
+    assert stage_order.index("Build Etsy Listing Package") < stage_order.index("Generate Marketing Content")
+
+    # A real draft publication was recorded — the cycle can produce a sale.
     assert any(p["status"] == "draft" for p in db.list_publications())
 
 

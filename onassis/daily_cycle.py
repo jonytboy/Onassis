@@ -1,19 +1,27 @@
 """The Daily Cycle — ONASSIS's single execution entry point.
 
 This module **only orchestrates** existing modules in a fixed order. It adds no
-business logic, no new agents, and makes no decisions of its own — every stage
-delegates to a module that already owns that responsibility.
+new agents and makes no decisions of its own — every stage delegates to a
+module that already owns that responsibility.
+
+The cycle is **product-first**: marketing is generated only after a commercially
+viable product exists. After observation and CEO/Compliance approval it creates
+the product, then promotes it.
 
 Order:
-    1. Sync Etsy            2. Sync Pinterest      3. Import Revenue
-    4. Import Analytics     5. Run Product Optimiser
-    6. CEO Decision         7. Generate Campaign (if approved)
-    8. Build Listing Package 9. Publish Draft (if approved)
-    10. Record Results
+    1. Sync Etsy                 2. Sync Pinterest        3. Import Revenue
+    4. Import Analytics          5. Run Product Optimiser 6. CEO Decision
+    7. Create Product Opportunity     (the product idea, CEO-approved)
+    8. Build Design Package           (design brief + artwork prompt, compliance-gated)
+    9. Create Product Campaign        (campaign + product from the opportunity)
+   10. Build Etsy Listing Package     (the upload-ready Etsy product)
+   11. Generate Marketing Content     (Pinterest/Instagram/Facebook — promotes the product)
+   12. Publish Draft                  (the product becomes a real Etsy draft)
+   13. Record Results
 
 Every stage logs start/finish, records its duration, captures failures, and the
 cycle continues safely past a failed stage. Two modes are supported: ``dry_run``
-(observation + decision only — no generation, listing, or publishing) and
+(observation + decision only — no product creation, content, or publishing) and
 ``production`` (the full cycle). No scheduling/cron/timers — just coordination.
 """
 
@@ -28,11 +36,14 @@ from onassis.config import Config
 from onassis.connectors.etsy import EtsyConnector
 from onassis.connectors.pinterest import PinterestConnector
 from onassis.database import Database
+from onassis.design_package import DesignPackageBuilder
 from onassis.listing_factory import ListingFactory
 from onassis.logger import get_logger
+from onassis.opportunities import OpportunityEngine
 from onassis.optimiser import ProductOptimiser
 from onassis.orchestrator import Orchestrator
 from onassis.profit import ProfitEngine
+from onassis.proposals import APPROVE
 from onassis.publishing import PublisherService
 from onassis.revenue import RevenueEngine
 
@@ -52,9 +63,15 @@ class DailyCycle:
         self.profit = ProfitEngine(config, db)
         self.analytics = AnalyticsEngine(config, db)
         self.optimiser = ProductOptimiser(config, db)
+        self.opportunities = OpportunityEngine(config, db)
+        self.design = DesignPackageBuilder(config, db)
         self.orchestrator = Orchestrator(config, db)
         self.listing_factory = ListingFactory(config, db)
         self.publisher = PublisherService(config, db)
+        # Campaign/Brain/Compliance are owned by the orchestrator — reuse them.
+        self.campaigns = self.orchestrator.campaigns
+        self.brain = self.orchestrator.brain
+        self.compliance = self.orchestrator.compliance
 
     # --- Entry point ------------------------------------------------
 
@@ -72,10 +89,14 @@ class DailyCycle:
         self._stage(stages, "Import Analytics", self._import_analytics, ctx)
         self._stage(stages, "Run Product Optimiser", self._run_optimiser, ctx)
         self._stage(stages, "CEO Decision", self._ceo_decision, ctx)
-        self._stage(stages, "Generate Campaign", self._generate_campaign, ctx)
-        self._stage(stages, "Build Listing Package", self._build_listing, ctx)
+        # --- Product first: create the product, then promote it. ---
+        self._stage(stages, "Create Product Opportunity", self._create_opportunity, ctx)
+        self._stage(stages, "Build Design Package", self._build_design_package, ctx)
+        self._stage(stages, "Create Product Campaign", self._create_campaign, ctx)
+        self._stage(stages, "Build Etsy Listing Package", self._build_listing, ctx)
+        self._stage(stages, "Generate Marketing Content", self._generate_content, ctx)
         self._stage(stages, "Publish Draft", self._publish, ctx)
-        # Stage 10 — Record Results — is the persistence below.
+        # Final stage — Record Results — is the persistence below.
         stages.append({"stage": "Record Results", "status": "ok",
                        "duration_seconds": 0.0, "detail": None, "error": None})
 
@@ -154,27 +175,78 @@ class DailyCycle:
         ctx["approved"] = verdict == "APPROVE"
         return {"status": "ok", "detail": {"verdict": verdict, "approved": ctx["approved"]}}
 
-    def _generate_campaign(self, ctx: dict[str, Any]) -> dict[str, Any]:
+    def _create_opportunity(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """Pick (or generate) a CEO-approved product opportunity to build."""
         if ctx["dry"]:
             return {"status": "skipped", "detail": "dry run"}
-        if not ctx.get("approved"):
-            return {"status": "skipped", "detail": "CEO did not approve"}
-        summary = self.orchestrator.run_daily()
-        ctx["campaign_id"] = summary["campaign_id"]
+        if not self.opportunities.top(limit=1):
+            self.opportunities.generate()  # backlog empty — discover ideas
+        choice = self.opportunities.select_next(agent_name="DailyCycle")
+        if choice is None:
+            return {"status": "skipped", "detail": "no product opportunity available"}
+        opp = choice["opportunity"]
+        ctx["opportunity"] = opp
+        if choice["ceo"]["verdict"] != APPROVE:
+            return {"status": "blocked",
+                    "detail": f"CEO did not approve opportunity {opp['opportunity_id']}"}
         return {"status": "ok", "detail": {
-            "campaign_id": summary["campaign_id"], "items": summary["items_created"]}}
+            "opportunity_id": opp["opportunity_id"], "product": opp["product_name"]}}
+
+    def _build_design_package(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """Turn the approved opportunity into a print-ready design package."""
+        if ctx["dry"]:
+            return {"status": "skipped", "detail": "dry run"}
+        opp = ctx.get("opportunity")
+        if not opp:
+            return {"status": "skipped", "detail": "no opportunity"}
+        pkg = self.design.build(opp["opportunity_id"])
+        if pkg.get("status") != "ready":
+            return {"status": "blocked", "detail": pkg.get("reason")}
+        ctx["design_package"] = pkg
+        return {"status": "ok", "detail": {"path": pkg["path"]}}
+
+    def _create_campaign(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """Create the campaign + product FROM the opportunity (product-driven)."""
+        if ctx["dry"]:
+            return {"status": "skipped", "detail": "dry run"}
+        opp = ctx.get("opportunity")
+        if not opp:
+            return {"status": "skipped", "detail": "no opportunity"}
+        result = self.campaigns.create_from_opportunity(opp, design=ctx.get("design_package"))
+        campaign, brief = result["campaign"], result["brief"]
+        ctx["campaign_id"] = campaign["id"]
+        ctx["brief"] = brief
+        # Governance for the marketing campaign: predict + compliance review.
+        self.brain.generate_for_campaign(campaign, brief)
+        review = self.compliance.review_campaign(campaign, [])
+        ctx["campaign_approved"] = review["verdict"] == APPROVE
+        if not ctx["campaign_approved"]:
+            return {"status": "blocked", "detail": "campaign failed compliance review"}
+        return {"status": "ok", "detail": {"campaign_id": campaign["id"],
+                                           "product": opp["product_name"]}}
 
     def _build_listing(self, ctx: dict[str, Any]) -> dict[str, Any]:
         if ctx["dry"]:
             return {"status": "skipped", "detail": "dry run"}
         cid = ctx.get("campaign_id")
-        if not cid:
-            return {"status": "skipped", "detail": "no campaign generated"}
+        if not cid or not ctx.get("campaign_approved"):
+            return {"status": "skipped", "detail": "no approved campaign"}
         pkg = self.listing_factory.export(cid)
         if pkg.get("status") != "ready":
             return {"status": "blocked", "detail": pkg.get("reason")}
         ctx["listing_ready"] = True
         return {"status": "ok", "detail": {"path": pkg["path"]}}
+
+    def _generate_content(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """Generate marketing content LAST — only to promote the new product."""
+        if ctx["dry"]:
+            return {"status": "skipped", "detail": "dry run"}
+        brief = ctx.get("brief")
+        if not brief or not ctx.get("campaign_approved"):
+            return {"status": "skipped", "detail": "no approved product campaign"}
+        content = self.orchestrator.generate_marketing_content(brief)
+        ctx["content_items"] = len(content["items"])
+        return {"status": "ok", "detail": {"items": len(content["items"])}}
 
     def _publish(self, ctx: dict[str, Any]) -> dict[str, Any]:
         if ctx["dry"]:

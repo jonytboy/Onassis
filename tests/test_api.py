@@ -398,7 +398,7 @@ def test_daily_run_and_status_history(app_and_client):
     assert r.status_code == 200
     body = r.json()
     assert body["mode"] == "dry_run"
-    assert len(body["stages"]) == 10
+    assert len(body["stages"]) == 13
 
     status = client.get("/daily/status").json()
     assert status["mode"] == "dry_run"
