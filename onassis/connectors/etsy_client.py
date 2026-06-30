@@ -159,7 +159,7 @@ class EtsyDraftClient(EtsyClient):
             "type": "physical",
             "state": "draft",  # NEVER publish live from here
         }
-        url = f"{self.base_url}/shops/{self.shop_id}/listings"
+        url = f"{self.base_url}/shops/{self.resolve_shop_id()}/listings"
         resp = httpx.post(url, headers=self._headers(), data=body, timeout=self.timeout)
         resp.raise_for_status()
         return resp.json()

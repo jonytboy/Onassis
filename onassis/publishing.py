@@ -57,7 +57,7 @@ class PublisherService:
         if self._draft_client is not None:
             return True
         e = self.config.etsy or {}
-        if not (e.get("api_key") and e.get("shop_id")):
+        if not e.get("api_key"):
             return False
         if e.get("access_token"):
             return True
