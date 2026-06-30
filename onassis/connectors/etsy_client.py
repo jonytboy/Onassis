@@ -110,6 +110,10 @@ class EtsyClient:
             f"/shops/{self.shop_id}/listings", {"state": state, "includes": "Inventory"}
         )
 
+    def get_shop(self) -> dict[str, Any]:
+        """Read-only shop record (GET /shops/{shop_id})."""
+        return self._get(f"/shops/{self.shop_id}")
+
 
 class EtsyDraftClient(EtsyClient):
     """Write client that creates Etsy listings as **drafts** only.
