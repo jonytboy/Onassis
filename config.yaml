@@ -146,6 +146,22 @@ optimiser:
     improve_seo: 0.10
     design_variation: 0.20
 
+# --- Product Opportunity Engine --------------------------------------
+# Discovers commercially viable product ideas BEFORE any design work. It only
+# generates ideas — no images, mock-ups, or listings. Output is the permanent
+# product development backlog, ranked by expected commercial value.
+opportunity:
+  default_count: 8               # how many ideas to generate per request
+  development_cost: 12.0         # assumed design/dev cost of pursuing one idea
+  revenue_potential: 250.0       # expected return mapped from a 100-value idea
+  # Weights for the expected-commercial-value score (need not sum to 1).
+  weights:
+    commercial: 0.35
+    originality: 0.15
+    brand_fit: 0.20
+    demand: 0.20
+    competition: 0.10            # applied to (100 - estimated_competition)
+
 # --- Listing factory (prepares Etsy listings; never publishes) -------
 listing:
   exports_dir: exports          # where listing packages are written

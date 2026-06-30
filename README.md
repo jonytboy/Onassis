@@ -174,6 +174,45 @@ python main.py --optimise      # the single highest-value product action
 `GET /optimiser` returns the product analysed, recommendation, expected ROI,
 reasoning, confidence (and the CEO's verdict).
 
+## Product Opportunity Engine — discover ideas before any design work
+
+The Opportunity Engine (`onassis/opportunities.py`) decides **what is worth
+building** before a single pixel is drawn. It generates commercially viable
+product opportunities and stores them as the permanent product development
+**backlog**, ranked by expected commercial value. It generates **no images, no
+mock-ups, and no listings** — only high-quality ideas and creative direction.
+
+Every opportunity carries a commercial frame (brand, theme, target customer,
+emotional angle, product type, search intent, seasonal relevance), a 0-100
+scorecard (commercial / originality / brand-fit, estimated demand, estimated
+competition, confidence), and concrete creative direction (product name,
+one-sentence concept, and suggested colour palette, typography, illustration,
+photography, and mock-up styles).
+
+The creative + scoring fields are LLM-generated; the **expected commercial
+value** that orders the backlog is computed **deterministically** from the
+component scores (weighted blend rewarding commercial/originality/brand-fit/
+demand, penalising competition, scaled by confidence), so the ranking is
+explainable and testable. **Duplicate concepts are avoided** both by telling
+the model what already exists and by enforcing a normalised fingerprint at
+insert time.
+
+The **Product Optimiser and CEO choose from this ranked queue**:
+`ProductOptimiser.next_opportunity()` pulls the top backlog idea and frames it
+as an investment proposal; the CEO evaluates it under the same company policy
+as everything else, and on approval the opportunity is marked *selected*.
+
+| Method & path | Purpose |
+|---|---|
+| `GET /opportunities` | The whole backlog, ranked by expected commercial value. |
+| `GET /opportunities/top?limit=` | The top backlog opportunities. |
+| `POST /opportunities/generate?count=` | Discover new opportunities (no assets). |
+
+```bash
+python main.py --generate-opportunities 8   # discover ideas
+python main.py --opportunities               # show the ranked backlog
+```
+
 ## Experiment Engine — every optimisation is a measurable test
 
 The Experiment Engine (`onassis/experiments.py`) turns each optimisation into a
@@ -557,6 +596,7 @@ then daily at `08:00` local time. Both are configurable.
 | `onassis/profit.py` | The Profit Engine — ledger + profit-first dashboard. |
 | `onassis/revenue.py` | Revenue Intelligence Engine — orders, economics, rollups. |
 | `onassis/optimiser.py` | Product Optimiser — one highest-value action per product. |
+| `onassis/opportunities.py` | Product Opportunity Engine — ranked product development backlog. |
 | `onassis/connectors/` | Pluggable revenue sources: base contract, Etsy connector, and Etsy OAuth 2.0 (PKCE). |
 | `onassis/api.py` | FastAPI service — thin REST layer over the existing services. |
 | `onassis/orchestrator.py` | Defines the content pipeline and owns the agents. |

@@ -480,6 +480,35 @@ def test_optimiser_endpoint_no_products(app_and_client):
     assert "message" in client.get("/optimiser").json()
 
 
+# --- Opportunities endpoints ----------------------------------------
+
+def test_opportunities_endpoints(app_and_client):
+    app, client = app_and_client
+    app.state.opportunities._llm = FakeLLM({"opportunities": [{
+        "theme": "Slow coastal mornings", "target_customer": "travellers",
+        "emotional_angle": "calm luxury", "product_type": "linen tea towel",
+        "search_intent": "mediterranean linen", "seasonal_relevance": "summer",
+        "commercial_score": 85, "originality_score": 80, "brand_fit_score": 90,
+        "estimated_demand": 80, "estimated_competition": 30, "confidence": 80,
+        "product_name": "Amalfi Morning Linen",
+        "concept": "A linen tea towel evoking slow Amalfi mornings.",
+        "colour_palette": ["citrus", "whitewash"], "typography_style": "serif",
+        "illustration_style": "watercolour", "photography_style": "morning light",
+        "mockup_style": "terrace flatlay",
+    }]})
+
+    gen = client.post("/opportunities/generate?count=1").json()
+    assert gen["generated"] == 1
+    oid = gen["opportunities"][0]["opportunity_id"]
+    assert oid.startswith("OPP-")
+
+    all_opps = client.get("/opportunities").json()
+    assert any(o["opportunity_id"] == oid for o in all_opps)
+
+    top = client.get("/opportunities/top?limit=5").json()
+    assert top[0]["opportunity_id"] == oid
+
+
 # --- Swagger / OpenAPI docs -----------------------------------------
 
 def test_swagger_docs_available(app_and_client):
@@ -495,6 +524,7 @@ def test_swagger_docs_available(app_and_client):
                  "/etsy/orders", "/etsy/listings", "/etsy/stats", "/etsy/sync",
                  "/etsy/oauth/login", "/etsy/oauth/callback", "/etsy/oauth/status",
                  "/optimiser", "/listing/{campaign_id}",
+                 "/opportunities", "/opportunities/top", "/opportunities/generate",
                  "/publish/{campaign_id}", "/publishing/status",
                  "/analytics", "/analytics/product/{product_id}",
                  "/analytics/campaign/{campaign_id}",

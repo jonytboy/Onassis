@@ -112,6 +112,21 @@ class ProductOptimiser:
         rec["ceo"] = self._ceo_review(rec)
         return rec
 
+    def next_opportunity(self) -> dict[str, Any] | None:
+        """Choose the next product to develop from the Opportunity Engine's
+        ranked backlog and have the CEO decide whether to fund it.
+
+        When there are no existing products worth improving, ONASSIS still grows
+        by pulling the highest expected-value idea off the product development
+        backlog — the same ranked queue the CEO commits capital against. Returns
+        ``{opportunity, proposal, ceo}`` or ``None`` if the backlog is empty.
+        """
+        from onassis.opportunities import OpportunityEngine
+
+        return OpportunityEngine(self.config, self.db).select_next(
+            agent_name="ProductOptimiser"
+        )
+
     def analyse_product(self, product: dict[str, Any]) -> dict[str, Any]:
         """Compute a product's metrics and its single best action."""
         sku = str(product.get("sku") or product.get("id") or "")

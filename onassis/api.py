@@ -33,6 +33,7 @@ from onassis.experiments import ExperimentEngine, ExperimentError
 from onassis.listing_factory import ListingError, ListingFactory
 from onassis.logger import get_logger, setup_logging
 from onassis.operations import OperationsManager
+from onassis.opportunities import OpportunityEngine
 from onassis.optimiser import ProductOptimiser
 from onassis.orchestrator import Orchestrator
 from onassis.production_readiness import ProductionReadiness
@@ -93,6 +94,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     daily = DailyCycle(config, db)
     operations = OperationsManager(config, db, cycle=daily)
     readiness = ProductionReadiness(config, db)
+    opportunities = OpportunityEngine(config, db)
 
     app = FastAPI(
         title="ONASSIS API",
@@ -119,6 +121,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.daily = daily
     app.state.operations = operations
     app.state.readiness = readiness
+    app.state.opportunities = opportunities
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""
@@ -344,6 +347,23 @@ def create_app(config: Config | None = None) -> FastAPI:
             "ceo_verdict": rec["ceo"]["verdict"],
             "metrics": rec["metrics"],
         }
+
+    @app.get("/opportunities", tags=["opportunities"])
+    def list_opportunities(status: str | None = None) -> list[dict[str, Any]]:
+        """The product development backlog, ranked by expected commercial value."""
+        return opportunities.list_opportunities(status=status)
+
+    @app.get("/opportunities/top", tags=["opportunities"])
+    def top_opportunities(limit: int = 5) -> list[dict[str, Any]]:
+        """The highest expected-value opportunities still in the backlog."""
+        return opportunities.top(limit=limit)
+
+    @app.post("/opportunities/generate", tags=["opportunities"])
+    def generate_opportunities(
+        count: int | None = None, season: str | None = None, focus: str | None = None
+    ) -> dict[str, Any]:
+        """Discover new product opportunities (no images/mock-ups/listings)."""
+        return opportunities.generate(count, season=season, focus=focus)
 
     @app.post(
         "/campaign/create", response_model=CampaignCreateResponse, tags=["campaigns"]

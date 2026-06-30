@@ -315,6 +315,41 @@ CREATE TABLE IF NOT EXISTS operations_reports (
     recommendations  TEXT    NOT NULL,        -- JSON
     preflight        TEXT    NOT NULL         -- JSON
 );
+
+CREATE TABLE IF NOT EXISTS opportunities (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at            TEXT    NOT NULL,
+    opportunity_id        TEXT    NOT NULL UNIQUE,   -- e.g. OPP-ab12cd34
+    brand                 TEXT,
+    theme                 TEXT,
+    target_customer       TEXT,
+    emotional_angle       TEXT,
+    product_type          TEXT,
+    search_intent         TEXT,
+    seasonal_relevance    TEXT,
+    commercial_score      INTEGER NOT NULL DEFAULT 0,  -- 0-100
+    originality_score     INTEGER NOT NULL DEFAULT 0,  -- 0-100
+    brand_fit_score       INTEGER NOT NULL DEFAULT 0,  -- 0-100
+    estimated_demand      INTEGER NOT NULL DEFAULT 0,  -- 0-100
+    estimated_competition INTEGER NOT NULL DEFAULT 0,  -- 0-100
+    confidence            INTEGER NOT NULL DEFAULT 0,  -- 0-100
+    product_name          TEXT,
+    concept               TEXT,                        -- one sentence
+    colour_palette        TEXT,                        -- JSON array
+    typography_style      TEXT,
+    illustration_style    TEXT,
+    photography_style     TEXT,
+    mockup_style          TEXT,
+    expected_value        REAL    NOT NULL DEFAULT 0,  -- ranking score
+    dedupe_key            TEXT    NOT NULL,            -- normalised concept fingerprint
+    status                TEXT    NOT NULL DEFAULT 'backlog',  -- backlog | selected | rejected
+    selected_by           TEXT,
+    selected_at           TEXT,
+    payload               TEXT                         -- JSON (raw generation)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_opportunities_dedupe ON opportunities(dedupe_key);
+CREATE INDEX IF NOT EXISTS idx_opportunities_rank ON opportunities(status, expected_value);
 """
 
 
@@ -1413,6 +1448,109 @@ class Database:
             ).fetchall()
         return [_row_to_operations_report(r) for r in rows]
 
+    # --- Opportunities (the product development backlog) ------------
+
+    def insert_opportunity(self, opp: dict[str, Any]) -> int:
+        """Persist one product opportunity and return its row id."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO opportunities
+                    (created_at, opportunity_id, brand, theme, target_customer,
+                     emotional_angle, product_type, search_intent, seasonal_relevance,
+                     commercial_score, originality_score, brand_fit_score,
+                     estimated_demand, estimated_competition, confidence,
+                     product_name, concept, colour_palette, typography_style,
+                     illustration_style, photography_style, mockup_style,
+                     expected_value, dedupe_key, status, selected_by, selected_at, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utcnow(),
+                    opp["opportunity_id"],
+                    opp.get("brand"),
+                    opp.get("theme"),
+                    opp.get("target_customer"),
+                    opp.get("emotional_angle"),
+                    opp.get("product_type"),
+                    opp.get("search_intent"),
+                    opp.get("seasonal_relevance"),
+                    int(opp.get("commercial_score", 0)),
+                    int(opp.get("originality_score", 0)),
+                    int(opp.get("brand_fit_score", 0)),
+                    int(opp.get("estimated_demand", 0)),
+                    int(opp.get("estimated_competition", 0)),
+                    int(opp.get("confidence", 0)),
+                    opp.get("product_name"),
+                    opp.get("concept"),
+                    json.dumps(opp.get("colour_palette", [])),
+                    opp.get("typography_style"),
+                    opp.get("illustration_style"),
+                    opp.get("photography_style"),
+                    opp.get("mockup_style"),
+                    float(opp.get("expected_value", 0) or 0),
+                    opp["dedupe_key"],
+                    opp.get("status", "backlog"),
+                    opp.get("selected_by"),
+                    opp.get("selected_at"),
+                    json.dumps(opp.get("payload", {})),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def opportunity_dedupe_keys(self) -> set[str]:
+        """All concept fingerprints already in the backlog (for dedup)."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT dedupe_key FROM opportunities").fetchall()
+        return {r["dedupe_key"] for r in rows}
+
+    def list_opportunities(
+        self, status: str | None = None, limit: int | None = None
+    ) -> list[dict[str, Any]]:
+        """Opportunities ranked by expected commercial value (best first)."""
+        sql = "SELECT * FROM opportunities"
+        params: list[Any] = []
+        if status is not None:
+            sql += " WHERE status = ?"
+            params.append(status)
+        sql += " ORDER BY expected_value DESC, id DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [_row_to_opportunity(r) for r in rows]
+
+    def get_opportunity(self, opportunity_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM opportunities WHERE opportunity_id = ?", (opportunity_id,)
+            ).fetchone()
+        return _row_to_opportunity(row) if row else None
+
+    def count_opportunities(self, status: str | None = None) -> int:
+        sql = "SELECT COUNT(*) AS n FROM opportunities"
+        params: list[Any] = []
+        if status is not None:
+            sql += " WHERE status = ?"
+            params.append(status)
+        with self._connect() as conn:
+            return int(conn.execute(sql, params).fetchone()["n"])
+
+    def update_opportunity(self, opportunity_id: str, fields: dict[str, Any]) -> bool:
+        allowed = {"status", "selected_by", "selected_at"}
+        sets = {k: v for k, v in fields.items() if k in allowed}
+        if not sets:
+            return False
+        columns = ", ".join(f"{k} = ?" for k in sets)
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"UPDATE opportunities SET {columns} WHERE opportunity_id = ?",
+                (*sets.values(), opportunity_id),
+            )
+            return cur.rowcount > 0
+
 
 def _row_to_brief(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
@@ -1467,6 +1605,13 @@ def _row_to_operations_report(row: sqlite3.Row) -> dict[str, Any]:
     data["business"] = json.loads(data.get("business") or "{}")
     data["recommendations"] = json.loads(data.get("recommendations") or "[]")
     data["preflight"] = json.loads(data.get("preflight") or "{}")
+    return data
+
+
+def _row_to_opportunity(row: sqlite3.Row) -> dict[str, Any]:
+    data = dict(row)
+    data["colour_palette"] = json.loads(data.get("colour_palette") or "[]")
+    data["payload"] = json.loads(data.get("payload") or "{}")
     return data
 
 

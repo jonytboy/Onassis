@@ -132,6 +132,14 @@ def _parse_args() -> argparse.Namespace:
         help="Recommend the single highest-value action for an existing product.",
     )
     parser.add_argument(
+        "--opportunities", action="store_true",
+        help="Show the product development backlog (ranked by commercial value).",
+    )
+    parser.add_argument(
+        "--generate-opportunities", type=int, nargs="?", const=0, metavar="COUNT",
+        help="Discover new product opportunities (no images/mock-ups/listings).",
+    )
+    parser.add_argument(
         "--build-listing", type=int, metavar="CAMPAIGN_ID",
         help="Build & export an upload-ready Etsy listing package for a campaign.",
     )
@@ -462,6 +470,37 @@ def main() -> int:
               f"ROI: {rec['expected_roi']:.2f}")
         print(f"  Confidence : {rec['confidence']}%   CEO: {rec['ceo']['verdict']}")
         print(f"  Reasoning  : {rec['reasoning']}\n")
+        return 0
+
+    if args.generate_opportunities is not None:
+        from onassis.opportunities import OpportunityEngine
+
+        count = args.generate_opportunities or None  # 0/None -> config default
+        result = OpportunityEngine(config, db).generate(count)
+        print(f"\nGenerated {result['generated']} opportunity(ies) "
+              f"({result['duplicates_skipped']} duplicate(s) skipped):\n")
+        for o in result["opportunities"]:
+            print(f"  [{o['expected_value']:5.1f}] {o['opportunity_id']}  "
+                  f"{o['product_name']} — {o['product_type']} / {o['theme']}")
+        print()
+        return 0
+
+    if args.opportunities:
+        from onassis.opportunities import OpportunityEngine
+
+        rows = OpportunityEngine(config, db).top(limit=20)
+        if not rows:
+            print("Product backlog is empty. Generate ideas with "
+                  "--generate-opportunities.")
+            return 0
+        print("\nPRODUCT DEVELOPMENT BACKLOG (top, ranked by commercial value)\n")
+        for o in rows:
+            print(f"  [{o['expected_value']:5.1f}] {o['opportunity_id']}  "
+                  f"{o['product_name']}")
+            print(f"           {o['product_type']} · {o['theme']} · "
+                  f"demand {o['estimated_demand']} / competition "
+                  f"{o['estimated_competition']} / conf {o['confidence']}")
+        print()
         return 0
 
     if args.build_listing is not None:
