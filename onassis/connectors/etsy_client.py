@@ -83,6 +83,7 @@ class EtsyClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self._shipping_profile_id: int | None = None  # resolved lazily from the shop
+        self._readiness_state_id: int | None = None    # resolved lazily from the shop
 
     def _bearer(self) -> str:
         # A token provider (OAuth) wins — it refreshes automatically.
@@ -174,6 +175,37 @@ class EtsyClient:
             self._shipping_profile_id = int(chosen[0]["shipping_profile_id"])
         return self._shipping_profile_id
 
+    def get_readiness_state_definitions(self) -> list[dict[str, Any]]:
+        """The shop's readiness (processing) state definitions.
+
+        GET /shops/{shop_id}/readiness-state-definitions. Each definition carries
+        a ``readiness_state_id`` and a ``readiness_state`` enum
+        (``ready_to_ship`` | ``made_to_order``).
+        """
+        resp = self._get(f"/shops/{self.resolve_shop_id()}/readiness-state-definitions")
+        return resp.get("results", []) or []
+
+    def resolve_readiness_state_id(self) -> int:
+        """Return a readiness_state_id, resolved from the shop if unset.
+
+        Etsy requires ``readiness_state_id`` for physical listings. It is a
+        shop-specific id (not a fixed enum — the enum is ``readiness_state``), so
+        this mirrors :meth:`resolve_shipping_profile_id`: fetch the shop's
+        readiness state definitions and use the first active one, caching the
+        result. No shop-specific id is hardcoded, so the app stays portable.
+        """
+        if self._readiness_state_id is None:
+            definitions = self.get_readiness_state_definitions()
+            active = [d for d in definitions if not d.get("is_deleted")]
+            chosen = active or definitions
+            if not chosen:
+                raise EtsyApiError(
+                    "No Etsy readiness state definition found for this shop. Create "
+                    "a processing profile in your shop, or set listing.readiness_state_id."
+                )
+            self._readiness_state_id = int(chosen[0]["readiness_state_id"])
+        return self._readiness_state_id
+
 
 class EtsyDraftClient(EtsyClient):
     """Write client that creates Etsy listings as **drafts** only.
@@ -193,6 +225,13 @@ class EtsyDraftClient(EtsyClient):
             int(configured) if configured not in (None, "")
             else self.resolve_shipping_profile_id()
         )
+        # Etsy also requires readiness_state_id for physical listings; use the
+        # configured value or resolve it from the shop (same pattern).
+        configured_rs = listing.get("readiness_state_id")
+        readiness_state_id = (
+            int(configured_rs) if configured_rs not in (None, "")
+            else self.resolve_readiness_state_id()
+        )
         body = {
             "quantity": listing.get("quantity", 1),
             "title": listing["title"],
@@ -202,6 +241,7 @@ class EtsyDraftClient(EtsyClient):
             "when_made": listing.get("when_made", "made_to_order"),
             "taxonomy_id": listing.get("taxonomy_id"),
             "shipping_profile_id": shipping_profile_id,
+            "readiness_state_id": readiness_state_id,
             "tags": listing.get("tags", []),
             "materials": listing.get("materials", []),
             "type": "physical",

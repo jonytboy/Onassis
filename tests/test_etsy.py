@@ -118,7 +118,7 @@ def test_create_draft_exposes_etsy_validation_body(monkeypatch):
 
     with pytest.raises(ec.EtsyApiError) as excinfo:
         client.create_draft({"title": "T", "description": "D",
-                             "shipping_profile_id": "123456"})
+                             "shipping_profile_id": "123456", "readiness_state_id": "77"})
 
     msg = str(excinfo.value)
     assert "400" in msg
@@ -147,7 +147,8 @@ def test_create_draft_sends_shipping_profile_id_as_int(monkeypatch):
     monkeypatch.setattr(ec.httpx, "post", _fake_post)
     client = ec.EtsyDraftClient(api_key="k", shop_id="9", access_token="t")
     client.create_draft({
-        "title": "T", "description": "D", "shipping_profile_id": "123456",
+        "title": "T", "description": "D",
+        "shipping_profile_id": "123456", "readiness_state_id": "77",
     })
 
     # Sent as JSON with shipping_profile_id as an actual int (not "123456").
@@ -202,11 +203,72 @@ def test_create_draft_auto_resolves_shipping_profile_when_unset(monkeypatch):
     client.get_shipping_profiles = lambda: [
         {"shipping_profile_id": 555, "title": "Standard", "is_deleted": False},
     ]
+    client.get_readiness_state_definitions = lambda: [
+        {"readiness_state_id": 88, "readiness_state": "made_to_order"},
+    ]
     # No shipping_profile_id in the listing package.
     client.create_draft({"title": "T", "description": "D"})
 
     assert captured["json"]["shipping_profile_id"] == 555
     assert isinstance(captured["json"]["shipping_profile_id"], int)
+
+
+# --- readiness_state_id (required for physical listings) -------------
+
+def test_resolve_readiness_state_id_uses_first_active():
+    """readiness_state_id is a shop-specific id resolved from the shop, like the
+    shipping profile: first active definition, then cached."""
+    from onassis.connectors import etsy_client as ec
+
+    client = ec.EtsyClient(api_key="k", shop_id="9", access_token="t")
+    client.get_readiness_state_definitions = lambda: [
+        {"readiness_state_id": 11, "readiness_state": "ready_to_ship", "is_deleted": True},
+        {"readiness_state_id": 22, "readiness_state": "made_to_order", "is_deleted": False},
+    ]
+    assert client.resolve_readiness_state_id() == 22
+    # Cached — not re-fetched.
+    client.get_readiness_state_definitions = lambda: []
+    assert client.resolve_readiness_state_id() == 22
+
+
+def test_resolve_readiness_state_id_raises_when_none_exist():
+    from onassis.connectors import etsy_client as ec
+
+    client = ec.EtsyClient(api_key="k", shop_id="9", access_token="t")
+    client.get_readiness_state_definitions = lambda: []
+    with pytest.raises(ec.EtsyApiError):
+        client.resolve_readiness_state_id()
+
+
+def test_create_draft_auto_resolves_readiness_state_when_unset(monkeypatch):
+    """When no readiness_state_id is configured, create_draft resolves it from
+    the shop and sends it as an int (Etsy requires it for physical listings)."""
+    from onassis.connectors import etsy_client as ec
+
+    captured = {}
+
+    class _Resp:
+        status_code = 201
+
+        def json(self):
+            return {"listing_id": 4242}
+
+    def _fake_post(url, headers=None, json=None, timeout=None, **_):
+        captured["json"] = json
+        return _Resp()
+
+    monkeypatch.setattr(ec.httpx, "post", _fake_post)
+    client = ec.EtsyDraftClient(api_key="k", shop_id="9", access_token="t")
+    client.get_shipping_profiles = lambda: [
+        {"shipping_profile_id": 555, "is_deleted": False},
+    ]
+    client.get_readiness_state_definitions = lambda: [
+        {"readiness_state_id": 99, "readiness_state": "made_to_order"},
+    ]
+    client.create_draft({"title": "T", "description": "D"})  # neither id configured
+
+    assert captured["json"]["readiness_state_id"] == 99
+    assert isinstance(captured["json"]["readiness_state_id"], int)
 
 
 # --- Order import + mapping -----------------------------------------
