@@ -162,6 +162,115 @@ opportunity:
     demand: 0.20
     competition: 0.10            # applied to (100 - estimated_competition)
 
+# --- Revenue Expansion Engine ----------------------------------------
+# The design is the master asset; products are investments. For each approved
+# design, every catalogue product is scored 0-100 and the CEO launches only
+# those at/above the threshold — one product or all ten, whichever maximises
+# lifetime profit per design. Sales history continually adjusts the scores.
+expansion:
+  score_threshold: 80            # CEO launches products scoring >= this (0-100)
+  fees_rate: 0.105               # marketplace + payment fees, for profit/margin
+  weights:                       # composite-score weights (need not sum to 1)
+    brand_fit: 0.25
+    commercial_suitability: 0.20
+    estimated_conversion: 0.15
+    expected_profit: 0.25
+    historical_performance: 0.15
+  # Phase 1 catalogue — ten proven products, all verified available on Gelato.
+  # `available: false` makes the engine skip a product gracefully (e.g. a
+  # temporary Gelato outage) without failing the launch.
+  catalogue:
+    - key: premium_tshirt
+      name: "Premium T-Shirt"
+      gelato_uid: "apparel_product_gca_t-shirt_gsc_crewneck"
+      production_cost: 12.0
+      retail_price: 32.0
+      base_brand_fit: 88
+      base_conversion: 0.030
+      base_commercial: 85
+      available: true
+    - key: heavyweight_hoodie
+      name: "Heavyweight Hoodie"
+      gelato_uid: "apparel_product_gca_hoodie_gsc_pullover"
+      production_cost: 24.0
+      retail_price: 58.0
+      base_brand_fit: 82
+      base_conversion: 0.022
+      base_commercial: 80
+      available: true
+    - key: sweatshirt
+      name: "Sweatshirt"
+      gelato_uid: "apparel_product_gca_sweatshirt_gsc_crewneck"
+      production_cost: 20.0
+      retail_price: 48.0
+      base_brand_fit: 80
+      base_conversion: 0.024
+      base_commercial: 78
+      available: true
+    - key: premium_poster
+      name: "Premium Poster"
+      gelato_uid: "wall-art_product_pf_pos_pt_matte"
+      production_cost: 8.0
+      retail_price: 28.0
+      base_brand_fit: 90
+      base_conversion: 0.035
+      base_commercial: 88
+      available: true
+    - key: framed_poster
+      name: "Framed Poster"
+      gelato_uid: "wall-art_product_pf_frame_pos"
+      production_cost: 22.0
+      retail_price: 65.0
+      base_brand_fit: 86
+      base_conversion: 0.020
+      base_commercial: 82
+      available: true
+    - key: canvas
+      name: "Canvas"
+      gelato_uid: "wall-art_product_pf_canvas"
+      production_cost: 25.0
+      retail_price: 75.0
+      base_brand_fit: 88
+      base_conversion: 0.018
+      base_commercial: 84
+      available: true
+    - key: ceramic_mug
+      name: "Ceramic Mug"
+      gelato_uid: "home-and-living_product_mug_11oz"
+      production_cost: 7.5
+      retail_price: 22.0
+      base_brand_fit: 92
+      base_conversion: 0.040
+      base_commercial: 90
+      available: true
+    - key: tote_bag
+      name: "Tote Bag"
+      gelato_uid: "accessories_product_tote_gsc_organic"
+      production_cost: 9.0
+      retail_price: 26.0
+      base_brand_fit: 85
+      base_conversion: 0.030
+      base_commercial: 82
+      available: true
+    - key: hardcover_notebook
+      name: "Hardcover Notebook"
+      gelato_uid: "stationery_product_notebook_hardcover_a5"
+      production_cost: 8.5
+      retail_price: 24.0
+      base_brand_fit: 72
+      base_conversion: 0.022
+      base_commercial: 70
+      available: true
+    - key: greeting_card
+      name: "Greeting Card"
+      gelato_uid: "stationery_product_card_folded_a6"
+      production_cost: 2.5
+      retail_price: 7.5
+      base_brand_fit: 70
+      base_conversion: 0.035
+      base_commercial: 68
+      available: true
+
 # --- Design Package Builder ------------------------------------------
 # Turns ONE CEO-approved opportunity into a print-ready design package. It does
 # NOT publish, create Etsy listings, or create mock-ups — it produces the

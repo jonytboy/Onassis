@@ -213,6 +213,9 @@ class ProductionReadiness:
                          "Proposes one action per product; deterministic ranking."),
             self._module("onassis/experiments.py", "Experiment Engine", READY,
                          "A/B experiments + statistical confidence; deterministic."),
+            self._module("onassis/expansion.py", "Revenue Expansion Engine", READY,
+                         "Scores the product catalogue per design; CEO launches the "
+                         "profitable set; learns from sales. Deterministic."),
             self._module(
                 "onassis/opportunities.py", "Product Opportunity Engine",
                 READY if ai else PARTIAL,

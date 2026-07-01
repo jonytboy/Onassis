@@ -88,6 +88,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     analytics = daily.analytics
     opportunities = daily.opportunities
     design_builder = daily.design
+    expansion = daily.expansion
     experiments = ExperimentEngine(config, db)
     operations = OperationsManager(config, db, cycle=daily)
     readiness = ProductionReadiness(config, db)
@@ -119,6 +120,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.readiness = readiness
     app.state.opportunities = opportunities
     app.state.design_builder = design_builder
+    app.state.expansion = expansion
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""
@@ -373,6 +375,27 @@ def create_app(config: Config | None = None) -> FastAPI:
             # CEO or compliance gate blocked the build — report why.
             raise HTTPException(status_code=409, detail=package)
         return package
+
+    @app.get("/expansion/catalogue", tags=["expansion"])
+    def expansion_catalogue() -> list[dict[str, Any]]:
+        """The Phase-1 product catalogue (available products)."""
+        return expansion.catalogue()
+
+    @app.post("/expansion/plan/{campaign_id}", tags=["expansion"])
+    def expansion_plan(campaign_id: int) -> dict[str, Any]:
+        """Score the catalogue for a design and launch the profitable set (CEO)."""
+        expansion.learn_from_sales()
+        return expansion.plan(campaign_id)
+
+    @app.get("/expansion/plan/{campaign_id}", tags=["expansion"])
+    def expansion_plan_read(campaign_id: int) -> list[dict[str, Any]]:
+        """The recorded product scores for a campaign (best first)."""
+        return expansion.plan_for(campaign_id)
+
+    @app.get("/expansion/performance", tags=["expansion"])
+    def expansion_performance() -> list[dict[str, Any]]:
+        """Learned per-product-type performance from real sales."""
+        return expansion.performance()
 
     @app.get("/opportunities/{opportunity_id}/design-package", tags=["opportunities"])
     def get_design_package(opportunity_id: str) -> dict[str, Any]:

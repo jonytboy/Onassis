@@ -256,6 +256,45 @@ safe margin, Gelato notes) is deterministic from config.
 python main.py --build-design-package OPP-1234abcd
 ```
 
+## Revenue Expansion Engine — the optimal product set per design
+
+The **design is the master asset; products are investments.** The Revenue
+Expansion Engine (`onassis/expansion.py`) turns one approved design into the
+*optimal set of commercially viable products* — launching it only on the
+product types where it will actually make money. The objective is **lifetime
+profit per design, not product count**.
+
+**Phase-1 catalogue (10 proven Gelato products):** Premium T-Shirt, Heavyweight
+Hoodie, Sweatshirt, Premium Poster, Framed Poster, Canvas, Ceramic Mug, Tote
+Bag, Hardcover Notebook, Greeting Card. Each carries a Gelato product UID and an
+`available` flag — an unavailable product is skipped gracefully (no failed
+launch). All ten are verified available on Gelato's current catalogue.
+
+For every design it scores each product 0-100 on **brand fit, commercial
+suitability, estimated conversion, expected profit, production cost, retail
+price, and historical performance**. The composite is deterministic (weights in
+config); the **CEO launches only products at/above the threshold (default 80)**
+as investments under company policy. A design may launch on one product or all
+ten depending on suitability.
+
+**It learns from its own sales.** `learn_from_sales()` recomputes per-product-
+type performance from real orders, so if mugs outperform notebooks for
+Mediterranean artwork, mugs' historical score rises and they become more likely
+to launch; under-performers become less likely. This runs inside the daily cycle
+(the **Expand Products** stage) so scores adapt continuously.
+
+| Method & path | Purpose |
+|---|---|
+| `GET /expansion/catalogue` | The Phase-1 product catalogue. |
+| `POST /expansion/plan/{campaign_id}` | Score + launch the profitable product set. |
+| `GET /expansion/plan/{campaign_id}` | The recorded scores for a design. |
+| `GET /expansion/performance` | Learned per-product performance from sales. |
+
+```bash
+python main.py --catalogue          # the ten products
+python main.py --expansion 1        # the launch plan for a design (campaign)
+```
+
 ## Experiment Engine — every optimisation is a measurable test
 
 The Experiment Engine (`onassis/experiments.py`) turns each optimisation into a
@@ -661,6 +700,7 @@ then daily at `08:00` local time. Both are configurable.
 | `onassis/optimiser.py` | Product Optimiser — one highest-value action per product. |
 | `onassis/opportunities.py` | Product Opportunity Engine — ranked product development backlog. |
 | `onassis/design_package.py` | Design Package Builder — opportunity → print-ready design package. |
+| `onassis/expansion.py` | Revenue Expansion Engine — scores the catalogue; CEO launches the profitable product set; learns from sales. |
 | `onassis/connectors/` | Pluggable revenue sources: base contract, Etsy connector, and Etsy OAuth 2.0 (PKCE). |
 | `onassis/api.py` | FastAPI service — thin REST layer over the existing services. |
 | `onassis/orchestrator.py` | Owns the content agents + the marketing-content step (the workflow's last creative step). |

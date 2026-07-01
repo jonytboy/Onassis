@@ -14,10 +14,11 @@ Order:
     7. Create Product Opportunity     (the product idea, CEO-approved)
     8. Build Design Package           (design brief + artwork prompt, compliance-gated)
     9. Create Product Campaign        (campaign + product from the opportunity)
-   10. Build Etsy Listing Package     (the upload-ready Etsy product)
-   11. Generate Marketing Content     (Pinterest/Instagram/Facebook — promotes the product)
-   12. Publish Draft                  (the product becomes a real Etsy draft)
-   13. Record Results
+   10. Expand Products                (score the catalogue; CEO launches the profitable set)
+   11. Build Etsy Listing Package     (the upload-ready Etsy product)
+   12. Generate Marketing Content     (Pinterest/Instagram/Facebook — promotes the product)
+   13. Publish Draft                  (the product becomes a real Etsy draft)
+   14. Record Results
 
 Every stage logs start/finish, records its duration, captures failures, and the
 cycle continues safely past a failed stage. Two modes are supported: ``dry_run``
@@ -37,6 +38,7 @@ from onassis.connectors.etsy import EtsyConnector
 from onassis.connectors.pinterest import PinterestConnector
 from onassis.database import Database
 from onassis.design_package import DesignPackageBuilder
+from onassis.expansion import RevenueExpansionEngine
 from onassis.listing_factory import ListingFactory
 from onassis.logger import get_logger
 from onassis.opportunities import OpportunityEngine
@@ -65,6 +67,7 @@ class DailyCycle:
         self.optimiser = ProductOptimiser(config, db)
         self.opportunities = OpportunityEngine(config, db)
         self.design = DesignPackageBuilder(config, db)
+        self.expansion = RevenueExpansionEngine(config, db)
         self.orchestrator = Orchestrator(config, db)
         self.listing_factory = ListingFactory(config, db)
         self.publisher = PublisherService(config, db)
@@ -93,6 +96,7 @@ class DailyCycle:
         self._stage(stages, "Create Product Opportunity", self._create_opportunity, ctx)
         self._stage(stages, "Build Design Package", self._build_design_package, ctx)
         self._stage(stages, "Create Product Campaign", self._create_campaign, ctx)
+        self._stage(stages, "Expand Products", self._expand_products, ctx)
         self._stage(stages, "Build Etsy Listing Package", self._build_listing, ctx)
         self._stage(stages, "Generate Marketing Content", self._generate_content, ctx)
         self._stage(stages, "Publish Draft", self._publish, ctx)
@@ -115,6 +119,7 @@ class DailyCycle:
             "campaign_id": ctx.get("campaign_id"),
             "listing_ready": ctx.get("listing_ready", False),
             "assets_created": ctx.get("content_items", 0),
+            "products_launched": (ctx.get("expansion") or {}).get("products_launched", 0),
         }
 
     # --- Stage runner -----------------------------------------------
@@ -235,6 +240,22 @@ class DailyCycle:
             return {"status": "blocked", "detail": "campaign failed compliance review"}
         return {"status": "ok", "detail": {"campaign_id": campaign["id"],
                                            "product": opp["product_name"]}}
+
+    def _expand_products(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """Score the catalogue for this design; the CEO launches the profitable
+        set. Learns from sales first so scores adapt over time."""
+        if ctx["dry"]:
+            return {"status": "skipped", "detail": "dry run"}
+        cid = ctx.get("campaign_id")
+        if not cid or not ctx.get("campaign_approved"):
+            return {"status": "skipped", "detail": "no approved product campaign"}
+        self.expansion.learn_from_sales()  # sales continually adjust the scores
+        plan = self.expansion.plan(cid, ctx.get("opportunity"))
+        ctx["expansion"] = plan
+        return {"status": "ok", "detail": {
+            "products_launched": plan["products_launched"],
+            "products_scored": plan["products_scored"],
+            "launched": [s["product_key"] for s in plan["launched"]]}}
 
     def _build_listing(self, ctx: dict[str, Any]) -> dict[str, Any]:
         if ctx["dry"]:

@@ -444,7 +444,7 @@ def test_daily_run_and_status_history(app_and_client):
     assert r.status_code == 200
     body = r.json()
     assert body["mode"] == "dry_run"
-    assert len(body["stages"]) == 13
+    assert len(body["stages"]) == 14
 
     status = client.get("/daily/status").json()
     assert status["mode"] == "dry_run"
@@ -558,6 +558,24 @@ def test_opportunities_endpoints(app_and_client):
     assert any(o["opportunity_id"] == oid for o in top)
 
 
+# --- Expansion endpoints --------------------------------------------
+
+def test_expansion_endpoints(app_and_client):
+    _, client = app_and_client
+
+    catalogue = client.get("/expansion/catalogue").json()
+    assert len(catalogue) == 10
+
+    plan = client.post("/expansion/plan/1").json()
+    assert plan["products_scored"] == 10
+    assert 1 <= plan["products_launched"] < 10   # the commercial set, not all ten
+
+    scores = client.get("/expansion/plan/1").json()
+    assert len(scores) == 10 and scores[0]["composite_score"] >= scores[-1]["composite_score"]
+
+    assert isinstance(client.get("/expansion/performance").json(), list)
+
+
 def test_build_design_package_endpoint(app_and_client, tmp_path):
     app, client = app_and_client
     app.state.config.design = {**app.state.config.design, "exports_dir": str(tmp_path)}
@@ -614,6 +632,8 @@ def test_swagger_docs_available(app_and_client):
                  "/opportunities", "/opportunities/top", "/opportunities/generate",
                  "/opportunities/{opportunity_id}/build-design-package",
                  "/opportunities/{opportunity_id}/design-package",
+                 "/expansion/catalogue", "/expansion/plan/{campaign_id}",
+                 "/expansion/performance",
                  "/publish/{campaign_id}", "/publishing/status",
                  "/analytics", "/analytics/product/{product_id}",
                  "/analytics/campaign/{campaign_id}",

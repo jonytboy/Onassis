@@ -144,6 +144,14 @@ def _parse_args() -> argparse.Namespace:
         help="Turn one CEO-approved opportunity into a print-ready design package.",
     )
     parser.add_argument(
+        "--catalogue", action="store_true",
+        help="Show the Phase-1 product catalogue (Revenue Expansion).",
+    )
+    parser.add_argument(
+        "--expansion", type=int, metavar="CAMPAIGN_ID",
+        help="Score the catalogue for a design and launch the profitable set (CEO).",
+    )
+    parser.add_argument(
         "--build-listing", type=int, metavar="CAMPAIGN_ID",
         help="Build & export an upload-ready Etsy listing package for a campaign.",
     )
@@ -504,6 +512,36 @@ def main() -> int:
             print(f"           {o['product_type']} · {o['theme']} · "
                   f"demand {o['estimated_demand']} / competition "
                   f"{o['estimated_competition']} / conf {o['confidence']}")
+        print()
+        return 0
+
+    if args.catalogue:
+        from onassis.expansion import RevenueExpansionEngine
+
+        cat = RevenueExpansionEngine(config, db).catalogue()
+        print(f"\nPRODUCT CATALOGUE (Phase 1) — {len(cat)} product(s)\n")
+        for p in cat:
+            print(f"  {p['name']:22} cost {p['production_cost']:6.2f}  "
+                  f"retail {p['retail_price']:6.2f}  ({p['gelato_uid']})")
+        print()
+        return 0
+
+    if args.expansion is not None:
+        from onassis.expansion import RevenueExpansionEngine
+
+        eng = RevenueExpansionEngine(config, db)
+        eng.learn_from_sales()
+        plan = eng.plan(args.expansion)
+        print(f"\nEXPANSION PLAN — campaign #{plan['campaign_id']} "
+              f"(threshold {plan['threshold']:.0f}/100)\n")
+        print(f"  Launched {plan['products_launched']} of {plan['products_scored']} "
+              f"product(s):\n")
+        for s in plan["scored"]:
+            flag = "LAUNCH" if s["launched"] else "  -   "
+            print(f"  [{flag}] {s['product_name']:22} {s['composite_score']:5.1f}/100  "
+                  f"(profit {s['expected_profit']:.2f})")
+        if plan["skipped_unavailable"]:
+            print(f"\n  Skipped (unavailable): {', '.join(plan['skipped_unavailable'])}")
         print()
         return 0
 

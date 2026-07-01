@@ -24,7 +24,7 @@ _EXPECTED_STAGES = [
     "Sync Etsy", "Sync Pinterest", "Import Revenue", "Import Analytics",
     "Run Product Optimiser", "CEO Decision",
     "Create Product Opportunity", "Build Design Package",
-    "Create Product Campaign", "Build Etsy Listing Package",
+    "Create Product Campaign", "Expand Products", "Build Etsy Listing Package",
     "Generate Marketing Content", "Publish Draft", "Record Results",
 ]
 
@@ -61,8 +61,9 @@ def test_dry_run_executes_all_stages_without_side_effects(config, db):
     # Product creation, marketing, and publishing are skipped in dry run.
     by_stage = {s["stage"]: s for s in summary["stages"]}
     for stage in ("Create Product Opportunity", "Build Design Package",
-                  "Create Product Campaign", "Build Etsy Listing Package",
-                  "Generate Marketing Content", "Publish Draft"):
+                  "Create Product Campaign", "Expand Products",
+                  "Build Etsy Listing Package", "Generate Marketing Content",
+                  "Publish Draft"):
         assert by_stage[stage]["status"] == "skipped"
     # The run is recorded and retrievable.
     assert db.get_latest_daily_run()["mode"] == "dry_run"
@@ -144,6 +145,8 @@ def test_production_runs_full_pipeline_and_publishes(production_cycle, db):
     assert by_stage["Create Product Opportunity"]["status"] == "ok"
     assert by_stage["Build Design Package"]["status"] == "ok"
     assert by_stage["Create Product Campaign"]["status"] == "ok"
+    assert by_stage["Expand Products"]["status"] == "ok"
+    assert by_stage["Expand Products"]["detail"]["products_launched"] >= 1
     assert by_stage["Build Etsy Listing Package"]["status"] == "ok"
     assert by_stage["Generate Marketing Content"]["status"] == "ok"
     assert by_stage["Publish Draft"]["status"] == "ok"

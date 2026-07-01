@@ -164,7 +164,8 @@ CREATE TABLE IF NOT EXISTS products (
     brand           TEXT,
     marketplace     TEXT,
     production_cost REAL    NOT NULL DEFAULT 0,
-    active          INTEGER NOT NULL DEFAULT 1
+    active          INTEGER NOT NULL DEFAULT 1,
+    product_key     TEXT
 );
 
 CREATE TABLE IF NOT EXISTS orders (
@@ -350,6 +351,38 @@ CREATE TABLE IF NOT EXISTS opportunities (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_opportunities_dedupe ON opportunities(dedupe_key);
 CREATE INDEX IF NOT EXISTS idx_opportunities_rank ON opportunities(status, expected_value);
+
+CREATE TABLE IF NOT EXISTS product_scores (
+    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at             TEXT    NOT NULL,
+    campaign_id            INTEGER,
+    opportunity_id         TEXT,
+    product_key            TEXT    NOT NULL,
+    product_name           TEXT,
+    brand_fit              REAL    NOT NULL DEFAULT 0,   -- 0-100
+    commercial_suitability REAL    NOT NULL DEFAULT 0,   -- 0-100
+    estimated_conversion   REAL    NOT NULL DEFAULT 0,   -- 0-100 (score of the rate)
+    expected_profit        REAL    NOT NULL DEFAULT 0,   -- per-unit net profit
+    production_cost        REAL    NOT NULL DEFAULT 0,
+    retail_price           REAL    NOT NULL DEFAULT 0,
+    historical_performance REAL    NOT NULL DEFAULT 0,   -- 0-100
+    composite_score        REAL    NOT NULL DEFAULT 0,   -- 0-100
+    ceo_verdict            TEXT,
+    launched               INTEGER NOT NULL DEFAULT 0,
+    reasoning              TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_product_scores_campaign ON product_scores(campaign_id);
+
+-- Learned performance per product type (updated from real sales history).
+CREATE TABLE IF NOT EXISTS product_performance (
+    product_key   TEXT    PRIMARY KEY,
+    units_sold    INTEGER NOT NULL DEFAULT 0,
+    orders        INTEGER NOT NULL DEFAULT 0,
+    gross_revenue REAL    NOT NULL DEFAULT 0,
+    net_profit    REAL    NOT NULL DEFAULT 0,
+    updated_at    TEXT    NOT NULL
+);
 """
 
 
@@ -385,6 +418,13 @@ class Database:
     def _init_schema(self) -> None:
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+            # Idempotent additive column migrations (CREATE TABLE IF NOT EXISTS
+            # can't add columns to a pre-existing table).
+            for table, column, decl in (("products", "product_key", "TEXT"),):
+                try:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+                except sqlite3.OperationalError:
+                    pass  # column already present
 
     # --- Briefs -----------------------------------------------------
 
@@ -907,8 +947,8 @@ class Database:
                 """
                 INSERT INTO products
                     (created_at, sku, name, campaign_id, brand, marketplace,
-                     production_cost, active)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     production_cost, active, product_key)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     _utcnow(),
@@ -919,6 +959,7 @@ class Database:
                     product.get("marketplace"),
                     float(product.get("production_cost", 0) or 0),
                     1 if product.get("active", True) else 0,
+                    product.get("product_key"),
                 ),
             )
             return int(cur.lastrowid)
@@ -1550,6 +1591,89 @@ class Database:
                 (*sets.values(), opportunity_id),
             )
             return cur.rowcount > 0
+
+    # --- Product scores + performance (Revenue Expansion) -----------
+
+    def insert_product_score(self, score: dict[str, Any]) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO product_scores
+                    (created_at, campaign_id, opportunity_id, product_key, product_name,
+                     brand_fit, commercial_suitability, estimated_conversion,
+                     expected_profit, production_cost, retail_price,
+                     historical_performance, composite_score, ceo_verdict, launched, reasoning)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utcnow(),
+                    score.get("campaign_id"),
+                    score.get("opportunity_id"),
+                    score["product_key"],
+                    score.get("product_name"),
+                    float(score.get("brand_fit", 0) or 0),
+                    float(score.get("commercial_suitability", 0) or 0),
+                    float(score.get("estimated_conversion", 0) or 0),
+                    float(score.get("expected_profit", 0) or 0),
+                    float(score.get("production_cost", 0) or 0),
+                    float(score.get("retail_price", 0) or 0),
+                    float(score.get("historical_performance", 0) or 0),
+                    float(score.get("composite_score", 0) or 0),
+                    score.get("ceo_verdict"),
+                    1 if score.get("launched") else 0,
+                    score.get("reasoning"),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_product_scores(self, campaign_id: int | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM product_scores"
+        params: list[Any] = []
+        if campaign_id is not None:
+            sql += " WHERE campaign_id = ?"
+            params.append(campaign_id)
+        sql += " ORDER BY composite_score DESC, id DESC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def upsert_product_performance(self, perf: dict[str, Any]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO product_performance
+                    (product_key, units_sold, orders, gross_revenue, net_profit, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(product_key) DO UPDATE SET
+                    units_sold = excluded.units_sold,
+                    orders = excluded.orders,
+                    gross_revenue = excluded.gross_revenue,
+                    net_profit = excluded.net_profit,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    perf["product_key"],
+                    int(perf.get("units_sold", 0)),
+                    int(perf.get("orders", 0)),
+                    float(perf.get("gross_revenue", 0) or 0),
+                    float(perf.get("net_profit", 0) or 0),
+                    _utcnow(),
+                ),
+            )
+
+    def get_product_performance(self, product_key: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM product_performance WHERE product_key = ?", (product_key,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_product_performance(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM product_performance ORDER BY net_profit DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]
 
 
 def _row_to_brief(row: sqlite3.Row) -> dict[str, Any]:
