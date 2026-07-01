@@ -98,6 +98,33 @@ def test_real_client_requires_credentials():
         EtsyClient(api_key=None, access_token=None, shop_id=None)
 
 
+def test_create_draft_exposes_etsy_validation_body(monkeypatch):
+    """On a 4xx, the publisher's draft client surfaces Etsy's full response
+    body (field-level validation errors), not just the bare status line."""
+    from onassis.connectors import etsy_client as ec
+
+    class _Resp:
+        status_code = 400
+        text = "raw text"
+
+        def json(self):
+            return {
+                "error": "Required field 'taxonomy_id' is missing",
+                "error_description": "taxonomy_id must be a valid Etsy taxonomy id",
+            }
+
+    monkeypatch.setattr(ec.httpx, "post", lambda *a, **k: _Resp())
+    client = ec.EtsyDraftClient(api_key="k", shop_id="9", access_token="t")
+
+    with pytest.raises(ec.EtsyApiError) as excinfo:
+        client.create_draft({"title": "T", "description": "D"})
+
+    msg = str(excinfo.value)
+    assert "400" in msg
+    assert "taxonomy_id" in msg  # the real field-level error is exposed
+    assert "must be a valid Etsy taxonomy id" in msg
+
+
 # --- Order import + mapping -----------------------------------------
 
 def test_sync_imports_and_maps_order(connector, db):

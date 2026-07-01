@@ -10,6 +10,7 @@ surface, so tests inject a stub and never touch the network.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Callable
 
 import httpx
@@ -21,6 +22,18 @@ log = get_logger(__name__)
 
 class EtsyConfigError(RuntimeError):
     """Raised when Etsy credentials are missing."""
+
+
+class EtsyApiError(RuntimeError):
+    """Raised on an Etsy 4xx/5xx — carries Etsy's full response body."""
+
+
+def _response_detail(resp: httpx.Response) -> str:
+    """Etsy's full response body — pretty JSON when parseable, else raw text."""
+    try:
+        return json.dumps(resp.json(), indent=2, ensure_ascii=False)
+    except (ValueError, json.JSONDecodeError):
+        return resp.text or "<empty response body>"
 
 
 def api_key_header(keystring: str | None, shared_secret: str | None = None) -> str | None:
@@ -161,5 +174,14 @@ class EtsyDraftClient(EtsyClient):
         }
         url = f"{self.base_url}/shops/{self.resolve_shop_id()}/listings"
         resp = httpx.post(url, headers=self._headers(), data=body, timeout=self.timeout)
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            # Surface Etsy's actual validation message (field-level errors),
+            # not just the bare status line, so the real issue is visible.
+            detail = _response_detail(resp)
+            log.error(
+                "Etsy createDraftListing failed: HTTP %s\n%s", resp.status_code, detail
+            )
+            raise EtsyApiError(
+                f"Etsy createDraftListing returned HTTP {resp.status_code}: {detail}"
+            )
         return resp.json()
