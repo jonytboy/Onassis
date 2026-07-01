@@ -166,7 +166,13 @@ class EtsyDraftClient(EtsyClient):
             "who_made": listing.get("who_made", "i_did"),
             "when_made": listing.get("when_made", "made_to_order"),
             "taxonomy_id": listing.get("taxonomy_id"),
-            "shipping_profile_id": listing.get("shipping_profile_id"),
+            # Etsy requires shipping_profile_id as an int; config/env may supply
+            # it as a string, so coerce it here before sending.
+            "shipping_profile_id": (
+                int(listing["shipping_profile_id"])
+                if listing.get("shipping_profile_id") not in (None, "")
+                else listing.get("shipping_profile_id")
+            ),
             "tags": listing.get("tags", []),
             "materials": listing.get("materials", []),
             "type": "physical",

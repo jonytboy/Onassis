@@ -125,6 +125,33 @@ def test_create_draft_exposes_etsy_validation_body(monkeypatch):
     assert "must be a valid Etsy taxonomy id" in msg
 
 
+def test_create_draft_sends_shipping_profile_id_as_int(monkeypatch):
+    """Etsy requires shipping_profile_id as an int, even if config supplies a
+    string — the draft client must coerce it before sending."""
+    from onassis.connectors import etsy_client as ec
+
+    captured = {}
+
+    class _Resp:
+        status_code = 201
+
+        def json(self):
+            return {"listing_id": 4242}
+
+    def _fake_post(url, headers=None, data=None, timeout=None):
+        captured["data"] = data
+        return _Resp()
+
+    monkeypatch.setattr(ec.httpx, "post", _fake_post)
+    client = ec.EtsyDraftClient(api_key="k", shop_id="9", access_token="t")
+    client.create_draft({
+        "title": "T", "description": "D", "shipping_profile_id": "123456",
+    })
+
+    assert captured["data"]["shipping_profile_id"] == 123456
+    assert isinstance(captured["data"]["shipping_profile_id"], int)
+
+
 # --- Order import + mapping -----------------------------------------
 
 def test_sync_imports_and_maps_order(connector, db):
