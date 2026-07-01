@@ -126,8 +126,9 @@ def test_create_draft_exposes_etsy_validation_body(monkeypatch):
 
 
 def test_create_draft_sends_shipping_profile_id_as_int(monkeypatch):
-    """Etsy requires shipping_profile_id as an int, even if config supplies a
-    string — the draft client must coerce it before sending."""
+    """Etsy requires shipping_profile_id as an int. Config may supply a string,
+    so the draft client must coerce it AND send JSON so the int type survives on
+    the wire (form-urlencoded would stringify it)."""
     from onassis.connectors import etsy_client as ec
 
     captured = {}
@@ -138,8 +139,8 @@ def test_create_draft_sends_shipping_profile_id_as_int(monkeypatch):
         def json(self):
             return {"listing_id": 4242}
 
-    def _fake_post(url, headers=None, data=None, timeout=None):
-        captured["data"] = data
+    def _fake_post(url, headers=None, json=None, timeout=None, **_):
+        captured["json"] = json
         return _Resp()
 
     monkeypatch.setattr(ec.httpx, "post", _fake_post)
@@ -148,8 +149,9 @@ def test_create_draft_sends_shipping_profile_id_as_int(monkeypatch):
         "title": "T", "description": "D", "shipping_profile_id": "123456",
     })
 
-    assert captured["data"]["shipping_profile_id"] == 123456
-    assert isinstance(captured["data"]["shipping_profile_id"], int)
+    # Sent as JSON with shipping_profile_id as an actual int (not "123456").
+    assert captured["json"]["shipping_profile_id"] == 123456
+    assert isinstance(captured["json"]["shipping_profile_id"], int)
 
 
 # --- Order import + mapping -----------------------------------------

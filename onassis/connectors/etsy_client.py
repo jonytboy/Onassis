@@ -179,7 +179,9 @@ class EtsyDraftClient(EtsyClient):
             "state": "draft",  # NEVER publish live from here
         }
         url = f"{self.base_url}/shops/{self.resolve_shop_id()}/listings"
-        resp = httpx.post(url, headers=self._headers(), data=body, timeout=self.timeout)
+        # Send JSON so integer fields keep their type — form-urlencoded stringifies
+        # every value, which makes Etsy reject shipping_profile_id as a string.
+        resp = httpx.post(url, headers=self._headers(), json=body, timeout=self.timeout)
         if resp.status_code >= 400:
             # Surface Etsy's actual validation message (field-level errors),
             # not just the bare status line, so the real issue is visible.
