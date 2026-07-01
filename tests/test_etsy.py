@@ -215,6 +215,38 @@ def test_create_draft_auto_resolves_shipping_profile_when_unset(monkeypatch):
 
 # --- readiness_state_id (required for physical listings) -------------
 
+def test_create_draft_sanitises_materials_invalid_characters(monkeypatch):
+    """Etsy rejects materials with anything but letters/numbers/whitespace
+    (invalid_characters). The client sanitises the field (without removing it)."""
+    from onassis.connectors import etsy_client as ec
+
+    captured = {}
+
+    class _Resp:
+        status_code = 201
+
+        def json(self):
+            return {"listing_id": 4242}
+
+    def _fake_post(url, headers=None, json=None, timeout=None, **_):
+        captured["json"] = json
+        return _Resp()
+
+    monkeypatch.setattr(ec.httpx, "post", _fake_post)
+    client = ec.EtsyDraftClient(api_key="k", shop_id="9", access_token="t")
+    client.create_draft({
+        "title": "T", "description": "D",
+        "shipping_profile_id": "1", "readiness_state_id": "2",
+        # The exact kind of LLM-generated values Etsy rejects.
+        "materials": ["100% organic cotton", "hand-dyed linen", "brass & wood", "!!!"],
+    })
+
+    # Disallowed chars -> space, whitespace collapsed, empties dropped; field kept.
+    assert captured["json"]["materials"] == [
+        "100 organic cotton", "hand dyed linen", "brass wood",
+    ]
+
+
 def test_resolve_readiness_state_id_uses_first_active():
     """readiness_state_id is a shop-specific id resolved from the shop, like the
     shipping profile: first active definition, then cached."""

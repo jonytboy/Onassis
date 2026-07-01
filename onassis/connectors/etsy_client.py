@@ -36,6 +36,25 @@ def _response_detail(resp: httpx.Response) -> str:
         return resp.text or "<empty response body>"
 
 
+def _sanitise_materials(materials: Any) -> list[str]:
+    """Conform materials to Etsy's rule: letters, numbers, and whitespace only.
+
+    Etsy rejects any other character (regex ``/[^\\p{L}\\p{Nd}\\p{Zs}]/u``) with
+    ``invalid_characters``. Disallowed characters (e.g. ``%``, ``-``, ``&``,
+    ``'``) are replaced with a space; whitespace is collapsed and empties dropped.
+    """
+    out: list[str] = []
+    for material in materials or []:
+        kept = [
+            ch if (ch.isalpha() or ch.isdecimal() or ch.isspace()) else " "
+            for ch in str(material)
+        ]
+        cleaned = " ".join("".join(kept).split())
+        if cleaned:
+            out.append(cleaned)
+    return out
+
+
 def api_key_header(keystring: str | None, shared_secret: str | None = None) -> str | None:
     """The value for Etsy's ``x-api-key`` header.
 
@@ -243,7 +262,8 @@ class EtsyDraftClient(EtsyClient):
             "shipping_profile_id": shipping_profile_id,
             "readiness_state_id": readiness_state_id,
             "tags": listing.get("tags", []),
-            "materials": listing.get("materials", []),
+            # Etsy allows only letters/numbers/whitespace in materials.
+            "materials": _sanitise_materials(listing.get("materials")),
             "type": "physical",
             "state": "draft",  # NEVER publish live from here
         }
