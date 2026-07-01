@@ -117,7 +117,8 @@ def test_create_draft_exposes_etsy_validation_body(monkeypatch):
     client = ec.EtsyDraftClient(api_key="k", shop_id="9", access_token="t")
 
     with pytest.raises(ec.EtsyApiError) as excinfo:
-        client.create_draft({"title": "T", "description": "D"})
+        client.create_draft({"title": "T", "description": "D",
+                             "shipping_profile_id": "123456"})
 
     msg = str(excinfo.value)
     assert "400" in msg
@@ -151,6 +152,60 @@ def test_create_draft_sends_shipping_profile_id_as_int(monkeypatch):
 
     # Sent as JSON with shipping_profile_id as an actual int (not "123456").
     assert captured["json"]["shipping_profile_id"] == 123456
+    assert isinstance(captured["json"]["shipping_profile_id"], int)
+
+
+def test_resolve_shipping_profile_id_uses_first_active():
+    """Mirrors shop-id resolution: pick the first active profile, then cache it."""
+    from onassis.connectors import etsy_client as ec
+
+    client = ec.EtsyClient(api_key="k", shop_id="9", access_token="t")
+    client.get_shipping_profiles = lambda: [
+        {"shipping_profile_id": 111, "title": "Old", "is_deleted": True},
+        {"shipping_profile_id": 222, "title": "Standard", "is_deleted": False},
+        {"shipping_profile_id": 333, "title": "Express", "is_deleted": False},
+    ]
+    assert client.resolve_shipping_profile_id() == 222
+    # Cached — not re-fetched.
+    client.get_shipping_profiles = lambda: []
+    assert client.resolve_shipping_profile_id() == 222
+
+
+def test_resolve_shipping_profile_id_raises_when_none_exist():
+    from onassis.connectors import etsy_client as ec
+
+    client = ec.EtsyClient(api_key="k", shop_id="9", access_token="t")
+    client.get_shipping_profiles = lambda: []
+    with pytest.raises(ec.EtsyApiError):
+        client.resolve_shipping_profile_id()
+
+
+def test_create_draft_auto_resolves_shipping_profile_when_unset(monkeypatch):
+    """When no shipping_profile_id is configured, create_draft fetches the shop's
+    profiles and sends the resolved id (as an int) — like shop-id resolution."""
+    from onassis.connectors import etsy_client as ec
+
+    captured = {}
+
+    class _Resp:
+        status_code = 201
+
+        def json(self):
+            return {"listing_id": 4242}
+
+    def _fake_post(url, headers=None, json=None, timeout=None, **_):
+        captured["json"] = json
+        return _Resp()
+
+    monkeypatch.setattr(ec.httpx, "post", _fake_post)
+    client = ec.EtsyDraftClient(api_key="k", shop_id="9", access_token="t")
+    client.get_shipping_profiles = lambda: [
+        {"shipping_profile_id": 555, "title": "Standard", "is_deleted": False},
+    ]
+    # No shipping_profile_id in the listing package.
+    client.create_draft({"title": "T", "description": "D"})
+
+    assert captured["json"]["shipping_profile_id"] == 555
     assert isinstance(captured["json"]["shipping_profile_id"], int)
 
 

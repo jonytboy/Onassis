@@ -82,6 +82,7 @@ class EtsyClient:
         self.shop_id = str(shop_id) if shop_id else None
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self._shipping_profile_id: int | None = None  # resolved lazily from the shop
 
     def _bearer(self) -> str:
         # A token provider (OAuth) wins — it refreshes automatically.
@@ -147,6 +148,32 @@ class EtsyClient:
         """Read-only shop record (GET /shops/{shop_id})."""
         return self._get(f"/shops/{self.resolve_shop_id()}")
 
+    def get_shipping_profiles(self) -> list[dict[str, Any]]:
+        """The shop's shipping profiles (GET /shops/{shop_id}/shipping-profiles)."""
+        resp = self._get(f"/shops/{self.resolve_shop_id()}/shipping-profiles")
+        return resp.get("results", []) or []
+
+    def resolve_shipping_profile_id(self) -> int:
+        """Return a shipping profile id, resolved from the shop if unset.
+
+        Mirrors :meth:`resolve_shop_id`: when no shipping profile is configured
+        it fetches the authenticated shop's profiles and uses the first active
+        one (falling back to the first profile), caching the result. Keeps the
+        app portable across shops — no shop-specific id is hardcoded.
+        """
+        if self._shipping_profile_id is None:
+            profiles = self.get_shipping_profiles()
+            active = [p for p in profiles if not p.get("is_deleted")]
+            chosen = (active or profiles)
+            if not chosen:
+                raise EtsyApiError(
+                    "No Etsy shipping profile found for this shop. Create one "
+                    "(Shop Manager → Settings → Shipping settings) or set "
+                    "listing.shipping_profile_id."
+                )
+            self._shipping_profile_id = int(chosen[0]["shipping_profile_id"])
+        return self._shipping_profile_id
+
 
 class EtsyDraftClient(EtsyClient):
     """Write client that creates Etsy listings as **drafts** only.
@@ -158,6 +185,14 @@ class EtsyDraftClient(EtsyClient):
 
     def create_draft(self, listing: dict[str, Any]) -> dict[str, Any]:
         """Create a draft listing on Etsy and return ``{listing_id, ...}``."""
+        # Etsy requires shipping_profile_id as an int for physical listings. Use
+        # the configured value (coerced to int); when none is configured, resolve
+        # it automatically from the shop's shipping profiles.
+        configured = listing.get("shipping_profile_id")
+        shipping_profile_id = (
+            int(configured) if configured not in (None, "")
+            else self.resolve_shipping_profile_id()
+        )
         body = {
             "quantity": listing.get("quantity", 1),
             "title": listing["title"],
@@ -166,13 +201,7 @@ class EtsyDraftClient(EtsyClient):
             "who_made": listing.get("who_made", "i_did"),
             "when_made": listing.get("when_made", "made_to_order"),
             "taxonomy_id": listing.get("taxonomy_id"),
-            # Etsy requires shipping_profile_id as an int; config/env may supply
-            # it as a string, so coerce it here before sending.
-            "shipping_profile_id": (
-                int(listing["shipping_profile_id"])
-                if listing.get("shipping_profile_id") not in (None, "")
-                else listing.get("shipping_profile_id")
-            ),
+            "shipping_profile_id": shipping_profile_id,
             "tags": listing.get("tags", []),
             "materials": listing.get("materials", []),
             "type": "physical",
