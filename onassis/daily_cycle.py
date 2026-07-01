@@ -258,16 +258,17 @@ class DailyCycle:
             "launched": [s["product_key"] for s in plan["launched"]]}}
 
     def _build_listing(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """Build one Etsy listing package per CEO-approved product."""
         if ctx["dry"]:
             return {"status": "skipped", "detail": "dry run"}
         cid = ctx.get("campaign_id")
         if not cid or not ctx.get("campaign_approved"):
             return {"status": "skipped", "detail": "no approved campaign"}
-        pkg = self.listing_factory.export(cid)
+        pkg = self.listing_factory.export_products(cid)
         if pkg.get("status") != "ready":
             return {"status": "blocked", "detail": pkg.get("reason")}
         ctx["listing_ready"] = True
-        return {"status": "ok", "detail": {"path": pkg["path"]}}
+        return {"status": "ok", "detail": {"products_built": pkg["count"]}}
 
     def _generate_content(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """Generate marketing content LAST — only to promote the new product."""
@@ -281,16 +282,24 @@ class DailyCycle:
         return {"status": "ok", "detail": {"items": len(content["items"])}}
 
     def _publish(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """Publish each CEO-approved product's listing as an Etsy draft."""
         if ctx["dry"]:
             return {"status": "skipped", "detail": "dry run"}
         cid = ctx.get("campaign_id")
         if not cid:
             return {"status": "skipped", "detail": "no campaign to publish"}
-        result = self.publisher.publish(cid, mode="draft")
-        st = result["status"]
-        mapped = "ok" if st in ("draft", "dry_run") else (
-            "failed" if st == "failed" else "skipped")
-        return {"status": mapped, "detail": result}
+        result = self.publisher.publish_products(cid, mode="draft")
+        if result.get("status") == "blocked":
+            return {"status": "skipped", "detail": result.get("reason")}
+        statuses = [r["status"] for r in result.get("results", [])]
+        if any(s in ("draft", "dry_run") for s in statuses):
+            mapped = "ok"
+        elif any(s == "failed" for s in statuses):
+            mapped = "failed"
+        else:
+            mapped = "skipped"
+        return {"status": mapped, "detail": {
+            "published": result.get("published", 0), "results": result.get("results", [])}}
 
     # --- Reads ------------------------------------------------------
 

@@ -629,6 +629,7 @@ def test_swagger_docs_available(app_and_client):
                  "/etsy/orders", "/etsy/listings", "/etsy/stats", "/etsy/sync",
                  "/etsy/oauth/login", "/etsy/oauth/callback", "/etsy/oauth/status",
                  "/optimiser", "/listing/{campaign_id}",
+                 "/listing/{campaign_id}/products", "/publish/{campaign_id}/products",
                  "/opportunities", "/opportunities/top", "/opportunities/generate",
                  "/opportunities/{opportunity_id}/build-design-package",
                  "/opportunities/{opportunity_id}/design-package",

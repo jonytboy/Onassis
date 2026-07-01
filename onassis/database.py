@@ -1226,19 +1226,20 @@ class Database:
         return pub_id
 
     def get_active_publication(
-        self, campaign_id: int, platform: str = "etsy"
+        self, campaign_id: int, platform: str = "etsy", product_id: str | None = None
     ) -> dict[str, Any] | None:
         """The latest non-failed real publication (draft/published) — for
-        duplicate prevention."""
+        duplicate prevention. When ``product_id`` is given, dedup is per-product
+        (so a design can publish one listing per approved product)."""
+        sql = ("SELECT * FROM publications WHERE campaign_id = ? AND platform = ? "
+               "AND status IN ('draft', 'published')")
+        params: list[Any] = [campaign_id, platform]
+        if product_id is not None:
+            sql += " AND product_id = ?"
+            params.append(product_id)
+        sql += " ORDER BY id DESC LIMIT 1"
         with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT * FROM publications
-                WHERE campaign_id = ? AND platform = ? AND status IN ('draft', 'published')
-                ORDER BY id DESC LIMIT 1
-                """,
-                (campaign_id, platform),
-            ).fetchone()
+            row = conn.execute(sql, params).fetchone()
         return dict(row) if row else None
 
     def list_publications(self) -> list[dict[str, Any]]:

@@ -270,10 +270,26 @@ def create_app(config: Config | None = None) -> FastAPI:
             raise HTTPException(status_code=409, detail=package)
         return package
 
+    @app.get("/listing/{campaign_id}/products", tags=["listing"])
+    def listing_products(campaign_id: int) -> dict[str, Any]:
+        """Build one listing package per CEO-approved product for a design."""
+        try:
+            result = listing_factory.export_products(campaign_id)
+        except ListingError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        if result.get("status") != "ready":
+            raise HTTPException(status_code=409, detail=result)
+        return result
+
     @app.post("/publish/{campaign_id}", tags=["publishing"])
     def publish(campaign_id: int, mode: str | None = None) -> dict[str, Any]:
         """Publish a campaign's listing package (Draft mode) — never duplicates."""
         return publisher.publish(campaign_id, mode=mode)
+
+    @app.post("/publish/{campaign_id}/products", tags=["publishing"])
+    def publish_products(campaign_id: int, mode: str | None = None) -> dict[str, Any]:
+        """Publish each CEO-approved product's listing as an Etsy draft."""
+        return publisher.publish_products(campaign_id, mode=mode)
 
     @app.get("/publishing/status", tags=["publishing"])
     def publishing_status() -> dict[str, Any]:

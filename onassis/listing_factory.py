@@ -160,16 +160,74 @@ class ListingFactory:
         log.info("Listing package ready for campaign #%s at %s", campaign_id, package["path"])
         return package
 
+    def export_products(self, campaign_id: int) -> dict[str, Any]:
+        """Build one listing package per **CEO-approved** product for a design.
+
+        Iterates only the products the Revenue Expansion Engine launched (never
+        the rejected ones), adapting the artwork, title, attributes and pricing
+        to each product. Writes each to ``exports/<campaign_id>/<product_key>/``.
+        """
+        campaign = self.db.get_campaign(campaign_id)
+        if campaign is None:
+            raise ListingError(f"No campaign with id {campaign_id}")
+
+        approval = self.db.get_compliance_for_campaign(campaign_id)
+        if not approval or approval.get("verdict") != APPROVE:
+            return {"status": "blocked", "campaign_id": campaign_id,
+                    "reason": "Campaign is not compliance-approved; cannot prepare listings."}
+
+        launched = [s for s in self.db.list_product_scores(campaign_id) if s.get("launched")]
+        if not launched:
+            return {"status": "blocked", "campaign_id": campaign_id,
+                    "reason": "No CEO-approved products for this design."}
+
+        packages: list[dict[str, Any]] = []
+        for spec in launched:
+            listing = self._build_listing(campaign, product=spec)
+            review = self._review_listing(listing, campaign_id)
+            if review["verdict"] != APPROVE:
+                packages.append({"product_key": spec["product_key"], "status": "blocked",
+                                 "reason": "Generated listing failed compliance review."})
+                continue
+            pkg = self._write_package(campaign_id, listing, review, subdir=spec["product_key"])
+            packages.append({"product_key": spec["product_key"], **pkg})
+
+        ready = [p for p in packages if p.get("status") == "ready"]
+        log.info("Built %d/%d approved product listing(s) for campaign #%s",
+                 len(ready), len(launched), campaign_id)
+        return {
+            "status": "ready" if ready else "blocked",
+            "campaign_id": campaign_id,
+            "count": len(ready),
+            "products": packages,
+        }
+
     # --- Build ------------------------------------------------------
 
-    def _build_listing(self, campaign: dict[str, Any]) -> dict[str, Any]:
+    def _build_listing(
+        self, campaign: dict[str, Any], product: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         brief = self.db.get_brief(campaign.get("brief_id")) or {}
-        products = self.db.get_products_for_campaign(campaign["id"])
-        product = products[0] if products else None
-        product_id = product["sku"] if product else str(campaign["id"])
+
+        if product is not None:  # a launched product from the Expansion Engine
+            product_key = product["product_key"]
+            product_name = product.get("product_name") or product_key
+            product_id = f"{campaign['id']}-{product_key}"
+            production_cost = product.get("production_cost")
+            retail_price = product.get("retail_price")
+        else:  # single-listing (legacy) path
+            products = self.db.get_products_for_campaign(campaign["id"])
+            p0 = products[0] if products else None
+            product_key = None
+            product_name = None
+            product_id = p0["sku"] if p0 else str(campaign["id"])
+            production_cost = p0["production_cost"] if p0 else None
+            retail_price = None
 
         gen = self.llm.generate_json(
-            system=_SYSTEM, prompt=self._prompt(campaign, brief), schema=_SCHEMA
+            system=_SYSTEM,
+            prompt=self._prompt(campaign, brief, product_name, retail_price),
+            schema=_SCHEMA,
         )
 
         # Normalise to exact, upload-ready shapes.
@@ -178,15 +236,16 @@ class ListingFactory:
             gen["image_alt_texts"], len(self.mockups),
             [f"{campaign['name']} {m}" for m in self.mockups], "image",
         )
-        pricing = self._pricing(product)
+        pricing = self._pricing(production_cost, retail_price)
 
+        prefix = f"{campaign['id']}_{product_key}" if product_key else str(campaign["id"])
         images = []
         for i, mockup in enumerate(self.mockups):
             images.append(
                 {
                     "order": i + 1,
                     "mockup_type": mockup,
-                    "filename": f"{campaign['id']}_{mockup}.png",
+                    "filename": f"{prefix}_{mockup}.png",
                     "alt_text": alt_texts[i],
                     "source": "placeholder",  # replaced by the image generator later
                 }
@@ -197,6 +256,10 @@ class ListingFactory:
             "campaign_id": campaign["id"],
             "campaign_name": campaign.get("name", ""),
             "product_id": product_id,
+            "product_key": product_key,
+            "product_name": product_name,
+            # The design is the master asset; the same artwork is adapted per product.
+            "artwork_source": "design master asset",
             "generated_at": datetime.now(timezone.utc).isoformat(),
             # Etsy upload fields
             "state": "draft",
@@ -226,26 +289,49 @@ class ListingFactory:
             "file_manifest": ["listing.json", "manifest.json", *[f"images/{f}" for f in image_order]],
         }
 
-    def _pricing(self, product: dict[str, Any] | None) -> dict[str, Any]:
-        margin = float(self.cfg.get("target_margin", 0.60))
+    def _pricing(
+        self, production_cost: Any = None, retail_price: Any = None
+    ) -> dict[str, Any]:
         production_cost = float(
-            product["production_cost"] if product else self.cfg.get("default_production_cost", 12.0)
+            production_cost if production_cost not in (None, "")
+            else self.cfg.get("default_production_cost", 12.0)
         )
-        price = round(production_cost / (1 - margin), 2) if margin < 1 else production_cost
+        if retail_price not in (None, ""):  # catalogue retail from the Expansion Engine
+            price = round(float(retail_price), 2)
+            margin = round((price - production_cost) / price, 4) if price else 0.0
+            rationale = (
+                f"Catalogue retail {price:.2f} — a {margin:.0%} margin over a "
+                f"{production_cost:.2f} production cost."
+            )
+        else:
+            margin = float(self.cfg.get("target_margin", 0.60))
+            price = round(production_cost / (1 - margin), 2) if margin < 1 else production_cost
+            rationale = (
+                f"Priced for a {margin:.0%} margin over a {production_cost:.2f} "
+                f"production cost."
+            )
         return {
             "price": price,
             "currency": self.cfg.get("currency", "GBP"),
             "production_cost": round(production_cost, 2),
             "target_margin": margin,
-            "rationale": (
-                f"Priced for a {margin:.0%} margin over a {production_cost:.2f} "
-                f"production cost."
-            ),
+            "rationale": rationale,
         }
 
-    def _prompt(self, campaign: dict[str, Any], brief: dict[str, Any]) -> str:
+    def _prompt(
+        self, campaign: dict[str, Any], brief: dict[str, Any],
+        product_name: str | None = None, retail_price: Any = None,
+    ) -> str:
         keywords = ", ".join(brief.get("keywords", []))
         mockups = ", ".join(self.mockups)
+        product_line = ""
+        if product_name:
+            price_hint = f" priced around {float(retail_price):.2f}" if retail_price else ""
+            product_line = (
+                f"\n- PRODUCT TYPE: {product_name}{price_hint}. Write the title, "
+                f"description, tags, materials and attributes specifically for a "
+                f"{product_name} carrying this design.\n"
+            )
         return f"""Create a complete, upload-ready Etsy listing for this product.
 
 PRODUCT / CAMPAIGN
@@ -253,7 +339,7 @@ PRODUCT / CAMPAIGN
 - Theme: {campaign.get('theme', '')}
 - Story: {campaign.get('story', '')}
 - Visual direction: {brief.get('visual_direction', '')}
-- Keywords: {keywords}
+- Keywords: {keywords}{product_line}
 
 Produce:
 - `title`: <=140 chars, search-friendly, benefit-led, no ALL CAPS.
@@ -291,9 +377,12 @@ copyrighted characters, no third-party logos.
         return base if base.is_absolute() else (ROOT_DIR / base)
 
     def _write_package(
-        self, campaign_id: int, listing: dict[str, Any], review: dict[str, Any]
+        self, campaign_id: int, listing: dict[str, Any], review: dict[str, Any],
+        subdir: str | None = None,
     ) -> dict[str, Any]:
         folder = self._exports_base() / str(campaign_id)
+        if subdir:  # one sub-folder per product for the approved product set
+            folder = folder / subdir
         images_dir = folder / "images"
         images_dir.mkdir(parents=True, exist_ok=True)
 

@@ -148,9 +148,12 @@ def test_production_runs_full_pipeline_and_publishes(production_cycle, db):
     assert by_stage["Expand Products"]["status"] == "ok"
     assert by_stage["Expand Products"]["detail"]["products_launched"] >= 1
     assert by_stage["Build Etsy Listing Package"]["status"] == "ok"
+    # One listing package per approved product (the expansion launched >= 1).
+    assert by_stage["Build Etsy Listing Package"]["detail"]["products_built"] >= 1
     assert by_stage["Generate Marketing Content"]["status"] == "ok"
     assert by_stage["Publish Draft"]["status"] == "ok"
-    assert by_stage["Publish Draft"]["detail"]["status"] == "draft"
+    assert by_stage["Publish Draft"]["detail"]["published"] >= 1
+    assert all(r["status"] == "draft" for r in by_stage["Publish Draft"]["detail"]["results"])
     assert summary["status"] == "completed"
 
     # Marketing was generated only AFTER the product (listing) existed.

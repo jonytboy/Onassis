@@ -63,6 +63,52 @@ def publisher(config, db, tmp_path):
 
 # --- Draft publishing -----------------------------------------------
 
+def _write_product_package(tmp_path, cid, product_key):
+    folder = tmp_path / "exports" / str(cid) / product_key
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "listing.json").write_text(json.dumps({
+        "campaign_id": cid, "product_id": f"{cid}-{product_key}", "product_key": product_key,
+        "title": f"Design on {product_key}", "description": "Lovely.", "tags": ["a"],
+        "price": 22.0, "quantity": 50,
+    }))
+
+
+def _launch(db, cid, key, launched=1):
+    db.insert_product_score({"campaign_id": cid, "product_key": key, "product_name": key,
+                             "launched": launched, "composite_score": 85,
+                             "ceo_verdict": "APPROVE" if launched else "REJECT"})
+
+
+def test_publish_products_publishes_each_approved_product(publisher, db, tmp_path):
+    cid = _approved_campaign(db)
+    for key in ("ceramic_mug", "premium_poster"):
+        _launch(db, cid, key)
+        _write_product_package(tmp_path, cid, key)
+    _launch(db, cid, "hardcover_notebook", launched=0)  # rejected — never published
+
+    result = publisher.publish_products(cid, mode="draft")
+    assert result["status"] == "ok" and result["count"] == 2 and result["published"] == 2
+    assert all(r["status"] == "draft" for r in result["results"])
+    pubs = db.list_publications()
+    assert {p["product_id"] for p in pubs} == {f"{cid}-ceramic_mug", f"{cid}-premium_poster"}
+
+
+def test_publish_products_never_duplicates_per_product(publisher, db, tmp_path):
+    cid = _approved_campaign(db)
+    _launch(db, cid, "ceramic_mug")
+    _write_product_package(tmp_path, cid, "ceramic_mug")
+    publisher.publish_products(cid, mode="draft")
+    again = publisher.publish_products(cid, mode="draft")
+    assert again["results"][0]["status"] == "skipped"  # already published, not duplicated
+
+
+def test_publish_products_blocked_without_approved_set(publisher, db):
+    cid = _approved_campaign(db)
+    assert publisher.publish_products(cid, mode="draft")["status"] == "blocked"
+
+
+# --- Draft publishing -----------------------------------------------
+
 def test_publish_draft_success(publisher, db, tmp_path):
     cid = _approved_campaign(db)
     _write_package(tmp_path, cid)

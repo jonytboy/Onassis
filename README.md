@@ -119,11 +119,16 @@ Etsy *write* access is injected (`EtsyDraftClient`), so it runs live with write
 credentials and is fully tested offline. No advertising; products aren't
 modified after publication.
 
+**Per approved product:** `publish_products(campaign_id)` publishes **one draft
+per CEO-approved product** — iterating only the launched set and de-duplicating
+per product — so one design becomes the full set of live-ready Etsy drafts.
+
 ```bash
 python main.py --publish <campaign_id> --mode draft   # or --mode dry_run
 ```
-`POST /publish/{campaign_id}` publishes; `GET /publishing/status` returns the
-publication log summary.
+`POST /publish/{campaign_id}` publishes the single package;
+`POST /publish/{campaign_id}/products` publishes every approved product's draft;
+`GET /publishing/status` returns the publication log summary.
 
 ## Listing Factory — upload-ready Etsy packages (no publishing)
 
@@ -146,9 +151,16 @@ exports/<campaign_id>/
     images/          # one file per required mock-up
 ```
 
-`GET /listing/{campaign_id}` builds & exports the package (409 if not approved
-or compliance-blocked); CLI `--build-listing <id>`. (Mock-up images are
-placeholders pending a future image generator; the structure is upload-ready.)
+**Per approved product (Revenue Expansion):** `export_products(campaign_id)`
+builds **one listing package per CEO-approved product** — iterating only the
+products the Expansion Engine launched (never the rejected ones) — adapting the
+title, attributes and pricing (catalogue retail) to each, from the same master
+design artwork. Each is written to `exports/<campaign_id>/<product_key>/`.
+
+`GET /listing/{campaign_id}` builds the single package;
+`GET /listing/{campaign_id}/products` builds one per approved product. CLI
+`--build-listing <id>`. (Mock-up images are placeholders pending a future image
+generator; the structure is upload-ready.)
 
 ## Product Optimiser — improve earners before building new ones
 

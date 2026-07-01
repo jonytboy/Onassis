@@ -50,6 +50,43 @@ def _approved_campaign(db, *, verdict="APPROVE") -> int:
     return campaign_id
 
 
+def _launch(db, cid, key, name, launched, cost, retail):
+    db.insert_product_score({
+        "campaign_id": cid, "product_key": key, "product_name": name,
+        "launched": launched, "production_cost": cost, "retail_price": retail,
+        "composite_score": 85 if launched else 60,
+        "ceo_verdict": "APPROVE" if launched else "REJECT",
+    })
+
+
+# --- Multi-product export (the CEO-approved set only) ----------------
+
+def test_export_products_builds_one_package_per_approved_product(factory, db, tmp_path):
+    cid = _approved_campaign(db)
+    _launch(db, cid, "ceramic_mug", "Ceramic Mug", 1, 7.5, 22.0)
+    _launch(db, cid, "premium_poster", "Premium Poster", 1, 8.0, 28.0)
+    _launch(db, cid, "hardcover_notebook", "Hardcover Notebook", 0, 8.5, 24.0)  # rejected
+
+    result = factory.export_products(cid)
+    assert result["status"] == "ready" and result["count"] == 2
+    assert {p["product_key"] for p in result["products"]} == {"ceramic_mug", "premium_poster"}
+
+    base = tmp_path / "exports" / str(cid)
+    for key, retail in (("ceramic_mug", 22.0), ("premium_poster", 28.0)):
+        listing = json.loads((base / key / "listing.json").read_text())
+        assert listing["product_key"] == key
+        assert listing["product_id"] == f"{cid}-{key}"
+        assert listing["price"] == retail          # catalogue retail, per-product pricing
+        assert listing["artwork_source"] == "design master asset"
+    # The rejected product gets NO listing package.
+    assert not (base / "hardcover_notebook").exists()
+
+
+def test_export_products_blocked_without_an_approved_set(factory, db):
+    cid = _approved_campaign(db)  # nothing launched
+    assert factory.export_products(cid)["status"] == "blocked"
+
+
 # --- Gates ----------------------------------------------------------
 
 def test_missing_campaign_raises(factory):

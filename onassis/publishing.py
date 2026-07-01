@@ -67,8 +67,29 @@ class PublisherService:
 
     # --- Publish ----------------------------------------------------
 
-    def publish(self, campaign_id: int, mode: str | None = None) -> dict[str, Any]:
-        """Publish a campaign's listing package. Returns a result dict."""
+    def publish_products(self, campaign_id: int, mode: str | None = None) -> dict[str, Any]:
+        """Publish every **CEO-approved** product's listing as a draft.
+
+        Iterates only the products the Revenue Expansion Engine launched (never
+        the rejected ones) and publishes each package via :meth:`publish`.
+        """
+        launched = [s for s in self.db.list_product_scores(campaign_id) if s.get("launched")]
+        if not launched:
+            return {"status": "blocked", "campaign_id": campaign_id,
+                    "reason": "No CEO-approved products to publish."}
+        results = [
+            self.publish(campaign_id, mode=mode, product_key=s["product_key"])
+            for s in launched
+        ]
+        published = sum(1 for r in results if r["status"] in (DRAFT, DRY_RUN))
+        return {"status": "ok", "campaign_id": campaign_id,
+                "count": len(results), "published": published, "results": results}
+
+    def publish(
+        self, campaign_id: int, mode: str | None = None, product_key: str | None = None
+    ) -> dict[str, Any]:
+        """Publish a listing package. With ``product_key``, publishes that
+        specific approved product's package (one draft per product)."""
         mode = (mode or self.default_mode).lower()
         if mode == LIVE or mode not in self.enabled_modes:
             return {"status": "blocked", "campaign_id": campaign_id, "mode": mode,
@@ -85,18 +106,23 @@ class PublisherService:
             return {"status": "blocked", "campaign_id": campaign_id,
                     "reason": "Campaign is not compliance-approved."}
 
+        # Per-product id (matches the Expansion Engine's Product sku) for dedup.
+        product_id = f"{campaign_id}-{product_key}" if product_key else None
+
         # Never duplicate — a prior draft/published record short-circuits.
-        existing = self.db.get_active_publication(campaign_id, PLATFORM)
+        existing = self.db.get_active_publication(campaign_id, PLATFORM, product_id=product_id)
         if existing:
             return {"status": "skipped", "campaign_id": campaign_id,
+                    "product_key": product_key,
                     "reason": "Already published; not creating a duplicate.",
                     "publication": existing}
 
-        listing = self._load_listing(campaign_id)
+        listing = self._load_listing(campaign_id, product_key)
         if listing is None:
             return {"status": "blocked", "campaign_id": campaign_id,
+                    "product_key": product_key,
                     "reason": "No listing package found — build it first."}
-        product_id = listing.get("product_id")
+        product_id = listing.get("product_id") or product_id
 
         if mode == DRY_RUN:
             pub = {"platform": PLATFORM, "product_id": product_id,
@@ -174,11 +200,16 @@ class PublisherService:
             )
         return self._draft_client
 
-    def _load_listing(self, campaign_id: int) -> dict[str, Any] | None:
+    def _load_listing(
+        self, campaign_id: int, product_key: str | None = None
+    ) -> dict[str, Any] | None:
         base = Path(self.listing_cfg.get("exports_dir", "exports"))
         if not base.is_absolute():
             base = ROOT_DIR / base
-        path = base / str(campaign_id) / "listing.json"
+        folder = base / str(campaign_id)
+        if product_key:  # the approved product's own package sub-folder
+            folder = folder / product_key
+        path = folder / "listing.json"
         if not path.exists():
             return None
         return json.loads(path.read_text(encoding="utf-8"))
