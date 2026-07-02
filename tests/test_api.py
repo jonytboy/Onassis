@@ -361,6 +361,17 @@ def test_publish_unapproved_blocked(app_and_client):
     assert client.post(f"/publish/{cid}").json()["status"] == "blocked"
 
 
+def test_daily_report_endpoint(app_and_client):
+    _, client = app_and_client
+    r = client.get("/report/daily")
+    assert r.status_code == 200
+    body = r.json()
+    # The five required sections are present.
+    for key in ("revenue", "profit", "best_seller", "worst_seller", "recommendations"):
+        assert key in body
+    assert set(body["recommendations"]) == {"expand", "hold", "kill"}
+
+
 def test_launch_endpoints_single_approval(app_and_client, tmp_path):
     import json as _json
     from pathlib import Path
@@ -372,6 +383,9 @@ def test_launch_endpoints_single_approval(app_and_client, tmp_path):
     db.insert_compliance_report({"campaign_id": cid, "verdict": "APPROVE",
                                  "reasoning": "ok", "compliance_score": 90})
     app.state.publisher.listing_cfg = {"exports_dir": str(tmp_path / "exports")}
+    # This test covers the MANUAL single-approval flow (drafts → wait → approve).
+    app.state.publisher.launch_policy = "manual"
+    app.state.publisher.auto_go_live = False
 
     class _Stub:
         def create_draft(self, listing):
@@ -483,7 +497,7 @@ def test_daily_run_and_status_history(app_and_client):
     assert r.status_code == 200
     body = r.json()
     assert body["mode"] == "dry_run"
-    assert len(body["stages"]) == 15
+    assert len(body["stages"]) == 17
 
     status = client.get("/daily/status").json()
     assert status["mode"] == "dry_run"
@@ -676,7 +690,7 @@ def test_swagger_docs_available(app_and_client):
                  "/expansion/performance",
                  "/publish/{campaign_id}", "/publishing/status",
                  "/launch/approve/{campaign_id}", "/launch/status/{campaign_id}",
-                 "/launch/pending",
+                 "/launch/pending", "/report/daily",
                  "/analytics", "/analytics/product/{product_id}",
                  "/analytics/campaign/{campaign_id}",
                  "/experiments", "/experiments/{experiment_id}", "/experiments/active",

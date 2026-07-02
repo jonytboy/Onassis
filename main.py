@@ -94,6 +94,10 @@ def _parse_args() -> argparse.Namespace:
         "--revenue", action="store_true", help="Show today/month/company revenue & profit."
     )
     parser.add_argument(
+        "--report", action="store_true",
+        help="Daily scoreboard: Revenue / Profit / Best / Worst / Recommendation.",
+    )
+    parser.add_argument(
         "--etsy-sync", action="store_true", help="Import orders/listings from Etsy (read-only)."
     )
     parser.add_argument(
@@ -341,6 +345,30 @@ def _show_revenue(revenue: RevenueEngine) -> None:
     print()
 
 
+def _show_report(report: dict) -> None:
+    """Render the daily scoreboard: Revenue / Profit / Best / Worst / Recommendation."""
+    rev, prof = report["revenue"], report["profit"]
+    print(f"\nONASSIS DAILY REPORT — {report['date']}\n")
+    print(f"  {report['headline']}\n")
+    print(f"  Revenue   today {rev['today']:>10.2f}   month {rev['month']:>10.2f}   "
+          f"company {rev['company']:>10.2f}")
+    print(f"  Net Profit today {prof['today_net']:>9.2f}   month {prof['month_net']:>10.2f}   "
+          f"company {prof['company_net']:>10.2f}  (margin {prof['company_margin']:.0%})")
+    best, worst = report["best_seller"], report["worst_seller"]
+    print(f"\n  Best seller : {best['name']} — net {best['net_profit']:.2f} "
+          f"({best['units']} sold)" if best else "\n  Best seller : —")
+    print(f"  Worst seller: {worst['name']} — {worst['recommendation']} "
+          f"(net {worst['net_profit']:.2f}, {worst['views']} views)"
+          if worst else "  Worst seller: —")
+    if report["products"]:
+        print(f"\n  {'PRODUCT':<20} {'UNITS':>5} {'NET':>9} {'VIEWS':>6}  RECOMMENDATION")
+        print("  " + "-" * 68)
+        for p in report["products"]:
+            print(f"  {p['name'][:20]:<20} {p['units']:>5} {p['net_profit']:>9.2f} "
+                  f"{p['views']:>6}  {p['recommendation']} — {p['reason']}")
+    print()
+
+
 def _learn(brain: OnassisBrain, db: Database, campaign_arg: int) -> int:
     """Generate knowledge for one campaign, or backfill all missing (arg == 0)."""
     if campaign_arg == 0:
@@ -414,6 +442,12 @@ def main() -> int:
 
     if args.revenue:
         _show_revenue(RevenueEngine(config, db))
+        return 0
+
+    if args.report:
+        from onassis.reporting import DailyReport
+
+        _show_report(DailyReport(config, db).build())
         return 0
 
     if args.etsy_login:

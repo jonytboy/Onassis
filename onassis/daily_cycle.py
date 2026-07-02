@@ -18,8 +18,10 @@ Order:
    11. Expand Products                (score the catalogue; CEO launches the profitable set)
    12. Build Etsy Listing Package     (real artwork, mockups & 8-10 image gallery per product)
    13. Generate Marketing Content     (Pinterest/Instagram/Facebook — promotes the product)
-   14. Publish Draft                  (real Etsy draft with every generated image attached)
-   15. Record Results
+   14. Publish Live                   (draft + activate LIVE on Etsy, margin-guarded)
+   15. Promote on Pinterest           (pins that link back to each live listing)
+   16. Daily Report                   (Revenue / Profit / Best / Worst / Recommendation)
+   17. Record Results
 
 Every stage logs start/finish, records its duration, captures failures, and the
 cycle continues safely past a failed stage. Two modes are supported: ``dry_run``
@@ -49,6 +51,7 @@ from onassis.orchestrator import Orchestrator
 from onassis.profit import ProfitEngine
 from onassis.proposals import APPROVE
 from onassis.publishing import PublisherService
+from onassis.reporting import DailyReport
 from onassis.revenue import RevenueEngine
 
 log = get_logger(__name__)
@@ -76,6 +79,7 @@ class DailyCycle:
         self.artwork = ArtworkStudio(config, db)
         self.listing_factory = ListingFactory(config, db, studio=self.artwork)
         self.publisher = PublisherService(config, db)
+        self.report = DailyReport(config, db)
         # Campaign/Brain/Compliance are owned by the orchestrator — reuse them.
         self.campaigns = self.orchestrator.campaigns
         self.brain = self.orchestrator.brain
@@ -105,7 +109,9 @@ class DailyCycle:
         self._stage(stages, "Expand Products", self._expand_products, ctx)
         self._stage(stages, "Build Etsy Listing Package", self._build_listing, ctx)
         self._stage(stages, "Generate Marketing Content", self._generate_content, ctx)
-        self._stage(stages, "Publish Draft", self._publish, ctx)
+        self._stage(stages, "Publish Live", self._publish, ctx)
+        self._stage(stages, "Promote on Pinterest", self._promote, ctx)
+        self._stage(stages, "Daily Report", self._daily_report, ctx)
         # Final stage — Record Results — is the persistence below.
         stages.append({"stage": "Record Results", "status": "ok",
                        "duration_seconds": 0.0, "detail": None, "error": None})
@@ -127,7 +133,18 @@ class DailyCycle:
             "assets_created": ctx.get("content_items", 0),
             "products_launched": (ctx.get("expansion") or {}).get("products_launched", 0),
             "launch_status": (ctx.get("launch") or {}).get("status"),
+            "products_live": self._go_live_result(ctx).get("live", 0),
+            "pins_posted": (ctx.get("promotion") or {}).get("posted", 0),
+            "report": ctx.get("report"),
         }
+
+    @staticmethod
+    def _go_live_result(ctx: dict[str, Any]) -> dict[str, Any]:
+        """The go-live outcome, whether returned inline or nested under the
+        automatic-policy approval."""
+        launch = ctx.get("launch") or {}
+        return (launch.get("go_live")
+                or (launch.get("launch") or {}).get("go_live") or {})
 
     # --- Stage runner -----------------------------------------------
 
@@ -313,7 +330,8 @@ class DailyCycle:
         return {"status": "ok", "detail": {"items": len(content["items"])}}
 
     def _publish(self, ctx: dict[str, Any]) -> dict[str, Any]:
-        """Draft each approved product and reach Launch Ready (launch policy)."""
+        """Draft each approved product, then (per launch policy) take the approved
+        set LIVE on Etsy so the products are actually buyable."""
         if ctx["dry"]:
             return {"status": "skipped", "detail": "dry run"}
         cid = ctx.get("campaign_id")
@@ -331,9 +349,82 @@ class DailyCycle:
             mapped = "failed"
         else:
             mapped = "skipped"
+        go_live = (result.get("launch") or {}).get("go_live") or result.get("go_live") or {}
         return {"status": mapped, "detail": {
             "launch_status": result["status"], "policy": result.get("policy"),
-            "published": drafts.get("published", 0), "results": drafts.get("results", [])}}
+            "published": drafts.get("published", 0),
+            "products_live": go_live.get("live", 0),
+            "results": drafts.get("results", [])}}
+
+    def _promote(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """Promote each LIVE product on Pinterest — pins that link back to the
+        Etsy listing (free, high-intent traffic). Safe no-op until configured."""
+        if ctx["dry"]:
+            return {"status": "skipped", "detail": "dry run"}
+        if not self.pinterest.can_publish:
+            return {"status": "skipped", "detail": "Pinterest not configured for publishing"}
+        live = self._live_products(ctx)
+        if not live:
+            return {"status": "skipped", "detail": "no live listings to promote"}
+        cid = ctx["campaign_id"]
+        posted, per_product = 0, []
+        for product_key, listing_id in live:
+            pins = self._build_pins(cid, product_key, listing_id)
+            res = self.pinterest.publish_pins(pins)
+            posted += res["posted"]
+            per_product.append({"product_key": product_key, "posted": res["posted"]})
+        ctx["promotion"] = {"posted": posted, "products": len(live)}
+        return {"status": "ok" if posted else "skipped",
+                "detail": {"pins_posted": posted, "products_promoted": len(live),
+                           "per_product": per_product}}
+
+    def _daily_report(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """Build the daily Revenue / Profit / Best / Worst / Recommendation report."""
+        report = self.report.build()
+        ctx["report"] = report
+        log.info("[daily] REPORT — %s", report["headline"])
+        return {"status": "ok", "detail": {
+            "headline": report["headline"],
+            "revenue_today": report["revenue"]["today"],
+            "profit_today": report["profit"]["today_net"],
+            "best_seller": report["best_seller"],
+            "worst_seller": report["worst_seller"],
+            "recommendations": report["recommendations"]}}
+
+    # --- Promotion helpers ------------------------------------------
+
+    def _live_products(self, ctx: dict[str, Any]) -> list[tuple[str, str]]:
+        go_live = self._go_live_result(ctx)
+        return [(r["product_key"], r["listing_id"])
+                for r in (go_live.get("results") or [])
+                if r.get("status") == "live" and r.get("listing_id")]
+
+    def _build_pins(self, campaign_id: int, product_key: str,
+                    listing_id: str) -> list[dict[str, Any]]:
+        import json
+        from pathlib import Path
+
+        from onassis.config import ROOT_DIR
+
+        base = Path((self.config.listing or {}).get("exports_dir", "exports"))
+        if not base.is_absolute():
+            base = ROOT_DIR / base
+        folder = base / str(campaign_id) / product_key
+        listing_path = folder / "listing.json"
+        if not listing_path.exists():
+            return []
+        listing = json.loads(listing_path.read_text(encoding="utf-8"))
+        url = f"https://www.etsy.com/listing/{listing_id}"
+        title = listing.get("title", "")
+        desc = (listing.get("description", "") or "")[:480]
+        pins: list[dict[str, Any]] = []
+        for img in listing.get("images", []):
+            pins.append({
+                "title": title, "description": desc, "link": url,
+                "image_path": str(folder / "images" / img["filename"]),
+                "alt_text": img.get("alt_text", title),
+            })
+        return pins
 
     # --- Reads ------------------------------------------------------
 

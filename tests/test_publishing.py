@@ -379,6 +379,103 @@ def test_launch_blocked_without_approved_products(config, db, tmp_path):
     assert db.get_launch(cid) is None
 
 
+# --- Live publishing (go-live) --------------------------------------
+
+class LiveDraftClient(UploadingDraftClient):
+    """A draft client that can also activate listings LIVE."""
+
+    def __init__(self, listing_id=555):
+        super().__init__(listing_id)
+        self.activated: list[str] = []
+        self._counter = listing_id
+
+    def create_draft(self, listing):
+        self._counter += 1
+        self.calls += 1
+        return {"listing_id": self._counter}
+
+    def publish_listing(self, listing_id):
+        self.activated.append(str(listing_id))
+        return {"listing_id": listing_id, "state": "active"}
+
+
+def _priced(db, cid, key, retail, cost, launched=1):
+    db.insert_product_score({"campaign_id": cid, "product_key": key, "product_name": key,
+                             "launched": launched, "composite_score": 85,
+                             "retail_price": retail, "production_cost": cost,
+                             "ceo_verdict": "APPROVE"})
+
+
+def _live_publisher(config, db, tmp_path, *, auto_go_live=True, floor=0.10):
+    config.listing = {"exports_dir": str(tmp_path / "exports")}
+    config.publishing = {"enabled_modes": ["dry_run", "draft", "live"],
+                         "max_retries": 3, "min_go_live_margin": floor}
+    config.launch = {"policy": "automatic", "auto_go_live": auto_go_live}
+    return PublisherService(config, db, draft_client=LiveDraftClient())
+
+
+def test_automatic_launch_takes_products_live(config, db, tmp_path):
+    pub = _live_publisher(config, db, tmp_path)
+    cid = _approved_campaign(db)
+    for key in ("ceramic_mug", "premium_poster"):
+        _priced(db, cid, key, retail=22.0, cost=7.5)
+        _write_product_package(tmp_path, cid, key)
+
+    result = pub.launch(cid, mode="draft")
+    assert result["status"] == "launched"
+    go_live = result["launch"]["go_live"]
+    assert go_live["live"] == 2                          # both activated on Etsy
+    assert len(pub._draft_client.activated) == 2
+    # The publications are now LIVE, not merely drafts.
+    live = [p for p in db.list_publications() if p["status"] == "live"]
+    assert len(live) == 2
+
+
+def test_go_live_margin_guard_never_lists_a_loss(config, db, tmp_path):
+    pub = _live_publisher(config, db, tmp_path, floor=0.10)
+    cid = _approved_campaign(db)
+    _priced(db, cid, "ceramic_mug", retail=22.0, cost=7.5)      # healthy margin
+    _priced(db, cid, "greeting_card", retail=10.0, cost=9.0)    # loses money after fees
+    for key in ("ceramic_mug", "greeting_card"):
+        _write_product_package(tmp_path, cid, key)
+
+    go_live = pub.launch(cid, mode="draft")["launch"]["go_live"]
+    by = {r["product_key"]: r for r in go_live["results"]}
+    assert by["ceramic_mug"]["status"] == "live"
+    assert by["greeting_card"]["status"] == "held"       # guarded, not listed at a loss
+    assert go_live["live"] == 1
+    assert "greeting_card" not in pub._draft_client.activated
+
+
+def test_go_live_is_idempotent(config, db, tmp_path):
+    pub = _live_publisher(config, db, tmp_path)
+    cid = _approved_campaign(db)
+    _priced(db, cid, "ceramic_mug", retail=22.0, cost=7.5)
+    _write_product_package(tmp_path, cid, "ceramic_mug")
+
+    pub.launch(cid, mode="draft")
+    again = pub.go_live(cid)
+    assert again["results"][0]["status"] == "already_live"
+    assert len(pub._draft_client.activated) == 1          # activated exactly once
+
+
+def test_no_go_live_when_live_mode_disabled(config, db, tmp_path):
+    # Live not in enabled_modes -> auto go-live is off; drafts stay drafts.
+    config.listing = {"exports_dir": str(tmp_path / "exports")}
+    config.publishing = {"enabled_modes": ["dry_run", "draft"], "max_retries": 3}
+    config.launch = {"policy": "automatic", "auto_go_live": True}
+    pub = PublisherService(config, db, draft_client=LiveDraftClient())
+    cid = _approved_campaign(db)
+    _priced(db, cid, "ceramic_mug", retail=22.0, cost=7.5)
+    _write_product_package(tmp_path, cid, "ceramic_mug")
+
+    result = pub.launch(cid, mode="draft")
+    assert result["status"] == "launched"
+    assert "go_live" not in result.get("launch", {})      # never attempted
+    assert pub._draft_client.activated == []
+    assert all(p["status"] == "draft" for p in db.list_publications())
+
+
 # --- Status ---------------------------------------------------------
 
 def test_status_summary(publisher, db, tmp_path):

@@ -48,7 +48,15 @@ class PublisherService:
         self.max_retries = int(self.cfg.get("max_retries", 3))
         self.enabled_modes = set(self.cfg.get("enabled_modes", [DRY_RUN, DRAFT]))
         self.default_mode = self.cfg.get("default_mode", DRAFT)
-        self.launch_policy = (config.launch or {}).get("policy", "manual")
+        self.min_go_live_margin = float(self.cfg.get("min_go_live_margin", 0.10))
+        launch_cfg = config.launch or {}
+        self.launch_policy = launch_cfg.get("policy", "manual")
+        # Live go-live requires the toggle AND 'live' in the enabled modes.
+        self.auto_go_live = bool(launch_cfg.get("auto_go_live", False)) \
+            and LIVE in self.enabled_modes
+        from onassis.fees import FeeModel
+
+        self.fee_model = FeeModel.from_config(config)
         self._draft_client = draft_client
 
     # --- Configuration ----------------------------------------------
@@ -202,7 +210,9 @@ class PublisherService:
 
     def approve_launch(self, campaign_id: int, by: str = "owner") -> dict[str, Any]:
         """Approve a design's launch in **one action** — master design + all its
-        CEO-approved product drafts become ready for publication together."""
+        CEO-approved product drafts become ready for publication together. When
+        auto go-live is enabled, the approved drafts are also **activated LIVE**
+        on Etsy (subject to the margin guard)."""
         from datetime import datetime, timezone
 
         launch = self.db.get_launch(campaign_id)
@@ -214,10 +224,65 @@ class PublisherService:
             **launch, "status": "launched",
             "approved_at": datetime.now(timezone.utc).isoformat(), "approved_by": by,
         })
-        log.info("Launch approved for campaign #%s by %s — %d product(s) ready to publish.",
-                 campaign_id, by, len(products))
-        return {"status": "launched", "campaign_id": campaign_id, "approved_by": by,
-                "products": [s["product_key"] for s in products]}
+        result = {"status": "launched", "campaign_id": campaign_id, "approved_by": by,
+                  "products": [s["product_key"] for s in products]}
+        if self.auto_go_live:
+            result["go_live"] = self.go_live(campaign_id, products)
+        log.info("Launch approved for campaign #%s by %s — %d product(s); live=%s.",
+                 campaign_id, by, len(products),
+                 (result.get("go_live") or {}).get("live", 0))
+        return result
+
+    def go_live(self, campaign_id: int,
+                products: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        """Activate approved product drafts as **LIVE** Etsy listings.
+
+        Each product must (1) already have a draft with a listing id, and (2)
+        clear the go-live **margin guard** — never take a product live if its net
+        margin after real fees is below ``min_go_live_margin``. A loss-making SKU
+        is skipped, not listed. Idempotent: a product already live is left alone.
+        """
+        if LIVE not in self.enabled_modes:
+            return {"status": "disabled", "live": 0,
+                    "reason": "Live publishing is not enabled."}
+        if products is None:
+            products = [s for s in self.db.list_product_scores(campaign_id)
+                        if s.get("launched")]
+        backend = None
+        live, results = 0, []
+        for s in products:
+            product_id = f"{campaign_id}-{s['product_key']}"
+            pub = self.db.get_active_publication(campaign_id, PLATFORM, product_id=product_id)
+            outcome = {"product_key": s["product_key"]}
+            if not pub or not pub.get("listing_id"):
+                outcome.update(status="skipped", reason="no draft listing to activate")
+            elif pub.get("status") == "live":
+                outcome.update(status="already_live", listing_id=pub["listing_id"])
+            else:
+                margin = self.fee_model.net_margin(
+                    s.get("retail_price", 0), s.get("production_cost", 0))
+                if margin < self.min_go_live_margin:
+                    outcome.update(status="held", reason=(
+                        f"net margin {margin:.0%} below the {self.min_go_live_margin:.0%} "
+                        f"go-live floor — not listed at a loss"), margin=margin)
+                else:
+                    try:
+                        backend = backend or self._draft_backend()
+                        backend.publish_listing(pub["listing_id"])
+                        self.db.set_publication_status(pub["id"], "live")
+                        live += 1
+                        outcome.update(status="live", listing_id=pub["listing_id"],
+                                       margin=margin)
+                        log.info("LIVE: campaign #%s %s -> Etsy listing %s (margin %.0f%%)",
+                                 campaign_id, s["product_key"], pub["listing_id"],
+                                 margin * 100)
+                    except Exception as exc:  # activation failed — keep the draft
+                        outcome.update(status="failed", reason=str(exc),
+                                       listing_id=pub["listing_id"])
+                        log.warning("Go-live failed for %s: %s", s["product_key"], exc)
+            results.append(outcome)
+        return {"status": "ok", "campaign_id": campaign_id, "live": live,
+                "results": results}
 
     def launch_status(self, campaign_id: int) -> dict[str, Any]:
         return self.db.get_launch(campaign_id) or {"campaign_id": campaign_id,

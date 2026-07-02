@@ -90,6 +90,25 @@ policy:
 profit:
   ai_cost_per_campaign: 0.50     # estimated AI cost recorded per campaign run
 
+# --- Etsy fee model (the REAL unit economics) ------------------------
+# What Etsy actually charges. Offsite Ads is the silent margin killer: 12-15%
+# on attributed orders. These feed the forecast, imported orders, the go-live
+# margin guard, and the daily report — so "profit" means profit AFTER fees.
+fees:
+  transaction_rate: 0.065        # Etsy transaction fee (item + shipping)
+  payment_rate: 0.04             # payment processing %
+  payment_fixed: 0.20            # payment processing flat, per order (GBP)
+  listing_fee: 0.20              # per listing / renewal on sale
+  regulatory_rate: 0.0           # regulatory operating fee (region-specific)
+  offsite_ads_rate: 0.15         # Offsite Ads fee on ATTRIBUTED orders
+  offsite_ads_share: 0.30        # blended fraction of orders attributed to ads
+  currency: GBP
+
+# --- Daily report (Revenue / Profit / Best / Worst / Recommendation) -
+report:
+  min_traffic_to_judge: 60       # views a product needs before it can be Killed
+  kill_margin: 0.0               # net margin at/below this (with traffic) -> Kill
+
 # --- Etsy connector (read-only, observation only) --------------------
 # Credentials come from the environment (never commit them):
 #   ETSY_API_KEY, ETSY_ACCESS_TOKEN, ETSY_SHOP_ID
@@ -120,6 +139,11 @@ etsy:
 # Credentials from env: PINTEREST_ACCESS_TOKEN, PINTEREST_AD_ACCOUNT_ID
 pinterest:
   base_url: "https://api.pinterest.com/v5"
+  # Auto-promotion: when PINTEREST_ACCESS_TOKEN + board_id are set, each live
+  # product is promoted with pins that link back to its Etsy listing.
+  board_id: null                 # target board (set PINTEREST_BOARD_ID)
+  max_pins_per_product: 3        # how many pins to post per live product
+  shop_url: null                 # e.g. https://www.etsy.com/shop/YourShop (for links)
 
 # --- Product optimiser -----------------------------------------------
 # Increase profit from existing products before creating new ones.
@@ -175,7 +199,9 @@ expansion:
   min_variants: 3                # guarantee at least this many CEO-approved variants
   max_variants: 5                # never launch more than this per design
   cold_start: true               # relax the threshold to reach min_variants (CEO still gates)
-  fees_rate: 0.105               # marketplace + payment fees, for profit/margin
+  # Profit forecasts use the global `fees` model (real Etsy fees incl. Offsite
+  # Ads). The profit sub-score is calibrated to an achievable post-fee POD margin.
+  profit_target_margin: 0.45     # a product hitting this NET margin scores 100 on profit
   weights:                       # composite-score weights (need not sum to 1)
     brand_fit: 0.25
     commercial_suitability: 0.20
@@ -285,7 +311,13 @@ expansion:
 #   scheduled — reach Launch Ready and wait for a scheduled approval.
 #   automatic — approve the launch automatically at the end of the cycle.
 launch:
-  policy: manual
+  # manual    — drafts everything, waits for one approval (safe default).
+  # scheduled — same as manual; an external scheduler approves.
+  # automatic — approves the launch at the end of the cycle (no human step).
+  policy: automatic
+  # When true, an approved launch ACTIVATES the drafts as LIVE Etsy listings
+  # (real products for sale). Set false to stop at draft and review manually.
+  auto_go_live: true
 
 # --- Design Package Builder ------------------------------------------
 # Turns ONE CEO-approved opportunity into a print-ready design package. It does
@@ -359,9 +391,10 @@ image:
 # Publishes approved listing packages. Only Draft (and Dry Run) are enabled;
 # Live publishing is intentionally not implemented yet.
 publishing:
-  default_mode: draft            # dry_run | draft
-  enabled_modes: [dry_run, draft]
+  default_mode: draft            # dry_run | draft | live
+  enabled_modes: [dry_run, draft, live]   # 'live' activates listings on Etsy
   max_retries: 3                 # safe retries on transient publish failures
+  min_go_live_margin: 0.10       # never take a product live below this NET margin
 
 # --- Compliance thresholds -------------------------------------------
 # The Compliance Director's veto rules (Sprint 7). Risk scores are 0-100.

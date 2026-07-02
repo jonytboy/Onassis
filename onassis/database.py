@@ -1244,7 +1244,7 @@ class Database:
         duplicate prevention. When ``product_id`` is given, dedup is per-product
         (so a design can publish one listing per approved product)."""
         sql = ("SELECT * FROM publications WHERE campaign_id = ? AND platform = ? "
-               "AND status IN ('draft', 'published')")
+               "AND status IN ('draft', 'published', 'live')")
         params: list[Any] = [campaign_id, platform]
         if product_id is not None:
             sql += " AND product_id = ?"
@@ -1253,6 +1253,19 @@ class Database:
         with self._connect() as conn:
             row = conn.execute(sql, params).fetchone()
         return dict(row) if row else None
+
+    def set_publication_status(
+        self, publication_id: int, status: str, *, listing_id: str | None = None
+    ) -> None:
+        """Update a publication's status (e.g. draft -> live on activation)."""
+        with self._connect() as conn:
+            if listing_id is not None:
+                conn.execute(
+                    "UPDATE publications SET status = ?, listing_id = ? WHERE id = ?",
+                    (status, listing_id, publication_id))
+            else:
+                conn.execute("UPDATE publications SET status = ? WHERE id = ?",
+                             (status, publication_id))
 
     def list_publications(self) -> list[dict[str, Any]]:
         with self._connect() as conn:

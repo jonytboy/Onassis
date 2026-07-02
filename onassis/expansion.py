@@ -28,6 +28,7 @@ from typing import Any
 from onassis.ceo import CEOAgent
 from onassis.config import Config
 from onassis.database import Database
+from onassis.fees import FeeModel
 from onassis.logger import get_logger
 from onassis.proposals import APPROVE, Proposal
 
@@ -61,7 +62,8 @@ class RevenueExpansionEngine:
         self.min_variants = int(self.cfg.get("min_variants", 3))
         self.max_variants = int(self.cfg.get("max_variants", 5))
         self.cold_start = bool(self.cfg.get("cold_start", True))
-        self.fees_rate = float(self.cfg.get("fees_rate", 0.105))
+        # The REAL Etsy fee model (incl. Offsite Ads) drives profit forecasts.
+        self.fee_model = FeeModel.from_config(config)
         self.weights = {**_DEFAULT_WEIGHTS, **(self.cfg.get("weights") or {})}
         self.ceo = CEOAgent(config, db)
 
@@ -81,10 +83,11 @@ class RevenueExpansionEngine:
     # --- Scoring (deterministic) ------------------------------------
 
     def expected_profit(self, product: dict[str, Any]) -> float:
-        """Per-unit net profit: retail − production − marketplace/payment fees."""
+        """Per-unit net profit after production AND real Etsy fees (blended
+        Offsite Ads included) — the true unit economics, not an optimistic rate."""
         retail = float(product.get("retail_price", 0) or 0)
         production = float(product.get("production_cost", 0) or 0)
-        return round(retail - production - retail * self.fees_rate, 2)
+        return self.fee_model.unit_net_profit(retail, production)
 
     def _historical_scorer(self):
         """A function key -> 0-100 reflecting learned sales performance."""
@@ -245,7 +248,7 @@ class RevenueExpansionEngine:
         composite = s["composite_score"]
         risk = "low" if composite >= 85 else ("medium" if composite >= 70 else "high")
         estimated_cost = round(
-            s["production_cost"] + s["retail_price"] * self.fees_rate, 2)
+            s["production_cost"] + self.fee_model.total_fees(s["retail_price"]), 2)
         proposal = Proposal(
             agent_name="RevenueExpansionEngine",
             requested_action=f"Launch {s['product_name']} for design (campaign #{campaign_id})",

@@ -74,6 +74,8 @@ class Config:
     expansion: dict[str, Any] = field(default_factory=dict)
     launch: dict[str, Any] = field(default_factory=dict)
     image: dict[str, Any] = field(default_factory=dict)
+    fees: dict[str, Any] = field(default_factory=dict)
+    report: dict[str, Any] = field(default_factory=dict)
 
     # secrets / future integrations
     anthropic_api_key: str | None = None
@@ -131,12 +133,15 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         **image,
         "api_key": _env("IMAGE_API_KEY", _env("OPENAI_API_KEY", image.get("api_key"))),
     }
+    fees = raw.get("fees", {})
+    report = raw.get("report", {})
     etsy = raw.get("etsy", {})
     pinterest = raw.get("pinterest", {})
     pinterest = {
         **pinterest,
         "access_token": _env("PINTEREST_ACCESS_TOKEN", pinterest.get("access_token")),
         "ad_account_id": _env("PINTEREST_AD_ACCOUNT_ID", pinterest.get("ad_account_id")),
+        "board_id": _env("PINTEREST_BOARD_ID", pinterest.get("board_id")),
     }
     # Etsy credentials come from the environment. In Etsy's Open API v3 the
     # "keystring" is both the OAuth client_id and the x-api-key, so ETSY_CLIENT_ID
@@ -188,5 +193,7 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         expansion=expansion,
         launch=launch,
         image=image,
+        fees=fees,
+        report=report,
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
     )

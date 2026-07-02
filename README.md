@@ -106,31 +106,66 @@ python main.py                 # start the daily scheduler (long-running)
 Content generation calls the Anthropic API, so an `ANTHROPIC_API_KEY` is
 required. The agents fail with a clear message if it's missing.
 
-## Publisher — automatic Etsy drafts (Draft mode)
+## Publisher — automatic Etsy drafts **and live listings**
 
-The publisher (`onassis/publishing.py`) reads an exported listing package and
-publishes it to Etsy as a **draft**. Modes are Dry Run, Draft, and Live —
-only Dry Run and Draft are enabled; **Live is intentionally not implemented**.
-It publishes only **compliance-approved** campaigns, **logs every
-publication** (platform, product, campaign, date/time, listing id, status),
-**retries safely** on transient failures and records the reason, and **never
-creates a duplicate** (an existing draft/published record short-circuits).
-Etsy *write* access is injected (`EtsyDraftClient`), so it runs live with write
-credentials and is fully tested offline. No advertising; products aren't
-modified after publication.
+The publisher (`onassis/publishing.py`) reads an exported listing package,
+creates an Etsy **draft**, uploads every generated gallery image, and — when the
+launch is approved — **activates the listing LIVE** so the product is actually
+buyable. Modes are Dry Run, Draft, and **Live**. It publishes only
+**compliance-approved** campaigns, **logs every publication**, **retries safely**,
+and **never creates a duplicate** (an existing draft/published/live record
+short-circuits). Etsy *write* access is injected (`EtsyDraftClient`), so it runs
+with real credentials and is fully tested offline.
 
-**Per approved product:** `publish_products(campaign_id)` publishes **one draft
-per CEO-approved product** — iterating only the launched set and de-duplicating
-per product — so one design becomes the full set of live-ready Etsy drafts.
-After creating each draft it **uploads every generated gallery image** to the
-listing (in gallery order); a single image failure is recorded, not fatal.
+**Per approved product:** `publish_products(campaign_id)` creates **one draft per
+CEO-approved product** (iterating only the launched set, de-duplicating per
+product) and uploads its full image gallery. `go_live(campaign_id)` then
+**activates each draft** via Etsy `updateListing (state=active)`.
+
+**Go-live is margin-guarded.** A product is never listed at a loss: if its net
+margin *after real fees* is below `publishing.min_go_live_margin`, it is **held**,
+not activated. With `launch.policy: automatic` + `launch.auto_go_live: true`, an
+approved design goes live **in the same cycle** — no human step.
 
 ```bash
-python main.py --publish <campaign_id> --mode draft   # or --mode dry_run
+python main.py --publish <campaign_id> --mode draft   # dry_run | draft
+python main.py --approve-launch <campaign_id>         # approve + go live
 ```
-`POST /publish/{campaign_id}` publishes the single package;
-`POST /publish/{campaign_id}/products` publishes every approved product's draft;
+`POST /publish/{campaign_id}/products` drafts every approved product;
+`POST /launch/approve/{campaign_id}` approves and (if enabled) takes them live;
 `GET /publishing/status` returns the publication log summary.
+
+## Real fee model — profit *after* Etsy takes its cut
+
+`onassis/fees.py` (`FeeModel`) computes what Etsy actually charges: the 6.5%
+transaction fee, ~4% + £0.20 payment processing, the £0.20 listing fee, and — the
+silent margin killer — **Offsite Ads at 12-15%** on attributed orders (blended by
+an expected attribution share for forecasts). One model feeds the Expansion
+Engine's profit forecasts, every imported order's real economics, the go-live
+margin guard, and the daily report — so "profit" always means profit *after fees*.
+A "60% gross margin" mug is really a ~49% net margin once fees land.
+
+## Pinterest promotion — free, high-intent traffic
+
+Once a product is **live**, the daily cycle promotes it on Pinterest
+(`PinterestConnector.publish_pins`): pins built from the listing's real images and
+copy, each **linking back to the Etsy listing**. Set `PINTEREST_ACCESS_TOKEN` +
+`PINTEREST_BOARD_ID` to activate; until then it's a safe no-op. Live listings with
+no traffic make £0 — this is the traffic engine for the niche.
+
+## Daily Report — Revenue / Profit / Best / Worst / Recommendation
+
+`onassis/reporting.py` (`DailyReport`) is the operator's morning scoreboard — a
+**read-only** aggregate over data the system already owns (no new agent). It
+reports **revenue, profit (after fees), the best and worst seller, and a
+per-product recommendation**:
+
+* **Expand** — it sells and it makes money. Do more of it.
+* **Kill**   — it loses money, or it has had real traffic and still hasn't sold.
+* **Hold**   — not enough signal yet; keep it live and keep watching.
+
+The daily cycle produces it every run; also `python main.py --report` and
+`GET /report/daily`.
 
 ## Launch Engine — one approval launches the whole design
 

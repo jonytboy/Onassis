@@ -89,6 +89,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     opportunities = daily.opportunities
     design_builder = daily.design
     expansion = daily.expansion
+    report = daily.report
     experiments = ExperimentEngine(config, db)
     operations = OperationsManager(config, db, cycle=daily)
     readiness = ProductionReadiness(config, db)
@@ -119,6 +120,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.operations = operations
     app.state.readiness = readiness
     app.state.opportunities = opportunities
+    app.state.report = report
     app.state.design_builder = design_builder
     app.state.expansion = expansion
 
@@ -305,6 +307,12 @@ def create_app(config: Config | None = None) -> FastAPI:
     def pending_launches() -> list[dict[str, Any]]:
         """Designs at Launch Ready awaiting a single approval."""
         return publisher.pending_launches()
+
+    @app.get("/report/daily", tags=["reporting"])
+    def daily_report() -> dict[str, Any]:
+        """The daily scoreboard — Revenue, Profit, Best/Worst seller, and a
+        per-product Expand / Hold / Kill recommendation."""
+        return report.build()
 
     @app.get("/publishing/status", tags=["publishing"])
     def publishing_status() -> dict[str, Any]:

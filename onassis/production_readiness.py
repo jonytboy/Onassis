@@ -251,15 +251,16 @@ class ProductionReadiness:
                 list(etsy_b)),
             self._module(
                 "onassis/connectors/pinterest.py", "Pinterest connector",
-                DEV_ONLY,
-                "Implements the metrics contract but the live fetch is a no-op; "
-                "returns no data even when credentials are present.",
+                PARTIAL if pin else DEV_ONLY,
+                "Auto-promotion (publish_pins) is implemented: each live product "
+                "is promoted with pins that link to its Etsy listing. The metrics "
+                "read path is still a no-op.",
                 ([self._pinterest_creds_blocker()] if not pin else []) + [
                     _blocker(
                         "PinterestConnector.fetch_metrics() is not implemented — it "
                         "returns an empty list even when configured, so no Pinterest "
-                        "metrics are ever collected and Pinterest publishing does not exist.",
-                        HIGH,
+                        "analytics are collected (publishing works; reading does not).",
+                        MEDIUM,
                         "1-2 days (map the Pinterest v5 analytics API onto metric rows)",
                         "Implement fetch_metrics() against the Pinterest v5 analytics "
                         "endpoint, mapping impressions/saves/outbound clicks/CTR onto "
@@ -307,19 +308,21 @@ class ProductionReadiness:
             self._module(
                 "onassis/publishing.py", "Autonomous Publisher",
                 (READY if etsy else PARTIAL),
-                "Publishes compliance-approved packages to Etsy as drafts; "
-                "idempotent, retried, logged. Live mode is intentionally disabled.",
-                list(etsy_b) + [
+                "Publishes compliance-approved products to Etsy: drafts each with "
+                "images, then ACTIVATES them LIVE (uploadListingImage + state=active) "
+                "behind the launch approval and a net-margin guard — never listing a "
+                "loss-maker. Idempotent, retried, logged.",
+                list(etsy_b) + ([] if self.config.launch.get("auto_go_live") else [
                     _blocker(
-                        "Live publishing is not enabled — only Dry Run and Draft modes "
-                        "are active; listings are never made live automatically.",
+                        "Auto go-live is off (launch.auto_go_live=false) — approved "
+                        "products stay as drafts for manual review.",
                         LOW,
-                        "0.5 day (enable + verify the live path)",
-                        "When ready for true live listings, add 'live' to "
-                        "publishing.enabled_modes and extend the draft client to set a "
-                        "live state. Drafts are the safe default until then.",
+                        "flip launch.auto_go_live to true",
+                        "Set launch.auto_go_live=true (and 'live' in "
+                        "publishing.enabled_modes) to activate approved products "
+                        "automatically; the margin guard still protects you.",
                     ),
-                ]),
+                ])),
 
             # --- Orchestration ---
             self._module("onassis/daily_cycle.py", "Daily Cycle", READY,
@@ -382,11 +385,11 @@ class ProductionReadiness:
               "Read-only connector ready." if etsy
               else "Connector implemented; Etsy credentials missing."),
             v("Etsy publishing", READY if etsy else DEV_ONLY,
-              "Draft publishing ready (live mode disabled by design)." if etsy
-              else "Draft publisher implemented; Etsy write credentials missing."),
-            v("Pinterest publishing", DEV_ONLY,
-              "Not implemented — the Pinterest connector has no publishing path and "
-              "its analytics fetch is a no-op."),
+              "Live publishing ready — drafts then activates listings, margin-guarded."
+              if etsy else "Publisher implemented; Etsy write credentials missing."),
+            v("Pinterest publishing", READY if pin else DEV_ONLY,
+              "Auto-promotion ready — pins link live products to their Etsy listing."
+              if pin else "Publishing implemented; Pinterest credentials missing."),
             v("Analytics collection", READY if etsy else PARTIAL,
               "Etsy-derived metrics collected; Pinterest source pending." if etsy
               else "Engine ready; Etsy source needs credentials, Pinterest pending."),
@@ -414,8 +417,8 @@ class ProductionReadiness:
             ("Etsy read credentials", etsy),
             ("Etsy write credentials (publishing)", etsy),
             ("Pinterest OAuth credentials", pin),
-            ("Pinterest analytics/publishing implemented", False),
-            ("Listing mock-up images (real, not placeholder)", False),
+            ("Pinterest publishing implemented", True),
+            ("Listing mock-up images (real, not placeholder)", True),
             ("Live publishing enabled", self.live_publishing_enabled),
             ("Database integrity", self.db.integrity_ok()),
         ]

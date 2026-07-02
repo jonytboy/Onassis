@@ -323,10 +323,13 @@ def test_sync_imports_and_maps_order(connector, db):
     assert o["product_id"] == "9001"
     assert o["campaign_id"] == campaign_id          # linked to campaign
     assert o["production_cost"] == 14.0             # from the product
-    assert o["marketplace_fees"] == pytest.approx(48 * 0.065)
-    assert o["payment_fees"] == pytest.approx(48 * 0.04)
-    # net profit = 48 - (14 + 3.12 + 1.92) = 28.96
-    assert o["net_profit"] == pytest.approx(28.96, abs=0.01)
+    # Real Etsy fees: transaction 6.5% + £0.20 listing + blended Offsite Ads
+    # (15% × 30% attributed) = 3.12 + 0.20 + 2.16 = 5.48 marketplace;
+    # payment 4% + £0.20 = 2.12.
+    assert o["marketplace_fees"] == pytest.approx(5.48, abs=0.01)
+    assert o["payment_fees"] == pytest.approx(2.12, abs=0.01)
+    # net profit = 48 - (14 + 5.48 + 2.12) = 26.40
+    assert o["net_profit"] == pytest.approx(26.40, abs=0.01)
 
 
 def test_sync_is_incremental_and_never_duplicates(connector, db):
@@ -380,7 +383,8 @@ def test_listing_linked_to_product_campaign_revenue_profit(connector, db):
     assert enriched["product_id"] == "9001"
     assert enriched["campaign_id"] == campaign_id
     assert enriched["revenue"] == 48.0
-    assert enriched["net_profit"] == pytest.approx(28.96, abs=0.01)
+    # net profit after real Etsy fees = 48 - (14 + 5.48 + 2.12) = 26.40
+    assert enriched["net_profit"] == pytest.approx(26.40, abs=0.01)
     assert enriched["orders"] == 1
 
 

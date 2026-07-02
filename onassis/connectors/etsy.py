@@ -48,8 +48,10 @@ class EtsyConnector(RevenueConnector):
         self.etsy_cfg = config.etsy or {}
         self._client = client
         self._oauth: Any | None = None
-        self.tx_fee = float(self.etsy_cfg.get("transaction_fee_rate", 0.065) or 0)
-        self.pay_fee = float(self.etsy_cfg.get("payment_fee_rate", 0.04) or 0)
+        # The REAL Etsy fee model (transaction + payment + listing + Offsite Ads).
+        from onassis.fees import FeeModel
+
+        self.fee_model = FeeModel.from_config(config)
 
     # --- Configuration / client -------------------------------------
 
@@ -203,6 +205,12 @@ class EtsyConnector(RevenueConnector):
         production = float(product["production_cost"]) * qty if product else 0.0
         campaign_id = product["campaign_id"] if product else None
 
+        # Real Etsy fees on the actual sale — including Offsite Ads when the
+        # receipt is flagged as attributed to Etsy Ads.
+        shipping = self._shipping_total(receipt)
+        offsite = self._is_offsite(receipt)
+        fees = self.fee_model.order_fees(gross, shipping, offsite=offsite)
+
         return {
             "order_ref": ref,
             "occurred_at": occurred,
@@ -214,12 +222,27 @@ class EtsyConnector(RevenueConnector):
             "currency": price.get("currency_code", "GBP"),
             "quantity": qty,
             "production_cost": round(production, 2),
-            "marketplace_fees": round(gross * self.tx_fee, 2),
-            "payment_fees": round(gross * self.pay_fee, 2),
+            "marketplace_fees": fees["marketplace_fees"],
+            "payment_fees": fees["payment_fees"],
             "ai_cost": 0.0,
             "advertising_cost": 0.0,
             "other_costs": 0.0,
         }
+
+    @staticmethod
+    def _shipping_total(receipt: dict[str, Any]) -> float:
+        cost = (receipt or {}).get("total_shipping_cost") or {}
+        divisor = cost.get("divisor") or 100
+        return float(cost.get("amount", 0) or 0) / divisor
+
+    @staticmethod
+    def _is_offsite(receipt: dict[str, Any]) -> bool | None:
+        """Whether the order was attributed to Etsy Offsite Ads, if the receipt
+        says so; ``None`` (unknown → blended expectation) otherwise."""
+        for key in ("is_offsite_ads", "is_offsite_ad", "offsite_ads"):
+            if key in (receipt or {}):
+                return bool(receipt[key])
+        return None
 
     def _import_listing(self, raw: dict[str, Any]) -> None:
         """Store a listing snapshot + a stat snapshot, linked to product/campaign."""

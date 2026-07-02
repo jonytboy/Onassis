@@ -283,6 +283,27 @@ class EtsyDraftClient(EtsyClient):
             )
         return resp.json()
 
+    def publish_listing(self, listing_id: int | str) -> dict[str, Any]:
+        """Activate a draft listing — take it **LIVE** on Etsy.
+
+        PUT ``/shops/{shop_id}/listings/{listing_id}`` with ``state=active``. The
+        listing must already have at least one image and valid inventory/price
+        (the Publisher uploads images before calling this). This is the only
+        method that makes a product buyable; the Publisher gates it behind the
+        launch approval + a margin check.
+        """
+        url = (f"{self.base_url}/shops/{self.resolve_shop_id()}"
+               f"/listings/{listing_id}")
+        resp = httpx.put(url, headers=self._headers(), json={"state": "active"},
+                         timeout=self.timeout)
+        if resp.status_code >= 400:
+            detail = _response_detail(resp)
+            log.error("Etsy publish (activate) failed: HTTP %s\n%s",
+                      resp.status_code, detail)
+            raise EtsyApiError(
+                f"Etsy updateListing (activate) returned HTTP {resp.status_code}: {detail}")
+        return resp.json()
+
     def upload_listing_image(
         self, listing_id: int | str, image_path: str, *, rank: int = 1,
         alt_text: str | None = None, overwrite: bool = False,

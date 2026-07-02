@@ -25,7 +25,8 @@ _EXPECTED_STAGES = [
     "Run Product Optimiser", "CEO Decision",
     "Create Product Opportunity", "Build Design Package", "Generate Master Artwork",
     "Create Product Campaign", "Expand Products", "Build Etsy Listing Package",
-    "Generate Marketing Content", "Publish Draft", "Record Results",
+    "Generate Marketing Content", "Publish Live", "Promote on Pinterest",
+    "Daily Report", "Record Results",
 ]
 
 _OPPORTUNITY = {
@@ -63,8 +64,11 @@ def test_dry_run_executes_all_stages_without_side_effects(config, db):
     for stage in ("Create Product Opportunity", "Build Design Package",
                   "Generate Master Artwork", "Create Product Campaign",
                   "Expand Products", "Build Etsy Listing Package",
-                  "Generate Marketing Content", "Publish Draft"):
+                  "Generate Marketing Content", "Publish Live",
+                  "Promote on Pinterest"):
         assert by_stage[stage]["status"] == "skipped"
+    # The daily report always runs — even a dry run reports the scoreboard.
+    assert by_stage["Daily Report"]["status"] == "ok"
     # The run is recorded and retrievable.
     assert db.get_latest_daily_run()["mode"] == "dry_run"
 
@@ -99,8 +103,11 @@ def test_failed_stage_does_not_stop_the_cycle(config, db):
 @pytest.fixture
 def production_cycle(config, db, tmp_path):
     config.listing = {**(config.listing or {}), "exports_dir": str(tmp_path / "exports")}
-    config.publishing = {"default_mode": "draft", "enabled_modes": ["dry_run", "draft"],
-                         "max_retries": 3}
+    # Enable live publishing + automatic go-live so the cycle takes products LIVE.
+    config.publishing = {"default_mode": "draft",
+                         "enabled_modes": ["dry_run", "draft", "live"],
+                         "max_retries": 3, "min_go_live_margin": 0.10}
+    config.launch = {"policy": "automatic", "auto_go_live": True}
     cycle = DailyCycle(config, db)
 
     # A profitable product starved of traffic -> optimiser recommends a
@@ -131,8 +138,21 @@ def production_cycle(config, db, tmp_path):
     cycle.design.compliance._llm = FakeLLM(make_compliance_response())
 
     class _StubDraft:
+        def __init__(self):
+            self.activated = []
+            self._next = 4242
+
         def create_draft(self, listing):
-            return {"listing_id": 4242}
+            self._next += 1
+            return {"listing_id": self._next}
+
+        def upload_listing_image(self, listing_id, image_path, *, rank=1,
+                                 alt_text=None, overwrite=False):
+            return {"listing_image_id": rank}
+
+        def publish_listing(self, listing_id):
+            self.activated.append(listing_id)
+            return {"listing_id": listing_id, "state": "active"}
     cycle.publisher._draft_client = _StubDraft()
     return cycle
 
@@ -158,21 +178,53 @@ def test_production_runs_full_pipeline_and_publishes(production_cycle, db):
     # Every product got a full 8-10 image commercial gallery (real files).
     assert by_stage["Build Etsy Listing Package"]["detail"]["images_generated"] >= 8
     assert by_stage["Generate Marketing Content"]["status"] == "ok"
-    assert by_stage["Publish Draft"]["status"] == "ok"
-    assert by_stage["Publish Draft"]["detail"]["published"] >= 1
-    assert all(r["status"] == "draft" for r in by_stage["Publish Draft"]["detail"]["results"])
-    # Launch Engine: the default (manual) policy drafts everything and waits
-    # for a single approval, so the cycle ends Launch Ready.
-    assert by_stage["Publish Draft"]["detail"]["launch_status"] == "launch_ready"
-    assert summary["launch_status"] == "launch_ready"
+    # Publish Live: draft every approved product, then automatically activate LIVE.
+    assert by_stage["Publish Live"]["status"] == "ok"
+    assert by_stage["Publish Live"]["detail"]["published"] >= 1
+    assert by_stage["Publish Live"]["detail"]["products_live"] >= 1
+    # Automatic launch policy approved and took the design live in one cycle.
+    assert by_stage["Publish Live"]["detail"]["launch_status"] == "launched"
+    assert summary["launch_status"] == "launched"
+    assert summary["products_live"] >= 1
     assert summary["status"] == "completed"
+
+    # A product is actually LIVE on Etsy (activated), not just drafted.
+    assert production_cycle.publisher._draft_client.activated   # activate was called
+    assert any(p["status"] == "live" for p in db.list_publications())
+
+    # The daily report is produced with the required fields.
+    report = summary["report"]
+    assert set(report["recommendations"]) == {"expand", "hold", "kill"}
+    assert "revenue" in report and "profit" in report
 
     # Marketing was generated only AFTER the product (listing) existed.
     stage_order = [s["stage"] for s in summary["stages"]]
     assert stage_order.index("Build Etsy Listing Package") < stage_order.index("Generate Marketing Content")
 
-    # A real draft publication was recorded — the cycle can produce a sale.
-    assert any(p["status"] == "draft" for p in db.list_publications())
+
+def test_production_promotes_live_products_on_pinterest(production_cycle):
+    """Every live product is auto-promoted with pins that link to its listing."""
+    class _StubPin:
+        def __init__(self):
+            self.pins = []
+
+        def create_pin(self, *, board_id, title, description, link, image_path,
+                       alt_text=None):
+            self.pins.append(link)
+            return {"id": f"pin_{len(self.pins)}"}
+
+    pin_client = _StubPin()
+    # Connect Pinterest with an injected client (no network).
+    production_cycle.pinterest.board_id = "board123"
+    production_cycle.pinterest.max_pins = 3
+    production_cycle.pinterest._pin_client = pin_client
+
+    summary = production_cycle.run(mode="production")
+    by_stage = {s["stage"]: s for s in summary["stages"]}
+    assert by_stage["Promote on Pinterest"]["status"] == "ok"
+    assert summary["pins_posted"] >= 1
+    # Pins link back to a live Etsy listing.
+    assert all("etsy.com/listing/" in link for link in pin_client.pins)
 
 
 # --- Reads ----------------------------------------------------------
