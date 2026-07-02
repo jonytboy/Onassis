@@ -14,10 +14,13 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from onassis.artwork import ArtworkReview, ArtworkStudio
+from onassis.artwork import (
+    ArtworkReview, ArtworkStudio, CommercialPromptBuilder, product_family,
+)
 from onassis.connectors.image_backend import (
     GALLERY, MASTER, MOCKUP, PRINT, PRODUCT, ImageBackend, ImageSpec,
-    LocalRenderBackend, RemoteImageBackend, build_image_backend, resolve_colour,
+    LocalRenderBackend, OpenAIImageBackend, RemoteImageBackend,
+    build_image_backend, register_image_provider, resolve_colour,
 )
 
 
@@ -193,3 +196,194 @@ def test_remote_backend_size_mapping():
     assert RemoteImageBackend._nearest_size(1000, 1000) == "1024x1024"
     assert RemoteImageBackend._nearest_size(800, 1200) == "1024x1536"
     assert RemoteImageBackend._nearest_size(1200, 800) == "1536x1024"
+
+
+# --- Commercial prompt builder (the whole brief, not the title) -----
+
+def _commercial_brief() -> dict:
+    return {
+        "theme": "slow coastal mornings",
+        "target_customer": "design-loving travellers who cherish calm",
+        "emotional_angle": "unhurried Mediterranean luxury",
+        "artwork_description": "a hand-drawn lemon branch over a rising sun and calm sea",
+        "design_rationale": "The citrus and sun motif signals warmth and escape.",
+        "shirt_colour": "ecru", "print_colour": "terracotta",
+        "seasonal_relevance": "summer", "product_name": "Amalfi Morning Tee",
+    }
+
+
+def test_product_family_classification():
+    assert product_family("Premium Poster") == "poster"
+    assert product_family("Ceramic Mug") == "mug"
+    assert product_family("Premium T-Shirt") == "tshirt"
+    assert product_family("Heavyweight Hoodie") == "hoodie"
+    assert product_family("Sweatshirt") == "sweatshirt"     # not misread as t-shirt
+    assert product_family("Tote Bag") == "tote"
+    assert product_family("Framed Poster") == "framed_poster"
+    assert product_family("Something Unknown") == "poster"   # safe default
+
+
+def test_prompt_uses_the_whole_commercial_brief_not_just_title():
+    prompt = CommercialPromptBuilder().scene(_commercial_brief(), "Ceramic Mug", "hero")
+    # Customer, emotion, artwork intent, palette and conversion goal are all present.
+    for expected in ("design-loving travellers", "unhurried Mediterranean luxury",
+                     "lemon branch", "terracotta", "click-through and conversion"):
+        assert expected in prompt
+
+
+def test_prompts_are_product_specific():
+    b = CommercialPromptBuilder()
+    brief = _commercial_brief()
+    mug = b.scene(brief, "Ceramic Mug", "hero")
+    poster = b.scene(brief, "Premium Poster", "hero")
+    tee = b.scene(brief, "Premium T-Shirt", "hero")
+    # A poster, mug and tee get DIFFERENT compositions — not the same image blindly.
+    assert mug != poster != tee
+    assert "mug" in mug.lower()
+    assert "poster" in poster.lower() or "print" in poster.lower()
+    assert "t-shirt" in tee.lower() or "mannequin" in tee.lower()
+
+
+def test_scene_prompts_differ_by_scene():
+    b = CommercialPromptBuilder()
+    brief = _commercial_brief()
+    hero = b.scene(brief, "Ceramic Mug", "hero")
+    lifestyle = b.scene(brief, "Ceramic Mug", "lifestyle")
+    closeup = b.scene(brief, "Ceramic Mug", "closeup")
+    assert hero != lifestyle != closeup
+    assert "hero thumbnail" in hero.lower()
+    assert "lifestyle" in lifestyle.lower() and "kitchen" in lifestyle.lower()
+    assert "close-up" in closeup.lower()
+
+
+def test_master_and_print_prompts_are_brief_driven():
+    b = CommercialPromptBuilder()
+    brief = _commercial_brief()
+    master = b.master(brief)
+    assert "lemon branch" in master and "design-loving travellers" in master
+    assert "not a photo of a product" in master.lower()
+    print_prompt = b.print_file(brief)
+    assert "transparent background" in print_prompt.lower()
+
+
+# --- OpenAI production backend --------------------------------------
+
+class _Capture:
+    def __init__(self, b64):
+        self.b64 = b64
+        self.payload = None
+        self.headers = None
+
+    def __call__(self, url, headers=None, json=None, timeout=None):
+        self.payload = json
+        self.headers = headers
+
+        class _Resp:
+            status_code = 200
+
+            def json(_self):
+                return {"data": [{"b64_json": self.b64}]}
+        return _Resp()
+
+
+def _png_b64():
+    import base64
+
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), (120, 80, 60)).save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode(), buf.getvalue()
+
+
+def test_openai_backend_transparent_print_payload(monkeypatch):
+    import httpx
+
+    b64, raw = _png_b64()
+    cap = _Capture(b64)
+    monkeypatch.setattr(httpx, "post", cap)
+    be = OpenAIImageBackend("sk-x", quality="high")
+    out = be.generate(ImageSpec(kind=PRINT, width=3600, height=3600, transparent=True,
+                                prompt="PRINT PROMPT"))
+    assert out == raw                                       # decoded b64 image bytes
+    assert cap.payload["model"] == "gpt-image-1"
+    assert cap.payload["quality"] == "high"
+    assert cap.payload["background"] == "transparent"       # real transparency
+    assert cap.payload["output_format"] == "png"
+    assert cap.payload["prompt"] == "PRINT PROMPT"
+    assert cap.headers["Authorization"] == "Bearer sk-x"
+
+
+def test_openai_backend_opaque_photo_payload(monkeypatch):
+    import httpx
+
+    b64, _ = _png_b64()
+    cap = _Capture(b64)
+    monkeypatch.setattr(httpx, "post", cap)
+    OpenAIImageBackend("sk-x").generate(
+        ImageSpec(kind=MOCKUP, width=1536, height=1024, transparent=False, prompt="HERO"))
+    assert cap.payload["output_format"] == "jpeg"           # photos are JPEG
+    assert "background" not in cap.payload
+    assert cap.payload["size"] == "1536x1024"               # landscape mapping
+
+
+def test_openai_backend_raises_on_http_error(monkeypatch):
+    import httpx
+
+    class _Resp:
+        status_code = 400
+
+        def json(self):
+            return {"error": {"message": "bad prompt"}}
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _Resp())
+    with pytest.raises(RuntimeError, match="400"):
+        OpenAIImageBackend("sk-x").generate(ImageSpec(kind=MASTER, width=64, height=64))
+
+
+# --- Provider registry (add providers without pipeline changes) -----
+
+def test_registry_selects_openai_provider():
+    cfg = SimpleNamespace(image={"backend": "auto", "provider": "openai",
+                                 "api_key": "sk-x", "quality": "high"})
+    assert isinstance(build_image_backend(cfg), OpenAIImageBackend)
+
+
+def test_registry_supports_a_new_provider(monkeypatch):
+    seen = {}
+
+    def _factory(cfg, key):
+        seen["key"] = key
+        return OpenAIImageBackend(key, model="acme-1")
+
+    register_image_provider("acme_test", _factory)
+    cfg = SimpleNamespace(image={"backend": "remote", "provider": "acme_test",
+                                 "api_key": "sk-y"})
+    backend = build_image_backend(cfg)
+    assert backend.model == "acme-1" and seen["key"] == "sk-y"
+
+
+# --- Studio feeds the brief-driven prompt to the backend ------------
+
+class _PromptCaptureBackend(ImageBackend):
+    name = "capture"
+
+    def __init__(self):
+        self.prompts = []
+
+    def generate(self, spec: ImageSpec) -> bytes:
+        self.prompts.append(spec.prompt)
+        return LocalRenderBackend().generate(spec)  # a real file, but record the prompt
+
+
+def test_studio_sends_commercial_brief_to_the_backend(tmp_path):
+    studio = _small_studio()
+    cap = _PromptCaptureBackend()
+    studio._backend = cap
+    studio.generate_master(_brief(), tmp_path)
+    studio.build_product_gallery(
+        _brief(), {"product_key": "ceramic_mug", "product_name": "Ceramic Mug"},
+        tmp_path / "images")
+    joined = "\n".join(cap.prompts)
+    # The model receives customer + emotion + artwork intent — not just the title.
+    assert "line-drawn lemon branch" in joined
+    assert "mug" in joined.lower()                            # product-specific
+    assert "click-through and conversion" in joined           # conversion-optimised

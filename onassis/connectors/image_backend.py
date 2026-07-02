@@ -344,76 +344,150 @@ class LocalRenderBackend(ImageBackend):
                        fill=colour, outline=edge, width=max(3, W // 120))
 
 
-# --- Remote AI backend (activates with a key) -----------------------
+# --- Production AI backends (activate with a key) -------------------
 
-class RemoteImageBackend(ImageBackend):
-    """OpenAI-compatible ``/images/generations`` client (drop-in replaceable).
+class OpenAIImageBackend(ImageBackend):
+    """Production backend — OpenAI **GPT Image** (``gpt-image-1``).
 
-    Produces AI artwork when an image-generation API key is configured. On any
-    failure it raises, so the studio falls back to the local renderer and the
-    cycle still yields real files.
+    Generates commercial, sellable artwork from a rich prompt (built from
+    ONASSIS's commercial brief, not the product title). Transparent print files
+    request ``background=transparent`` + PNG; product/mock-up photos request
+    JPEG. GPT Image always returns base64 image data.
+
+    This class is registered as the ``openai`` provider; the pipeline never
+    references it directly, so adding another provider is a one-line
+    :func:`register_image_provider` call with no pipeline changes.
     """
 
-    name = "remote"
+    name = "openai"
+    _SIZES = {"square": "1024x1024", "portrait": "1024x1536", "landscape": "1536x1024"}
 
-    def __init__(self, api_key: str, *, base_url: str, model: str,
-                 timeout: float = 120.0) -> None:
+    def __init__(self, api_key: str, *, base_url: str = "https://api.openai.com/v1",
+                 model: str = "gpt-image-1", quality: str = "high",
+                 moderation: str = "auto", timeout: float = 180.0) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.quality = quality
+        self.moderation = moderation
         self.timeout = timeout
 
     def generate(self, spec: ImageSpec) -> bytes:
         import httpx
 
-        size = self._nearest_size(spec.width, spec.height)
-        payload = {"model": self.model, "prompt": spec.prompt or spec.title,
-                   "size": size, "n": 1}
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "prompt": (spec.prompt or spec.title)[:32000],
+            "n": 1,
+            "size": self._size(spec.width, spec.height),
+            "quality": self.quality,
+        }
+        if spec.transparent:  # isolated print file — real transparency, PNG
+            payload["background"] = "transparent"
+            payload["output_format"] = "png"
+        else:                 # commercial product photo — JPEG is lighter
+            payload["output_format"] = "jpeg"
+        if self.model == "gpt-image-1":
+            payload["moderation"] = self.moderation
         resp = httpx.post(
             f"{self.base_url}/images/generations",
             headers={"Authorization": f"Bearer {self.api_key}",
                      "Content-Type": "application/json"},
             json=payload, timeout=self.timeout,
         )
-        resp.raise_for_status()
-        data = resp.json().get("data", [{}])[0]
+        if resp.status_code >= 400:
+            try:
+                detail = resp.json()
+            except (ValueError, KeyError):
+                detail = resp.text
+            raise RuntimeError(
+                f"OpenAI image generation HTTP {resp.status_code}: {detail}")
+        data = (resp.json().get("data") or [{}])[0]
         if data.get("b64_json"):
             return base64.b64decode(data["b64_json"])
-        if data.get("url"):
+        if data.get("url"):  # some compatible servers return a URL
             img = httpx.get(data["url"], timeout=self.timeout)
             img.raise_for_status()
             return img.content
-        raise RuntimeError("Remote image backend returned no image data.")
+        raise RuntimeError("OpenAI image backend returned no image data.")
 
-    @staticmethod
-    def _nearest_size(w: int, h: int) -> str:
+    @classmethod
+    def _size(cls, w: int, h: int) -> str:
         if abs(w - h) <= max(w, h) * 0.1:
-            return "1024x1024"
-        return "1024x1536" if h > w else "1536x1024"
+            return cls._SIZES["square"]
+        return cls._SIZES["portrait"] if h > w else cls._SIZES["landscape"]
+
+    # Backwards-compatible alias.
+    _nearest_size = _size
+
+
+# Backwards-compatible name for the OpenAI-compatible production backend.
+RemoteImageBackend = OpenAIImageBackend
+
+
+# --- Provider registry (add providers without touching the pipeline) --
+
+_PROVIDERS: dict[str, Any] = {}
+
+
+def register_image_provider(name: str, factory: Any) -> None:
+    """Register an image provider factory ``factory(cfg, api_key) -> ImageBackend``.
+
+    New providers (Stability, Google, Replicate, …) register here and become
+    selectable via ``image.provider`` with **no change to the pipeline**.
+    """
+    _PROVIDERS[name.lower()] = factory
+
+
+def _openai_factory(cfg: dict[str, Any], api_key: str) -> ImageBackend:
+    return OpenAIImageBackend(
+        api_key,
+        base_url=cfg.get("base_url", "https://api.openai.com/v1"),
+        model=cfg.get("model", "gpt-image-1"),
+        quality=cfg.get("quality", "high"),
+        moderation=cfg.get("moderation", "auto"),
+        timeout=float(cfg.get("timeout", 180.0)),
+    )
+
+
+register_image_provider("openai", _openai_factory)
+register_image_provider("gpt-image-1", _openai_factory)
+
+
+def _api_key(cfg: dict[str, Any]) -> str | None:
+    import os
+
+    return (cfg.get("api_key") or os.environ.get("IMAGE_API_KEY")
+            or os.environ.get("OPENAI_API_KEY"))
 
 
 def build_image_backend(config: Any) -> ImageBackend:
-    """Select the image backend from config, defaulting to the local renderer.
+    """Select the image backend from config.
 
-    ``image.backend``: ``local`` (default) | ``remote`` | ``auto``. ``remote``
-    and ``auto`` use :class:`RemoteImageBackend` only when an API key is present
-    (``image.api_key`` / ``IMAGE_API_KEY`` / ``OPENAI_API_KEY``); otherwise the
-    local renderer is used so the pipeline always produces real files.
+    ``image.backend``: ``auto`` (default) | ``local`` | ``remote``.
+    ``image.provider``: the production provider (``openai`` by default).
+
+    * ``local`` — always the built-in **development** renderer.
+    * ``remote``/``auto`` — the configured provider when an API key is present
+      (``image.api_key`` / ``IMAGE_API_KEY`` / ``OPENAI_API_KEY``). ``auto``
+      falls back to the local renderer when no key is set; ``remote`` warns and
+      falls back so the pipeline never crashes.
+
+    The local renderer is **development-only**; production uses the provider.
     """
-    import os
-
     cfg = getattr(config, "image", None) or {}
-    backend = str(cfg.get("backend", "local")).lower()
-    api_key = (cfg.get("api_key") or os.environ.get("IMAGE_API_KEY")
-               or os.environ.get("OPENAI_API_KEY"))
-    if backend in ("remote", "auto") and api_key:
-        log.info("Image backend: remote (%s).", cfg.get("model", "gpt-image-1"))
-        return RemoteImageBackend(
-            api_key,
-            base_url=cfg.get("base_url", "https://api.openai.com/v1"),
-            model=cfg.get("model", "gpt-image-1"),
-        )
-    if backend == "remote":
-        log.warning("Image backend 'remote' requested but no API key set — "
-                    "using the local renderer so the pipeline still produces files.")
+    backend = str(cfg.get("backend", "auto")).lower()
+    provider = str(cfg.get("provider", "openai")).lower()
+    api_key = _api_key(cfg)
+
+    if backend == "local":
+        return LocalRenderBackend()
+    factory = _PROVIDERS.get(provider)
+    if backend in ("remote", "auto") and api_key and factory:
+        log.info("Image backend: %s (%s, quality=%s).",
+                 provider, cfg.get("model", "gpt-image-1"), cfg.get("quality", "high"))
+        return factory(cfg, api_key)
+    if backend == "remote" or (backend == "auto" and api_key and not factory):
+        log.warning("Production image backend unavailable (provider=%s, key=%s) — "
+                    "falling back to the DEV local renderer.", provider, bool(api_key))
     return LocalRenderBackend()

@@ -122,9 +122,12 @@ class ListingFactory:
 
     # --- Public entry point -----------------------------------------
 
-    def export(self, campaign_id: int) -> dict[str, Any]:
+    def export(self, campaign_id: int,
+               design_package: dict[str, Any] | None = None) -> dict[str, Any]:
         """Build, validate, and write the listing package for a campaign.
 
+        ``design_package`` (the approved master design) feeds the Artwork Studio
+        the full commercial brief so the artwork is brief-driven, not generic.
         Returns a result dict with ``status`` of ``ready`` or ``blocked``.
         Raises :class:`ListingError` if the campaign does not exist.
         """
@@ -141,7 +144,7 @@ class ListingFactory:
                 "reason": "Campaign is not compliance-approved; cannot prepare a listing.",
             }
 
-        listing = self._build_listing(campaign)
+        listing = self._build_listing(campaign, design_package=design_package)
 
         # Gate 2 — validate the generated listing's compliance before export.
         review = self._review_listing(listing, campaign_id)
@@ -157,12 +160,17 @@ class ListingFactory:
         log.info("Listing package ready for campaign #%s at %s", campaign_id, package["path"])
         return package
 
-    def export_products(self, campaign_id: int) -> dict[str, Any]:
+    def export_products(self, campaign_id: int,
+                        design_package: dict[str, Any] | None = None) -> dict[str, Any]:
         """Build one listing package per **CEO-approved** product for a design.
 
         Iterates only the products the Revenue Expansion Engine launched (never
         the rejected ones), adapting the artwork, title, attributes and pricing
-        to each product. Writes each to ``exports/<campaign_id>/<product_key>/``.
+        to each product. ``design_package`` (the approved master design) carries
+        the full commercial brief into the Artwork Studio so each product's
+        artwork reflects the customer, emotion, palette and intended use — not a
+        generic title-only prompt. Writes each to
+        ``exports/<campaign_id>/<product_key>/``.
         """
         campaign = self.db.get_campaign(campaign_id)
         if campaign is None:
@@ -180,7 +188,8 @@ class ListingFactory:
 
         packages: list[dict[str, Any]] = []
         for spec in launched:
-            listing = self._build_listing(campaign, product=spec)
+            listing = self._build_listing(campaign, product=spec,
+                                          design_package=design_package)
             review = self._review_listing(listing, campaign_id)
             if review["verdict"] != APPROVE:
                 packages.append({"product_key": spec["product_key"], "status": "blocked",
@@ -202,9 +211,11 @@ class ListingFactory:
     # --- Build ------------------------------------------------------
 
     def _build_listing(
-        self, campaign: dict[str, Any], product: dict[str, Any] | None = None
+        self, campaign: dict[str, Any], product: dict[str, Any] | None = None,
+        design_package: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         brief = self.db.get_brief(campaign.get("brief_id")) or {}
+        design_brief = (design_package or {}).get("design_brief", {}) or {}
 
         if product is not None:  # a launched product from the Expansion Engine
             product_key = product["product_key"]
@@ -236,23 +247,28 @@ class ListingFactory:
         pricing = self._pricing(production_cost, retail_price)
         title = gen["title"].strip()[:140]
 
-        # The design brief the Artwork Studio renders from (colours, title, motif).
+        # The commercial brief the Artwork Studio renders from. The approved
+        # master design (customer, emotion, palette, artwork intent, rationale)
+        # is the rich base; per-product/listing fields layer on top so the model
+        # gets the WHOLE context, never just the product title.
         studio_brief = {
+            **design_brief,  # target_customer, emotional_angle, artwork_description, ...
             "product_name": product_name or campaign.get("name", ""),
-            "brand": (self.config.brand or {}).get("name", ""),
-            "theme": brief.get("theme") or campaign.get("theme", "coastal"),
-            "shirt_colour": gen["primary_colour"],
-            "print_colour": gen["secondary_colour"],
+            "brand": design_brief.get("brand") or (self.config.brand or {}).get("name", ""),
+            "theme": design_brief.get("theme") or brief.get("theme")
+            or campaign.get("theme", "coastal"),
+            "shirt_colour": design_brief.get("shirt_colour") or gen["primary_colour"],
+            "print_colour": design_brief.get("print_colour") or gen["secondary_colour"],
             "primary_colour": gen["primary_colour"],
             "secondary_colour": gen["secondary_colour"],
             "listing_title_seed": title,
             "artwork_description": (
-                brief.get("visual_direction") or campaign.get("story")
-                or f"{campaign.get('theme', '')} original artwork"
+                design_brief.get("artwork_description") or brief.get("visual_direction")
+                or campaign.get("story") or f"{campaign.get('theme', '')} original artwork"
             ),
-            "typography_direction": "elegant serif, lowercase",
             "transparent_background_required": True,
-            "dpi_requirement": int((self.config.design or {}).get("dpi", 300)),
+            "dpi_requirement": int(design_brief.get("dpi_requirement")
+                                    or (self.config.design or {}).get("dpi", 300)),
         }
 
         return {

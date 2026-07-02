@@ -291,7 +291,8 @@ class DailyCycle:
         cid = ctx.get("campaign_id")
         if not cid or not ctx.get("campaign_approved"):
             return {"status": "skipped", "detail": "no approved campaign"}
-        pkg = self.listing_factory.export_products(cid)
+        pkg = self.listing_factory.export_products(
+            cid, design_package=ctx.get("design_package"))
         if pkg.get("status") != "ready":
             return {"status": "blocked", "detail": pkg.get("reason")}
         ctx["listing_ready"] = True

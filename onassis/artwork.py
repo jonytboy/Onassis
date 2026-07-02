@@ -43,6 +43,206 @@ log = get_logger(__name__)
 # mock-up scenes, padded with gallery variants to hit the configured target.
 _SCENES = ["hero", "lifestyle", "closeup", "scale", "room"]
 
+# Map an expansion product name to a compositional family. A poster, a mug and a
+# tee must NOT receive the same image — each has its own natural shot and setting.
+_FAMILY_KEYWORDS = [
+    (("tote", "shopper"), "tote"),
+    (("mug",), "mug"),
+    (("hoodie",), "hoodie"),
+    (("sweatshirt",), "sweatshirt"),
+    (("t-shirt", "tshirt", "tee", "shirt"), "tshirt"),
+    (("notebook", "journal"), "notebook"),
+    (("greeting", "card"), "card"),
+    (("framed",), "framed_poster"),
+    (("canvas",), "canvas"),
+    (("poster", "print", "wall art"), "poster"),
+]
+
+# Per-family composition: how the product is shot and where it naturally lives —
+# so the model photographs the RIGHT scene for each product, not a generic one.
+_PRODUCT_SHOTS = {
+    "poster": {
+        "noun": "a fine-art giclée poster print",
+        "hero": "a single unframed art print shown flat and perfectly straight-on, "
+                "filling the frame on a soft neutral studio background",
+        "setting": "a light-filled, minimally styled modern living room with a linen "
+                   "sofa, oak floor and a trailing plant",
+        "use": "framed on a feature wall"},
+    "framed_poster": {
+        "noun": "a framed art print in a slim oak frame",
+        "hero": "the framed print shown straight-on against a warm plaster wall, "
+                "filling the frame",
+        "setting": "a calm Scandinavian-Mediterranean interior with soft daylight",
+        "use": "hung above a console table"},
+    "canvas": {
+        "noun": "a gallery-wrapped canvas print",
+        "hero": "the canvas shown at a slight three-quarter angle to reveal its depth, "
+                "on a clean studio background",
+        "setting": "a sunlit bedroom with linen bedding and a rattan chair",
+        "use": "mounted above the bed"},
+    "mug": {
+        "noun": "an 11oz ceramic mug",
+        "hero": "the mug shown straight-on with the artwork wrapping its face, on a "
+                "clean seamless studio background",
+        "setting": "a cosy kitchen or sunlit breakfast table with coffee, linen and "
+                   "fresh citrus",
+        "use": "wrapped around morning coffee"},
+    "tshirt": {
+        "noun": "a premium relaxed-fit cotton t-shirt",
+        "hero": "the t-shirt on an invisible mannequin (ghost-mannequin), straight-on, "
+                "the artwork printed centre-chest, on a soft studio background",
+        "setting": "a bright coastal scene on a relaxed model, natural candid styling",
+        "use": "worn on easy summer days"},
+    "sweatshirt": {
+        "noun": "a heavyweight premium sweatshirt",
+        "hero": "the sweatshirt flat-lay from above on natural linen, artwork "
+                "centre-chest, neatly styled",
+        "setting": "a cosy autumn interior on a relaxed model",
+        "use": "worn on cool evenings"},
+    "hoodie": {
+        "noun": "a heavyweight premium hoodie",
+        "hero": "the hoodie on a ghost-mannequin, straight-on, artwork centre-chest, "
+                "soft studio background",
+        "setting": "a coastal boardwalk at golden hour on a relaxed model",
+        "use": "worn layered by the sea"},
+    "tote": {
+        "noun": "a natural canvas tote bag",
+        "hero": "the tote shown flat and straight-on with the artwork printed on the "
+                "front panel, on a clean studio background",
+        "setting": "a sunlit market or café scene, carried on the shoulder",
+        "use": "carried to the market"},
+    "notebook": {
+        "noun": "a hardcover notebook",
+        "hero": "the notebook shown straight-on with the artwork on its cover, on a "
+                "clean studio background",
+        "setting": "a writer's desk with coffee, a pen and soft morning light",
+        "use": "kept on a writing desk"},
+    "card": {
+        "noun": "a folded greeting card",
+        "hero": "the greeting card standing upright with the artwork on its front, on "
+                "a clean styled surface",
+        "setting": "a gift setting on a mantel with dried flowers and ribbon",
+        "use": "given as a thoughtful gift"},
+}
+
+
+def product_family(name: str | None) -> str:
+    """Classify an expansion product name into a compositional family."""
+    n = (name or "").lower()
+    for keys, fam in _FAMILY_KEYWORDS:
+        if any(k in n for k in keys):
+            return fam
+    return "poster"
+
+
+class CommercialPromptBuilder:
+    """Builds sales-optimised image prompts from ONASSIS's **commercial brief**.
+
+    This is where ONASSIS becomes valuable: the model is given the whole
+    context — customer, emotion, lifestyle, colours, mood, intended use/room and
+    why someone would buy — plus product-specific composition, not merely the
+    product title. Prompts are optimised for **click-through and conversion**,
+    not artistic merit.
+    """
+
+    def master(self, brief: dict[str, Any]) -> str:
+        c = self._context(brief)
+        return (
+            "Original commercial surface artwork for a premium Mediterranean "
+            "lifestyle brand — this is the ARTWORK itself, not a photo of a product. "
+            f"Subject: {c['artwork']}. Theme: {c['theme']}. "
+            f"Colour palette: {c['palette']}. Mood: {c['mood']}. "
+            f"Created to attract {c['customer']} seeking {c['emotion']}. {c['rationale']} "
+            "Balanced, print-ready composition with a clear focal point and generous "
+            "negative space; refined, gallery-quality, cohesive enough to adapt across "
+            "posters, apparel and homeware. Flat artwork on a clean ground — no mockup, "
+            "no product, no photography, no text, no watermark, no signature."
+        )
+
+    def print_file(self, brief: dict[str, Any]) -> str:
+        c = self._context(brief)
+        return (
+            "Isolated original artwork on a fully transparent background for "
+            "print-on-demand / direct-to-garment production. "
+            f"Subject: {c['artwork']}. Palette: {c['palette']}. {c['mood']}. "
+            "Centred, high-contrast, crisp clean edges, no background, no drop shadow, "
+            "no text, no watermark — production-ready at high resolution."
+        )
+
+    def scene(self, brief: dict[str, Any], product_type: str, scene: str) -> str:
+        c = self._context(brief)
+        p = _PRODUCT_SHOTS.get(product_family(product_type), _PRODUCT_SHOTS["poster"])
+        return (
+            f"Professional Etsy product photograph — {p['noun']} featuring an original "
+            f"{c['theme']} design. {self._shot(scene, p)} "
+            f"The printed artwork: {c['artwork']}, in a {c['palette']} palette; {c['mood']}. "
+            f"Styled for {c['customer']} who want {c['emotion']} — compose the shot so they "
+            f"instantly picture it {p['use']} in their own life. {c['season_line']}"
+            "Commercial catalogue photography: natural soft directional light, shallow "
+            "depth of field, crisp focus on the product, aspirational yet authentic "
+            "styling, high resolution. Optimised to maximise click-through and conversion "
+            "as an Etsy listing image. No text, captions, watermarks, logos or borders; "
+            "realistic proportions and true-to-life materials."
+        )
+
+    def _shot(self, scene: str, p: dict[str, str]) -> str:
+        noun = self._bare(p["noun"])  # drop the leading article for "the {noun}"
+        if scene in ("hero", "product"):
+            return f"Primary hero thumbnail: {p['hero']}."
+        if scene == "lifestyle":
+            return (f"Lifestyle scene: the {noun} shown {p['use']} within "
+                    f"{p['setting']}, with tasteful natural props and a sense of real "
+                    f"daily life.")
+        if scene == "closeup":
+            return (f"Extreme macro close-up of the printed surface of the {noun}, "
+                    f"revealing texture, print crispness and material quality.")
+        if scene == "scale":
+            return (f"The {noun} photographed beside an everyday object for a clear "
+                    f"sense of scale, on a clean neutral surface.")
+        if scene == "room":
+            return (f"The {noun} styled in situ within {p['setting']}, shown as part "
+                    f"of a beautifully decorated space.")
+        return f"{p['hero']}."
+
+    @staticmethod
+    def _bare(noun: str) -> str:
+        for article in ("an ", "a "):
+            if noun.lower().startswith(article):
+                return noun[len(article):]
+        return noun
+
+    def _context(self, brief: dict[str, Any]) -> dict[str, str]:
+        theme = brief.get("theme") or "Mediterranean coastal lifestyle"
+        customer = (brief.get("target_customer")
+                    or "design-loving travellers who value calm, premium living")
+        emotion = (brief.get("emotional_angle")
+                   or "a feeling of calm, unhurried Mediterranean luxury")
+        artwork = (brief.get("artwork_description")
+                   or f"an elegant, original {theme} illustration")
+        rationale = (brief.get("design_rationale") or "").strip()
+        if rationale and not rationale.endswith("."):
+            rationale += "."
+        season = brief.get("seasonal_relevance")
+        return {
+            "theme": theme, "customer": customer, "emotion": emotion,
+            "artwork": artwork, "rationale": rationale,
+            "palette": self._palette_words(brief),
+            "mood": f"warm, editorial and aspirational, evoking {emotion}",
+            "season_line": f"Evoke {season}. " if season else "",
+        }
+
+    @staticmethod
+    def _palette_words(brief: dict[str, Any]) -> str:
+        words: list[str] = []
+        for key in ("shirt_colour", "print_colour", "primary_colour", "secondary_colour"):
+            val = brief.get(key)
+            if val and str(val).lower() not in [w.lower() for w in words]:
+                words.append(str(val))
+        for c in brief.get("colour_palette", []) or []:
+            if c and str(c).lower() not in [w.lower() for w in words]:
+                words.append(str(c))
+        return ", ".join(words) or "warm Mediterranean neutrals with a terracotta accent"
+
 
 class ArtworkReview:
     """A deterministic quality gate for generated artwork (not an AI agent).
@@ -127,7 +327,8 @@ class ArtworkStudio:
         self.cfg = getattr(config, "image", None) or {}
         self._backend = backend or build_image_backend(config)
         self._fallback = LocalRenderBackend()
-        self.review = ArtworkReview(self.cfg.get("quality"))
+        self.prompts = CommercialPromptBuilder()
+        self.review = ArtworkReview(self.cfg.get("quality_gate"))
         self.max_attempts = int(self.cfg.get("max_attempts", 3))
         self.master_px = int(self.cfg.get("master_px", 2048))
         self.print_px = int(self.cfg.get("print_px", 3600))  # ~300 DPI over A3-ish
@@ -178,7 +379,7 @@ class ArtworkStudio:
         spec_common = self._design_context(brief)
 
         master_spec = ImageSpec(kind=MASTER, width=self.master_px, height=self.master_px,
-                                transparent=False, prompt=self._prompt(brief, "master artwork"),
+                                transparent=False, prompt=self.prompts.master(brief),
                                 **spec_common)
         master_bytes, master_qc = self._produce(master_spec)
         (out_dir / "master_artwork.png").write_bytes(master_bytes)
@@ -186,7 +387,7 @@ class ArtworkStudio:
         transparent = bool(brief.get("transparent_background_required", True))
         print_spec = ImageSpec(kind=PRINT, width=self.print_px, height=self.print_px,
                                transparent=transparent,
-                               prompt=self._prompt(brief, "print file, transparent background"),
+                               prompt=self.prompts.print_file(brief),
                                **spec_common)
         print_bytes, print_qc = self._produce(print_spec)
         (out_dir / "print_file.png").write_bytes(print_bytes)
@@ -227,7 +428,7 @@ class ArtworkStudio:
             spec = ImageSpec(
                 kind=kind, width=self.gallery_px, height=self.gallery_px,
                 product_type=product_type, product_key=product_key, scene=scene,
-                prompt=self._prompt(brief, f"{scene} image of a {product_type}"),
+                prompt=self.prompts.scene(brief, product_type, scene),
                 **ctx,
             )
             data, qc = self._produce(spec)
@@ -272,16 +473,6 @@ class ArtworkStudio:
                    brief.get("primary_colour"), brief.get("secondary_colour")]
         colours = [c for c in colours if c]
         return colours or ["ecru", "terracotta", "sea", "olive"]
-
-    def _prompt(self, brief: dict[str, Any], subject: str) -> str:
-        return (
-            f"Premium Mediterranean lifestyle {subject} for '{brief.get('product_name', '')}'. "
-            f"{brief.get('artwork_description', '')} "
-            f"Palette: {', '.join(self._palette(brief))}. "
-            f"Typography: {brief.get('typography_direction', 'elegant serif')}. "
-            f"Editorial, natural light, high-end, conversion-focused. "
-            f"Original work only — no trademarks or copyrighted characters."
-        )
 
     def _alt(self, brief: dict[str, Any], product_type: str, scene: str) -> str:
         name = brief.get("product_name") or product_type

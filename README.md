@@ -156,7 +156,7 @@ python main.py --approve-launch <campaign_id> # approve the design + all product
 `GET /launch/status/{campaign_id}` returns the status;
 `GET /launch/pending` lists designs at Launch Ready.
 
-## Artwork Studio — real commercial image generation
+## Artwork Studio — production commercial image generation
 
 The Artwork Studio (`onassis/artwork.py`) is the production stage that generates
 the **actual image files** required to sell a product — not prompts, not
@@ -175,18 +175,32 @@ Every image passes a **deterministic quality gate** before it is accepted
 **regenerated** up to `image.max_attempts` times, keeping the best result. The
 gate is a measurable check, not a new AI agent.
 
-**The image backend is replaceable** (`onassis/connectors/image_backend.py`) so
-ONASSIS is never locked to one provider:
+**Prompts are built from ONASSIS's commercial brief, not the product title.**
+The `CommercialPromptBuilder` feeds the image model the whole context — customer,
+emotion, lifestyle, colours, mood, intended use/room, and why someone would buy —
+plus **product-specific composition** (a poster, a mug and a t-shirt each get a
+different shot and setting) and a per-scene brief (hero / lifestyle / close-up /
+scale / room). Prompts are optimised for **click-through and conversion**, not
+artistic merit — this is where ONASSIS turns a brief into a sellable listing
+instead of generic AI art.
+
+**Production uses a real image model; the backend is replaceable** via a provider
+registry (`onassis/connectors/image_backend.py`), so more providers can be added
+without touching the pipeline:
 
 | `image.backend` | Behaviour |
 |---|---|
-| `local` *(default)* | Built-in renderer (Pillow) — always produces real files, no API key. |
-| `remote` | OpenAI-compatible `/images/generations` — AI artwork (needs a key). |
-| `auto` | Remote when a key is present, else local. |
+| `auto` *(default)* | The configured `provider` when an API key is present, else the dev renderer. |
+| `remote` | Force the provider (warns + falls back to local if no key). |
+| `local` | The built-in Pillow renderer — **development only**. |
 
-Set `IMAGE_API_KEY` / `OPENAI_API_KEY` and `image.backend: remote` for photo-real
-AI artwork; the local renderer stays the safe, no-key default and is used as a
-fallback if the remote backend errors, so a real file is always produced.
+The default provider is **OpenAI GPT Image** (`gpt-image-1`): transparent PNGs for
+print files, JPEG product photos, quality/size/moderation from config. Set
+`OPENAI_API_KEY` (or `IMAGE_API_KEY`) and it activates automatically. Add another
+provider (Stability, Google, Replicate, …) with a one-line
+`register_image_provider("name", factory)` and select it via `image.provider` —
+no pipeline changes. If the provider errors on an image, the studio falls back to
+the local renderer so a real file is always produced.
 
 ```bash
 python main.py --build-design-package OPP-xxxx   # design brief (the master design)

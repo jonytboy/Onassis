@@ -281,17 +281,20 @@ class ProductionReadiness:
                 "onassis/artwork.py", "Artwork Studio", READY,
                 "Generates the REAL commercial image files — master artwork, print "
                 "file, product artwork, mock-ups and an 8-10 image Etsy gallery — "
-                "each passed through a deterministic quality gate. The image "
-                "backend is replaceable (local renderer by default).",
+                "from ONASSIS's commercial brief (customer, emotion, palette, use), "
+                "each passed through a deterministic quality gate. Production uses "
+                "OpenAI GPT Image via a replaceable provider registry."
+                + (" A production image backend is configured." if image_key else
+                   " The DEVELOPMENT local renderer is active (no image API key)."),
                 [
                     _blocker(
-                        "The default backend is the built-in local renderer; "
-                        "photo-real AI artwork needs a remote image backend.",
-                        LOW,
-                        "0.5 day (set image.backend=remote + an image API key)",
-                        "Set image.backend to 'remote' (or 'auto') and provide "
-                        "IMAGE_API_KEY/OPENAI_API_KEY to generate AI artwork; the "
-                        "local renderer remains the safe, no-key default.",
+                        "No production image API key set — the DEV local renderer "
+                        "produces recognisably basic graphics, not sellable AI artwork.",
+                        MEDIUM,
+                        "0.5 day (set OPENAI_API_KEY; image.backend defaults to auto)",
+                        "Provide IMAGE_API_KEY/OPENAI_API_KEY so the openai provider "
+                        "(gpt-image-1) generates commercial artwork; the local "
+                        "renderer stays as a dev/offline fallback only.",
                     ),
                 ] if not image_key else []),
             self._module(
