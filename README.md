@@ -206,9 +206,17 @@ produces:
 * a complete **Etsy gallery** of **8-10** conversion-focused images.
 
 Every image passes a **deterministic quality gate** before it is accepted
-(valid, correctly sized, not blank/flat, readable detail); a failing image is
-**regenerated** up to `image.max_attempts` times, keeping the best result. The
-gate is a measurable check, not a new AI agent.
+(valid, not blank/flat, readable detail); a failing image is **regenerated** up
+to `image.max_attempts` times, keeping the best result. The gate is a measurable
+check, not a new AI agent.
+
+**Native size → upscale, never re-request.** Image models return a fixed native
+size (GPT Image = 1024²). The quality gate judges *composition, not dimensions* —
+a smaller-than-print image is not a failure, so ONESSIS does **not** burn API
+calls re-requesting a bigger one. The accepted image is the master; print/gallery
+resolution comes from a **replaceable upscaler** (`image.upscaler`, Lanczos by
+default; register an AI upscaler for the highest print quality). Regeneration
+happens only for genuine quality problems.
 
 **Prompts are built from ONASSIS's commercial brief, not the product title.**
 The `CommercialPromptBuilder` feeds the image model the whole context — customer,

@@ -19,8 +19,9 @@ from onassis.artwork import (
 )
 from onassis.connectors.image_backend import (
     GALLERY, MASTER, MOCKUP, PRINT, PRODUCT, ImageBackend, ImageSpec,
-    LocalRenderBackend, OpenAIImageBackend, RemoteImageBackend,
-    build_image_backend, register_image_provider, resolve_colour,
+    LocalRenderBackend, OpenAIImageBackend, PillowUpscaler, RemoteImageBackend,
+    Upscaler, build_image_backend, build_upscaler, register_image_provider,
+    register_upscaler, resolve_colour,
 )
 
 
@@ -85,6 +86,90 @@ def test_review_accepts_a_real_rendered_image():
                      title="Amalfi Mornings")
     data = LocalRenderBackend().generate(spec)
     assert ArtworkReview().evaluate(data, spec)["accepted"] is True
+
+
+def test_qc_does_not_reject_on_dimension_mismatch():
+    # A good 1024² image reviewed against a 3600² target must be ACCEPTED — the
+    # model's native size is not a quality failure (it gets upscaled later).
+    data = LocalRenderBackend().generate(ImageSpec(
+        kind=MASTER, width=1024, height=1024, palette=["ecru", "terracotta"],
+        title="Amalfi Mornings"))
+    spec = ImageSpec(kind=MASTER, width=3600, height=3600,
+                     palette=["ecru", "terracotta"], title="Amalfi Mornings")
+    verdict = ArtworkReview().evaluate(data, spec)
+    assert verdict["accepted"] is True
+    assert verdict["checks"]["source_size"] == [1024, 1024]   # recorded, not judged
+
+
+# --- Upscaling (native model size -> print resolution) --------------
+
+class _Native1024Backend(ImageBackend):
+    """Mimics GPT Image: always returns a rich 1024² image, ignoring target size."""
+
+    name = "native1024"
+
+    def __init__(self):
+        self.calls = 0
+
+    def generate(self, spec: ImageSpec) -> bytes:
+        self.calls += 1
+        native = ImageSpec(kind=spec.kind, width=1024, height=1024,
+                           palette=spec.palette, title=spec.title,
+                           transparent=spec.transparent,
+                           product_type=spec.product_type, scene=spec.scene)
+        return LocalRenderBackend().generate(native)
+
+
+def test_studio_upscales_native_image_without_regenerating(tmp_path):
+    studio = _small_studio(master_px=1600, print_px=2400, gallery_px=1000)
+    backend = _Native1024Backend()
+    studio._backend = backend
+    result = studio.generate_master(_brief(), tmp_path)
+
+    # The 1024² source was upscaled to the configured print targets.
+    assert Image.open(tmp_path / "master_artwork.png").size == (1600, 1600)
+    assert Image.open(tmp_path / "print_file.png").size == (2400, 2400)
+    assert Image.open(tmp_path / "print_file.png").mode == "RGBA"   # alpha kept
+    assert result["master_review"]["accepted"] and result["print_review"]["accepted"]
+    # NO wasted regenerations: exactly one backend call per image (master + print).
+    assert backend.calls == 2
+
+
+def test_gallery_images_are_upscaled_jpegs(tmp_path):
+    studio = _small_studio(gallery_px=1000)
+    backend = _Native1024Backend()
+    studio._backend = backend
+    studio.build_product_gallery(
+        _brief(), {"product_key": "ceramic_mug", "product_name": "Ceramic Mug"},
+        tmp_path / "images")
+    hero = Image.open(tmp_path / "images" / "hero.jpg")
+    assert hero.size == (1000, 1000) and hero.format == "JPEG"
+    assert backend.calls == studio.gallery_count   # one call each, no size regens
+
+
+def test_pillow_upscaler_resizes_and_respects_format():
+    buf = io.BytesIO()
+    Image.new("RGBA", (1024, 1024), (200, 150, 120, 255)).save(buf, "PNG")
+    src = buf.getvalue()
+    png = PillowUpscaler().upscale(src, 3600, 3600, fmt="PNG")
+    out = Image.open(io.BytesIO(png))
+    assert out.size == (3600, 3600) and out.mode == "RGBA"     # alpha preserved
+    jpg = PillowUpscaler().upscale(src, 1200, 1200, fmt="JPEG")
+    out2 = Image.open(io.BytesIO(jpg))
+    assert out2.size == (1200, 1200) and out2.format == "JPEG"  # flattened photo
+
+
+def test_build_upscaler_default_and_registry():
+    assert isinstance(build_upscaler(SimpleNamespace(image={})), PillowUpscaler)
+
+    class _Noop(Upscaler):
+        name = "noop"
+
+        def upscale(self, data, w, h, *, fmt="JPEG"):
+            return data
+
+    register_upscaler("noop_test", lambda cfg: _Noop())
+    assert build_upscaler(SimpleNamespace(image={"upscaler": "noop_test"})).name == "noop"
 
 
 # --- Master artwork + print file ------------------------------------

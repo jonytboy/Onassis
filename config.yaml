@@ -378,8 +378,11 @@ image:
   timeout: 180                 # seconds per image (generation can be slow)
   # api_key is read from IMAGE_API_KEY / OPENAI_API_KEY (never hard-code it).
   gallery_count: 9             # Etsy gallery images per product (8-10)
-  max_attempts: 3              # QC regeneration attempts before best-effort accept
-  master_px: 2048              # master artwork square size
+  max_attempts: 3              # QC regenerations for GENUINE quality failures only
+  # The model returns its native size (GPT Image = 1024²); the accepted image is
+  # the master and is UPSCALED to these targets — never re-requested larger.
+  upscaler: pillow             # pillow (Lanczos) | register an AI upscaler provider
+  master_px: 2048              # master artwork square size (upscale target)
   print_px: 3600               # print file size (~300 DPI, A3-ish print area)
   gallery_px: 1200             # commercial gallery image size
   quality_gate:                # the deterministic quality gate thresholds

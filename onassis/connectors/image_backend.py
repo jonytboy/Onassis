@@ -491,3 +491,71 @@ def build_image_backend(config: Any) -> ImageBackend:
         log.warning("Production image backend unavailable (provider=%s, key=%s) — "
                     "falling back to the DEV local renderer.", provider, bool(api_key))
     return LocalRenderBackend()
+
+
+# --- Upscaling (native model output -> print resolution) ------------
+
+class Upscaler:
+    """Turns an accepted image into print/target resolution — replaceable.
+
+    Image models return a fixed native size (e.g. GPT Image = 1024²); the studio
+    never re-requests a bigger image (that just burns API calls), it **upscales**
+    the accepted master. The default resamples with Pillow; a real AI upscaler
+    (Real-ESRGAN, Topaz, a Replicate model, …) can be registered and selected via
+    ``image.upscaler`` with no pipeline change.
+    """
+
+    name = "base"
+
+    def upscale(self, data: bytes, target_w: int, target_h: int,
+                *, fmt: str = "JPEG") -> bytes:  # pragma: no cover - interface
+        raise NotImplementedError
+
+
+class PillowUpscaler(Upscaler):
+    """High-quality Lanczos resample + canonical re-encode (PNG keeps alpha)."""
+
+    name = "pillow"
+
+    def upscale(self, data: bytes, target_w: int, target_h: int,
+                *, fmt: str = "JPEG") -> bytes:
+        from PIL import Image
+
+        img = Image.open(io.BytesIO(data))
+        img.load()
+        if fmt.upper() == "PNG":
+            if img.mode not in ("RGBA", "RGB"):
+                img = img.convert("RGBA")
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+        if (img.width, img.height) != (target_w, target_h):
+            img = img.resize((target_w, target_h), Image.LANCZOS)
+        buf = io.BytesIO()
+        if fmt.upper() == "PNG":
+            img.save(buf, format="PNG")
+        else:
+            img.save(buf, format="JPEG", quality=92)
+        return buf.getvalue()
+
+
+_UPSCALERS: dict[str, Any] = {}
+
+
+def register_upscaler(name: str, factory: Any) -> None:
+    """Register an upscaler factory ``factory(cfg) -> Upscaler`` (e.g. an AI
+    upscaler provider), selectable via ``image.upscaler`` with no pipeline change."""
+    _UPSCALERS[name.lower()] = factory
+
+
+register_upscaler("pillow", lambda cfg: PillowUpscaler())
+
+
+def build_upscaler(config: Any) -> Upscaler:
+    """Select the upscaler from ``image.upscaler`` (default: pillow)."""
+    cfg = getattr(config, "image", None) or {}
+    name = str(cfg.get("upscaler", "pillow")).lower()
+    factory = _UPSCALERS.get(name)
+    if factory is None:
+        log.warning("Unknown image.upscaler '%s' — using pillow.", name)
+        factory = _UPSCALERS["pillow"]
+    return factory(cfg)
