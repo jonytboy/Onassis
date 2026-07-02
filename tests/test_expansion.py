@@ -63,13 +63,53 @@ def test_plan_launches_only_the_commercial_set(engine, db):
     # Not everything launches — the objective isn't product count.
     assert 1 <= plan["products_launched"] < plan["products_scored"]
     launched_keys = {s["product_key"] for s in plan["launched"]}
-    # The strongest Mediterranean products clear the bar; the weakest don't.
+    # The strongest Mediterranean products lead; the weakest never launch.
     assert "ceramic_mug" in launched_keys
     assert "hardcover_notebook" not in launched_keys
-    # Every launched product is at/above the threshold and CEO-approved.
+    # A product the CEO rejects is NEVER launched, whatever the mode.
     for s in plan["launched"]:
-        assert s["composite_score"] >= engine.threshold
         assert s["ceo_verdict"] == "APPROVE"
+    for s in plan["scored"]:
+        if s["ceo_verdict"] != "APPROVE":
+            assert not s["launched"]
+
+
+def test_cold_start_guarantees_min_variants(engine, db):
+    """Cold start: fewer than min_variants clear the threshold, so the engine
+    tops up with the best CEO-approved products to reach the minimum."""
+    plan = engine.plan(1)
+    assert plan["selection_mode"] == "cold_start"
+    assert engine.min_variants <= plan["products_launched"] <= engine.max_variants
+    # The two threshold-clearers plus a top-up to reach min_variants (3).
+    launched = plan["launched"]
+    assert sum(s["composite_score"] >= engine.threshold for s in launched) >= 2
+    # The top-up product is below threshold but still CEO-approved.
+    below = [s for s in launched if s["composite_score"] < engine.threshold]
+    assert below and all(s["ceo_verdict"] == "APPROVE" for s in below)
+
+
+def test_variants_capped_at_max(config, db):
+    """Even with a very low threshold, no more than max_variants launch."""
+    config.expansion = {**config.expansion, "score_threshold": 1, "max_variants": 4}
+    engine = RevenueExpansionEngine(config, db)
+    plan = engine.plan(1)
+    assert plan["selection_mode"] == "threshold"
+    assert plan["products_launched"] == 4  # capped, not all ten CEO-approved
+
+
+def test_cold_start_never_launches_a_ceo_rejection(config, db):
+    """With cold start on but every product rejected, nothing launches."""
+    from onassis.proposals import REJECT
+
+    class _RejectAll:
+        def evaluate(self, proposal, store=False):
+            return {"verdict": REJECT, "reasoning": "policy: reject all"}
+
+    engine = RevenueExpansionEngine(config, db)
+    engine.ceo = _RejectAll()
+    plan = engine.plan(1)
+    assert plan["products_launched"] == 0
+    assert all(not s["launched"] for s in plan["scored"])
 
 
 def test_plan_records_scores_and_registers_products(engine, db):
@@ -84,9 +124,11 @@ def test_plan_records_scores_and_registers_products(engine, db):
 
 
 def test_threshold_is_configurable(config, db):
-    config.expansion = {**config.expansion, "score_threshold": 101}  # nothing qualifies
+    # Nothing qualifies and cold start is off -> a pure threshold launch of 0.
+    config.expansion = {**config.expansion, "score_threshold": 101, "cold_start": False}
     engine = RevenueExpansionEngine(config, db)
     plan = engine.plan(1)
+    assert plan["selection_mode"] == "threshold"
     assert plan["products_launched"] == 0
     assert all(not s["launched"] for s in plan["scored"])
 

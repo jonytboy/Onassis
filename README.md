@@ -130,6 +130,30 @@ python main.py --publish <campaign_id> --mode draft   # or --mode dry_run
 `POST /publish/{campaign_id}/products` publishes every approved product's draft;
 `GET /publishing/status` returns the publication log summary.
 
+## Launch Engine — one approval launches the whole design
+
+Each daily cycle produces a **master design + its CEO-approved product set**
+(the cold-start 3-5). The Launch Engine (`launch()` in `onassis/publishing.py`)
+drafts every approved product and reaches **Launch Ready**, then applies the
+configured launch policy (`launch.policy` in config):
+
+* **`manual`** *(default)* — everything is drafted and waits for a **single
+  approval**. One `approve_launch(campaign_id)` action launches the master design
+  and **every** approved product derived from it together — not one approval per
+  product.
+* **`scheduled`** — same as manual (drafts + waits); a scheduler can approve.
+* **`automatic`** — the launch is approved immediately, no human step.
+
+Launch status is `none → launch_ready → launched`.
+
+```bash
+python main.py --pending-launches            # designs awaiting one approval
+python main.py --approve-launch <campaign_id> # approve the design + all products
+```
+`POST /launch/approve/{campaign_id}` approves in one action;
+`GET /launch/status/{campaign_id}` returns the status;
+`GET /launch/pending` lists designs at Launch Ready.
+
 ## Listing Factory — upload-ready Etsy packages (no publishing)
 
 The Listing Factory (`onassis/listing_factory.py`) turns an **approved**
@@ -285,9 +309,16 @@ launch). All ten are verified available on Gelato's current catalogue.
 For every design it scores each product 0-100 on **brand fit, commercial
 suitability, estimated conversion, expected profit, production cost, retail
 price, and historical performance**. The composite is deterministic (weights in
-config); the **CEO launches only products at/above the threshold (default 80)**
-as investments under company policy. A design may launch on one product or all
-ten depending on suitability.
+config); the **CEO evaluates every product as an investment — a product the CEO
+rejects is never launched.** Products at/above the threshold (default 80) form
+the strict set.
+
+**Cold start.** With no sales history yet, few products clear the threshold, so
+the engine tops up with the best CEO-approved products to guarantee a healthy
+launch — between `min_variants` (default 3) and `max_variants` (default 5) per
+design (`cold_start: true` in config). Once real sales accumulate, more products
+clear the threshold on merit and cold-start top-up stops mattering. A CEO
+rejection always overrides cold start.
 
 **It learns from its own sales.** `learn_from_sales()` recomputes per-product-
 type performance from real orders, so if mugs outperform notebooks for

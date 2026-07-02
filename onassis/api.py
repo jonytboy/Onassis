@@ -291,6 +291,21 @@ def create_app(config: Config | None = None) -> FastAPI:
         """Publish each CEO-approved product's listing as an Etsy draft."""
         return publisher.publish_products(campaign_id, mode=mode)
 
+    @app.post("/launch/approve/{campaign_id}", tags=["publishing"])
+    def approve_launch(campaign_id: int) -> dict[str, Any]:
+        """One approval — approve the master design and every approved product."""
+        return publisher.approve_launch(campaign_id, by="owner")
+
+    @app.get("/launch/status/{campaign_id}", tags=["publishing"])
+    def launch_status(campaign_id: int) -> dict[str, Any]:
+        """A design's launch status (none | launch_ready | launched)."""
+        return publisher.launch_status(campaign_id)
+
+    @app.get("/launch/pending", tags=["publishing"])
+    def pending_launches() -> list[dict[str, Any]]:
+        """Designs at Launch Ready awaiting a single approval."""
+        return publisher.pending_launches()
+
     @app.get("/publishing/status", tags=["publishing"])
     def publishing_status() -> dict[str, Any]:
         """Publication log summary (counts by status + recent publications)."""

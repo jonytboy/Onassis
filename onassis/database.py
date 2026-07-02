@@ -374,6 +374,18 @@ CREATE TABLE IF NOT EXISTS product_scores (
 
 CREATE INDEX IF NOT EXISTS idx_product_scores_campaign ON product_scores(campaign_id);
 
+-- One launch per design (campaign): the whole approved product set is approved
+-- for publication in a single action.
+CREATE TABLE IF NOT EXISTS launches (
+    campaign_id  INTEGER PRIMARY KEY,
+    status       TEXT    NOT NULL,          -- launch_ready | launched
+    policy       TEXT    NOT NULL,          -- manual | scheduled | automatic
+    products     INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT    NOT NULL,
+    approved_at  TEXT,
+    approved_by  TEXT
+);
+
 -- Learned performance per product type (updated from real sales history).
 CREATE TABLE IF NOT EXISTS product_performance (
     product_key   TEXT    PRIMARY KEY,
@@ -1674,6 +1686,51 @@ class Database:
             rows = conn.execute(
                 "SELECT * FROM product_performance ORDER BY net_profit DESC"
             ).fetchall()
+        return [dict(r) for r in rows]
+
+    # --- Launches (single-approval product-set launch) --------------
+
+    def upsert_launch(self, launch: dict[str, Any]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO launches
+                    (campaign_id, status, policy, products, created_at, approved_at, approved_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(campaign_id) DO UPDATE SET
+                    status = excluded.status,
+                    policy = excluded.policy,
+                    products = excluded.products,
+                    approved_at = excluded.approved_at,
+                    approved_by = excluded.approved_by
+                """,
+                (
+                    launch["campaign_id"],
+                    launch["status"],
+                    launch.get("policy", "manual"),
+                    int(launch.get("products", 0)),
+                    launch.get("created_at") or _utcnow(),
+                    launch.get("approved_at"),
+                    launch.get("approved_by"),
+                ),
+            )
+
+    def get_launch(self, campaign_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM launches WHERE campaign_id = ?", (campaign_id,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_launches(self, status: str | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM launches"
+        params: list[Any] = []
+        if status is not None:
+            sql += " WHERE status = ?"
+            params.append(status)
+        sql += " ORDER BY campaign_id DESC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
 

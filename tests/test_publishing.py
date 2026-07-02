@@ -217,6 +217,82 @@ def test_draft_not_configured_without_client_or_creds(config, db, tmp_path):
     assert pub.publish(cid, mode="draft")["status"] == "not_configured"
 
 
+# --- Launch policy (single approval → whole approved set) -----------
+
+def _launched_campaign(publisher, db, tmp_path, keys=("ceramic_mug", "premium_poster")):
+    cid = _approved_campaign(db)
+    for key in keys:
+        _launch(db, cid, key)
+        _write_product_package(tmp_path, cid, key)
+    return cid
+
+
+def test_manual_policy_reaches_launch_ready_and_waits(config, db, tmp_path):
+    config.listing = {"exports_dir": str(tmp_path / "exports")}
+    config.publishing = {"enabled_modes": ["draft"], "max_retries": 3}
+    config.launch = {"policy": "manual"}
+    pub = PublisherService(config, db, draft_client=StubDraftClient())
+    cid = _launched_campaign(pub, db, tmp_path)
+
+    result = pub.launch(cid, mode="draft")
+    # Manual mode drafts everything but waits for a single approval.
+    assert result["status"] == "launch_ready"
+    assert result["policy"] == "manual"
+    assert result["drafts"]["published"] == 2
+    assert db.get_launch(cid)["status"] == "launch_ready"
+    assert cid in {r["campaign_id"] for r in pub.pending_launches()}
+
+
+def test_automatic_policy_launches_immediately(config, db, tmp_path):
+    config.listing = {"exports_dir": str(tmp_path / "exports")}
+    config.publishing = {"enabled_modes": ["draft"], "max_retries": 3}
+    config.launch = {"policy": "automatic"}
+    pub = PublisherService(config, db, draft_client=StubDraftClient())
+    cid = _launched_campaign(pub, db, tmp_path)
+
+    result = pub.launch(cid, mode="draft")
+    assert result["status"] == "launched"
+    assert result["policy"] == "automatic"
+    assert db.get_launch(cid)["status"] == "launched"
+    assert db.get_launch(cid)["approved_by"] == "automatic"
+    assert pub.pending_launches() == []  # nothing left waiting
+
+
+def test_single_approval_covers_every_product(config, db, tmp_path):
+    config.listing = {"exports_dir": str(tmp_path / "exports")}
+    config.publishing = {"enabled_modes": ["draft"], "max_retries": 3}
+    config.launch = {"policy": "manual"}
+    pub = PublisherService(config, db, draft_client=StubDraftClient())
+    cid = _launched_campaign(pub, db, tmp_path, keys=("ceramic_mug", "premium_poster",
+                                                       "premium_tshirt"))
+    pub.launch(cid, mode="draft")
+
+    # One approval action launches the master design + every approved product.
+    approval = pub.approve_launch(cid)
+    assert approval["status"] == "launched"
+    assert set(approval["products"]) == {"ceramic_mug", "premium_poster", "premium_tshirt"}
+    assert db.get_launch(cid)["status"] == "launched"
+    assert db.get_launch(cid)["approved_by"] == "owner"
+
+
+def test_approve_launch_blocked_when_not_launch_ready(publisher, db):
+    cid = _approved_campaign(db)
+    result = publisher.approve_launch(cid)
+    assert result["status"] == "blocked"
+    assert "not Launch Ready" in result["reason"]
+
+
+def test_launch_blocked_without_approved_products(config, db, tmp_path):
+    config.listing = {"exports_dir": str(tmp_path / "exports")}
+    config.publishing = {"enabled_modes": ["draft"], "max_retries": 3}
+    config.launch = {"policy": "manual"}
+    pub = PublisherService(config, db, draft_client=StubDraftClient())
+    cid = _approved_campaign(db)  # no launched products
+    result = pub.launch(cid, mode="draft")
+    assert result["status"] == "blocked"
+    assert db.get_launch(cid) is None
+
+
 # --- Status ---------------------------------------------------------
 
 def test_status_summary(publisher, db, tmp_path):

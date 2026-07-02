@@ -154,6 +154,10 @@ def test_production_runs_full_pipeline_and_publishes(production_cycle, db):
     assert by_stage["Publish Draft"]["status"] == "ok"
     assert by_stage["Publish Draft"]["detail"]["published"] >= 1
     assert all(r["status"] == "draft" for r in by_stage["Publish Draft"]["detail"]["results"])
+    # Launch Engine: the default (manual) policy drafts everything and waits
+    # for a single approval, so the cycle ends Launch Ready.
+    assert by_stage["Publish Draft"]["detail"]["launch_status"] == "launch_ready"
+    assert summary["launch_status"] == "launch_ready"
     assert summary["status"] == "completed"
 
     # Marketing was generated only AFTER the product (listing) existed.

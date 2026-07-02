@@ -120,6 +120,7 @@ class DailyCycle:
             "listing_ready": ctx.get("listing_ready", False),
             "assets_created": ctx.get("content_items", 0),
             "products_launched": (ctx.get("expansion") or {}).get("products_launched", 0),
+            "launch_status": (ctx.get("launch") or {}).get("status"),
         }
 
     # --- Stage runner -----------------------------------------------
@@ -282,16 +283,18 @@ class DailyCycle:
         return {"status": "ok", "detail": {"items": len(content["items"])}}
 
     def _publish(self, ctx: dict[str, Any]) -> dict[str, Any]:
-        """Publish each CEO-approved product's listing as an Etsy draft."""
+        """Draft each approved product and reach Launch Ready (launch policy)."""
         if ctx["dry"]:
             return {"status": "skipped", "detail": "dry run"}
         cid = ctx.get("campaign_id")
         if not cid:
             return {"status": "skipped", "detail": "no campaign to publish"}
-        result = self.publisher.publish_products(cid, mode="draft")
+        result = self.publisher.launch(cid, mode="draft")
         if result.get("status") == "blocked":
             return {"status": "skipped", "detail": result.get("reason")}
-        statuses = [r["status"] for r in result.get("results", [])]
+        ctx["launch"] = result
+        drafts = result.get("drafts", {})
+        statuses = [r["status"] for r in drafts.get("results", [])]
         if any(s in ("draft", "dry_run") for s in statuses):
             mapped = "ok"
         elif any(s == "failed" for s in statuses):
@@ -299,7 +302,8 @@ class DailyCycle:
         else:
             mapped = "skipped"
         return {"status": mapped, "detail": {
-            "published": result.get("published", 0), "results": result.get("results", [])}}
+            "launch_status": result["status"], "policy": result.get("policy"),
+            "published": drafts.get("published", 0), "results": drafts.get("results", [])}}
 
     # --- Reads ------------------------------------------------------
 

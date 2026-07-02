@@ -58,6 +58,9 @@ class RevenueExpansionEngine:
         self.db = db
         self.cfg = config.expansion or {}
         self.threshold = float(self.cfg.get("score_threshold", 80))
+        self.min_variants = int(self.cfg.get("min_variants", 3))
+        self.max_variants = int(self.cfg.get("max_variants", 5))
+        self.cold_start = bool(self.cfg.get("cold_start", True))
         self.fees_rate = float(self.cfg.get("fees_rate", 0.105))
         self.weights = {**_DEFAULT_WEIGHTS, **(self.cfg.get("weights") or {})}
         self.ceo = CEOAgent(config, db)
@@ -161,30 +164,46 @@ class RevenueExpansionEngine:
         self, campaign: dict[str, Any] | int,
         opportunity: dict[str, Any] | None = None, *, store: bool = True,
     ) -> dict[str, Any]:
-        """Score, let the CEO launch products above threshold, and record it.
+        """Score, let the CEO launch the profitable set, and record it.
 
-        Returns the launch plan for the design: which products were scored, and
-        which the CEO launched (composite >= threshold *and* an approved
-        investment). Launched products are registered as Product investments.
+        Launch rule (cold-start aware, quality over quantity):
+        * The CEO evaluates every product as an investment; only approved
+          products can ever launch — never launch a product the CEO rejects.
+        * Products with composite >= threshold form the strict set.
+        * If that yields at least ``min_variants``, launch them (capped at
+          ``max_variants``).
+        * Otherwise, with ``cold_start`` on, launch the top CEO-approved
+          products to reach ``min_variants`` (still capped at ``max_variants``) —
+          so ONASSIS keeps creating products while sales history builds.
+
+        Launched products are registered as Product investments.
         """
         campaign_id = campaign["id"] if isinstance(campaign, dict) else campaign
         opp_id = (opportunity or {}).get("opportunity_id")
         scored = self.score_design(campaign if isinstance(campaign, dict) else None, opportunity)
 
+        # The CEO evaluates each product as an investment (deterministic).
+        for s in scored:
+            decision = self._ceo_review(s, campaign_id)
+            s["ceo_verdict"] = decision["verdict"]
+            s["_ceo_reasoning"] = decision["reasoning"]
+
+        ceo_ok = [s for s in scored if s["ceo_verdict"] == APPROVE]  # composite desc
+        strict = [s for s in ceo_ok if s["composite_score"] >= self.threshold]
+        if len(strict) >= self.min_variants:
+            chosen, mode = strict[: self.max_variants], "threshold"
+        elif self.cold_start and ceo_ok:
+            count = min(self.max_variants, max(self.min_variants, len(strict)))
+            chosen, mode = ceo_ok[:count], "cold_start"
+        else:
+            chosen, mode = strict[: self.max_variants], "threshold"
+        chosen_keys = {s["product_key"] for s in chosen}
+
         launched: list[dict[str, Any]] = []
         for s in scored:
-            if s["composite_score"] >= self.threshold:
-                decision = self._ceo_review(s, campaign_id)
-                s["ceo_verdict"] = decision["verdict"]
-                s["launched"] = decision["verdict"] == APPROVE
-                s["reasoning"] = decision["reasoning"]
-            else:
-                s["ceo_verdict"] = "REJECT"
-                s["launched"] = False
-                s["reasoning"] = (
-                    f"Composite {s['composite_score']:.0f}/100 is below the launch "
-                    f"threshold {self.threshold:.0f} — not a commercial case."
-                )
+            s["launched"] = s["product_key"] in chosen_keys
+            s["reasoning"] = self._launch_reason(s, mode)
+            s.pop("_ceo_reasoning", None)
             if store:
                 self.db.insert_product_score(
                     {**s, "campaign_id": campaign_id, "opportunity_id": opp_id})
@@ -194,19 +213,33 @@ class RevenueExpansionEngine:
                 launched.append(s)
 
         log.info(
-            "Expansion plan for campaign #%s: launched %d/%d product(s) (threshold %.0f).",
-            campaign_id, len(launched), len(scored), self.threshold,
+            "Expansion plan for campaign #%s: launched %d/%d product(s) (%s, threshold %.0f).",
+            campaign_id, len(launched), len(scored), mode, self.threshold,
         )
         return {
             "campaign_id": campaign_id,
             "opportunity_id": opp_id,
             "threshold": self.threshold,
+            "selection_mode": mode,
             "products_scored": len(scored),
             "products_launched": len(launched),
             "skipped_unavailable": self._unavailable(),
             "launched": launched,
             "scored": scored,
         }
+
+    def _launch_reason(self, s: dict[str, Any], mode: str) -> str:
+        ceo = s.get("_ceo_reasoning", "")
+        if s["launched"]:
+            if s["composite_score"] >= self.threshold:
+                return (f"Launched: composite {s['composite_score']:.0f} >= "
+                        f"{self.threshold:.0f}, CEO-approved investment.")
+            return (f"Launched (cold start): CEO-approved investment while sales "
+                    f"history builds (composite {s['composite_score']:.0f}).")
+        if s["ceo_verdict"] != APPROVE:
+            return f"Not launched: CEO rejected the investment. {ceo}"
+        return (f"Not launched: composite {s['composite_score']:.0f} outside the top "
+                f"{self.max_variants} for this design.")
 
     def _ceo_review(self, s: dict[str, Any], campaign_id: int | None) -> dict[str, Any]:
         composite = s["composite_score"]

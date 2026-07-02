@@ -72,6 +72,7 @@ class Config:
     opportunity: dict[str, Any] = field(default_factory=dict)
     design: dict[str, Any] = field(default_factory=dict)
     expansion: dict[str, Any] = field(default_factory=dict)
+    launch: dict[str, Any] = field(default_factory=dict)
 
     # secrets / future integrations
     anthropic_api_key: str | None = None
@@ -123,6 +124,7 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
     opportunity = raw.get("opportunity", {})
     design = raw.get("design", {})
     expansion = raw.get("expansion", {})
+    launch = raw.get("launch", {})
     etsy = raw.get("etsy", {})
     pinterest = raw.get("pinterest", {})
     pinterest = {
@@ -178,5 +180,6 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         opportunity=opportunity,
         design=design,
         expansion=expansion,
+        launch=launch,
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
     )

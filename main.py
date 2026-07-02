@@ -160,6 +160,14 @@ def _parse_args() -> argparse.Namespace:
         help="Publish a campaign's listing package (Draft mode).",
     )
     parser.add_argument(
+        "--approve-launch", type=int, metavar="CAMPAIGN_ID",
+        help="One approval — launch the master design and every CEO-approved product.",
+    )
+    parser.add_argument(
+        "--pending-launches", action="store_true",
+        help="List designs awaiting a launch approval (Launch Ready).",
+    )
+    parser.add_argument(
         "--mode", default=None, help="Publishing mode (dry_run | draft).",
     )
     parser.add_argument(
@@ -690,6 +698,35 @@ def main() -> int:
               + (f" (listing {result['publication']['listing_id']})"
                  if result.get("publication", {}).get("listing_id") else ""))
         return 0 if result["status"] in ("draft", "dry_run") else 1
+
+    if args.approve_launch is not None:
+        from onassis.publishing import PublisherService
+
+        result = PublisherService(config, db).approve_launch(args.approve_launch)
+        if result["status"] == "blocked":
+            print(f"Launch approval blocked for campaign #{args.approve_launch}: "
+                  f"{result['reason']}")
+            return 1
+        products = result.get("products", [])
+        print(f"\nLAUNCH APPROVED — campaign #{args.approve_launch} "
+              f"(by {result['approved_by']})")
+        print(f"  {len(products)} product(s) ready to publish: "
+              f"{', '.join(products) if products else '—'}\n")
+        return 0
+
+    if args.pending_launches:
+        from onassis.publishing import PublisherService
+
+        rows = PublisherService(config, db).pending_launches()
+        if not rows:
+            print("No designs awaiting launch approval.")
+            return 0
+        print(f"\nPENDING LAUNCHES — {len(rows)} design(s) awaiting approval\n")
+        for r in rows:
+            print(f"  campaign #{r['campaign_id']}  policy {r.get('policy', '-'):<9}  "
+                  f"{r.get('products', 0)} product(s)  (since {(r.get('created_at') or '')[:10]})")
+        print()
+        return 0
 
     if args.set_status is not None:
         cid, status = args.set_status

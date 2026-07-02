@@ -169,6 +169,12 @@ opportunity:
 # lifetime profit per design. Sales history continually adjusts the scores.
 expansion:
   score_threshold: 80            # CEO launches products scoring >= this (0-100)
+  # Cold start: with little/no sales history, keep creating products while
+  # learning — never stop just because confidence is imperfect. Each cycle
+  # launches 3-5 CEO-approved variants (quality over quantity, never all ten).
+  min_variants: 3                # guarantee at least this many CEO-approved variants
+  max_variants: 5                # never launch more than this per design
+  cold_start: true               # relax the threshold to reach min_variants (CEO still gates)
   fees_rate: 0.105               # marketplace + payment fees, for profit/margin
   weights:                       # composite-score weights (need not sum to 1)
     brand_fit: 0.25
@@ -270,6 +276,16 @@ expansion:
       base_conversion: 0.035
       base_commercial: 68
       available: true
+
+# --- Launch policy ---------------------------------------------------
+# The pipeline always completes automatically up to "Launch Ready" (a design
+# plus its CEO-approved product drafts). This policy governs the final launch:
+#   manual    — wait for one approval (`--approve-launch <campaign_id>`), which
+#               approves the master design AND every approved product at once.
+#   scheduled — reach Launch Ready and wait for a scheduled approval.
+#   automatic — approve the launch automatically at the end of the cycle.
+launch:
+  policy: manual
 
 # --- Design Package Builder ------------------------------------------
 # Turns ONE CEO-approved opportunity into a print-ready design package. It does

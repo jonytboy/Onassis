@@ -361,6 +361,45 @@ def test_publish_unapproved_blocked(app_and_client):
     assert client.post(f"/publish/{cid}").json()["status"] == "blocked"
 
 
+def test_launch_endpoints_single_approval(app_and_client, tmp_path):
+    import json as _json
+    from pathlib import Path
+
+    app, client = app_and_client
+    db = app.state.db
+    brief_id = db.insert_brief({"brief_date": "2026-06-26", "theme": "T", "keywords": []})
+    cid = db.insert_campaign({"name": "Salt", "brief_id": brief_id})
+    db.insert_compliance_report({"campaign_id": cid, "verdict": "APPROVE",
+                                 "reasoning": "ok", "compliance_score": 90})
+    app.state.publisher.listing_cfg = {"exports_dir": str(tmp_path / "exports")}
+
+    class _Stub:
+        def create_draft(self, listing):
+            return {"listing_id": 999}
+    app.state.publisher._draft_client = _Stub()
+
+    for key in ("ceramic_mug", "premium_poster"):
+        db.insert_product_score({"campaign_id": cid, "product_key": key, "product_name": key,
+                                 "launched": 1, "composite_score": 85, "ceo_verdict": "APPROVE"})
+        folder = Path(tmp_path / "exports") / str(cid) / key
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "listing.json").write_text(_json.dumps(
+            {"campaign_id": cid, "product_id": f"{cid}-{key}", "product_key": key,
+             "title": "T", "description": "d", "tags": ["a"], "price": 22.0, "quantity": 50}))
+
+    # Manual policy: drafting happens via the daily cycle; here we reach
+    # Launch Ready by drafting the products, then approve in one action.
+    app.state.publisher.launch(cid, mode="draft")
+    assert cid in {r["campaign_id"] for r in client.get("/launch/pending").json()}
+    assert client.get(f"/launch/status/{cid}").json()["status"] == "launch_ready"
+
+    approved = client.post(f"/launch/approve/{cid}").json()
+    assert approved["status"] == "launched"
+    assert set(approved["products"]) == {"ceramic_mug", "premium_poster"}
+    assert client.get(f"/launch/status/{cid}").json()["status"] == "launched"
+    assert client.get("/launch/pending").json() == []
+
+
 # --- Listing endpoint -----------------------------------------------
 
 def test_listing_endpoint(app_and_client):
@@ -636,6 +675,8 @@ def test_swagger_docs_available(app_and_client):
                  "/expansion/catalogue", "/expansion/plan/{campaign_id}",
                  "/expansion/performance",
                  "/publish/{campaign_id}", "/publishing/status",
+                 "/launch/approve/{campaign_id}", "/launch/status/{campaign_id}",
+                 "/launch/pending",
                  "/analytics", "/analytics/product/{product_id}",
                  "/analytics/campaign/{campaign_id}",
                  "/experiments", "/experiments/{experiment_id}", "/experiments/active",

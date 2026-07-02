@@ -48,6 +48,7 @@ class PublisherService:
         self.max_retries = int(self.cfg.get("max_retries", 3))
         self.enabled_modes = set(self.cfg.get("enabled_modes", [DRY_RUN, DRAFT]))
         self.default_mode = self.cfg.get("default_mode", DRAFT)
+        self.launch_policy = (config.launch or {}).get("policy", "manual")
         self._draft_client = draft_client
 
     # --- Configuration ----------------------------------------------
@@ -164,6 +165,59 @@ class PublisherService:
         pub["id"] = self.db.insert_publication(pub)
         return {"status": "failed", "campaign_id": campaign_id,
                 "reason": last_error, "publication": pub}
+
+    # --- Launch policy (single approval → whole approved set) --------
+
+    def launch(self, campaign_id: int, mode: str | None = None) -> dict[str, Any]:
+        """Draft every approved product, reach Launch Ready, apply the policy.
+
+        The pipeline always completes to **Launch Ready** (drafts created). The
+        launch policy then decides the final step:
+        * ``manual`` / ``scheduled`` — wait for one approval (:meth:`approve_launch`).
+        * ``automatic`` — approve the launch immediately.
+        """
+        drafts = self.publish_products(campaign_id, mode=mode)
+        if drafts.get("status") == "blocked":
+            return {"status": "blocked", "campaign_id": campaign_id,
+                    "reason": drafts.get("reason"), "drafts": drafts}
+
+        self.db.upsert_launch({"campaign_id": campaign_id, "status": "launch_ready",
+                               "policy": self.launch_policy,
+                               "products": drafts.get("published", 0)})
+        if self.launch_policy == "automatic":
+            approval = self.approve_launch(campaign_id, by="automatic")
+            return {"status": "launched", "campaign_id": campaign_id,
+                    "policy": self.launch_policy, "drafts": drafts, "launch": approval}
+        return {"status": "launch_ready", "campaign_id": campaign_id,
+                "policy": self.launch_policy, "drafts": drafts,
+                "launch": self.db.get_launch(campaign_id)}
+
+    def approve_launch(self, campaign_id: int, by: str = "owner") -> dict[str, Any]:
+        """Approve a design's launch in **one action** — master design + all its
+        CEO-approved product drafts become ready for publication together."""
+        from datetime import datetime, timezone
+
+        launch = self.db.get_launch(campaign_id)
+        if launch is None:
+            return {"status": "blocked", "campaign_id": campaign_id,
+                    "reason": "Nothing to approve — the design is not Launch Ready."}
+        products = [s for s in self.db.list_product_scores(campaign_id) if s.get("launched")]
+        self.db.upsert_launch({
+            **launch, "status": "launched",
+            "approved_at": datetime.now(timezone.utc).isoformat(), "approved_by": by,
+        })
+        log.info("Launch approved for campaign #%s by %s — %d product(s) ready to publish.",
+                 campaign_id, by, len(products))
+        return {"status": "launched", "campaign_id": campaign_id, "approved_by": by,
+                "products": [s["product_key"] for s in products]}
+
+    def launch_status(self, campaign_id: int) -> dict[str, Any]:
+        return self.db.get_launch(campaign_id) or {"campaign_id": campaign_id,
+                                                   "status": "none"}
+
+    def pending_launches(self) -> list[dict[str, Any]]:
+        """Designs awaiting a launch approval (Launch Ready, not yet launched)."""
+        return self.db.list_launches(status="launch_ready")
 
     # --- Status -----------------------------------------------------
 
