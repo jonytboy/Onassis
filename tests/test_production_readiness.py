@@ -59,10 +59,15 @@ def test_pinterest_is_development_only(pr):
     assert any("fetch_metrics" in b["description"] for b in pin["blockers"])
 
 
-def test_listing_factory_flags_placeholder_images(pr):
+def test_artwork_studio_generates_real_images(pr):
     by = {m["module"]: m for m in pr.audit_modules()}
+    studio = by["onassis/artwork.py"]
+    assert studio["status"] == READY
+    assert "real" in studio["summary"].lower()
+    # The Listing Factory no longer ships placeholder mock-up imagery.
     lf = by["onassis/listing_factory.py"]
-    assert any("placeholder" in b["description"].lower() for b in lf["blockers"])
+    assert "placeholder" not in lf["summary"].lower()
+    assert not any("placeholder" in b["description"].lower() for b in lf["blockers"])
 
 
 def test_missing_etsy_credentials_blocks_etsy_modules(pr):

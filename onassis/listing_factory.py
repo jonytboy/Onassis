@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from onassis.artwork import ArtworkStudio
 from onassis.compliance import ComplianceDirector
 from onassis.config import ROOT_DIR, Config
 from onassis.database import Database
@@ -37,14 +38,6 @@ from onassis.logger import get_logger
 from onassis.proposals import APPROVE, Proposal
 
 log = get_logger(__name__)
-
-# A minimal valid 1x1 PNG — placeholder pixels for each required mock-up until a
-# real image generator fills them in. Keeps the package structurally complete.
-_PLACEHOLDER_PNG = bytes.fromhex(
-    "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
-    "1f15c4890000000a49444154789c6300010000050001"
-    "0d0a2db40000000049454e44ae426082"
-)
 
 _TAG_COUNT = 13
 
@@ -107,15 +100,19 @@ class ListingError(RuntimeError):
 class ListingFactory:
     """Builds, validates, and exports complete Etsy listing packages."""
 
-    def __init__(self, config: Config, db: Database) -> None:
+    def __init__(self, config: Config, db: Database,
+                 studio: ArtworkStudio | None = None) -> None:
         self.config = config
         self.db = db
         self.cfg = config.listing or {}
         self.compliance = ComplianceDirector(config, db)
-        self.mockups: list[str] = self.cfg.get("mockups") or [
-            "primary", "lifestyle_1", "lifestyle_2", "scale", "detail"
-        ]
+        # The Artwork Studio produces the REAL commercial images (no placeholders).
+        self.studio = studio or ArtworkStudio(config, db)
         self._llm: LLMClient | None = None
+
+    @property
+    def gallery_count(self) -> int:
+        return self.studio.gallery_count
 
     @property
     def llm(self) -> LLMClient:
@@ -233,24 +230,30 @@ class ListingFactory:
         # Normalise to exact, upload-ready shapes.
         tags = _coerce_len(gen["tags"], _TAG_COUNT, gen.get("seo_keywords", []), "tag")
         alt_texts = _coerce_len(
-            gen["image_alt_texts"], len(self.mockups),
-            [f"{campaign['name']} {m}" for m in self.mockups], "image",
+            gen["image_alt_texts"], self.gallery_count,
+            [f"{campaign['name']} image" for _ in range(self.gallery_count)], "image",
         )
         pricing = self._pricing(production_cost, retail_price)
+        title = gen["title"].strip()[:140]
 
-        prefix = f"{campaign['id']}_{product_key}" if product_key else str(campaign["id"])
-        images = []
-        for i, mockup in enumerate(self.mockups):
-            images.append(
-                {
-                    "order": i + 1,
-                    "mockup_type": mockup,
-                    "filename": f"{prefix}_{mockup}.png",
-                    "alt_text": alt_texts[i],
-                    "source": "placeholder",  # replaced by the image generator later
-                }
-            )
-        image_order = [img["filename"] for img in images]
+        # The design brief the Artwork Studio renders from (colours, title, motif).
+        studio_brief = {
+            "product_name": product_name or campaign.get("name", ""),
+            "brand": (self.config.brand or {}).get("name", ""),
+            "theme": brief.get("theme") or campaign.get("theme", "coastal"),
+            "shirt_colour": gen["primary_colour"],
+            "print_colour": gen["secondary_colour"],
+            "primary_colour": gen["primary_colour"],
+            "secondary_colour": gen["secondary_colour"],
+            "listing_title_seed": title,
+            "artwork_description": (
+                brief.get("visual_direction") or campaign.get("story")
+                or f"{campaign.get('theme', '')} original artwork"
+            ),
+            "typography_direction": "elegant serif, lowercase",
+            "transparent_background_required": True,
+            "dpi_requirement": int((self.config.design or {}).get("dpi", 300)),
+        }
 
         return {
             "campaign_id": campaign["id"],
@@ -264,7 +267,7 @@ class ListingFactory:
             # Etsy upload fields
             "state": "draft",
             "type": "physical",
-            "title": gen["title"].strip()[:140],
+            "title": title,
             "description": gen["description"].strip(),
             "tags": tags,
             "materials": [m.strip() for m in gen["materials"] if str(m).strip()][:13],
@@ -282,11 +285,9 @@ class ListingFactory:
             "price": pricing["price"],
             "currency": pricing["currency"],
             "pricing_recommendation": pricing,
-            # Image + file plan
-            "images": images,
-            "image_order": image_order,
-            "mockup_manifest": images,
-            "file_manifest": ["listing.json", "manifest.json", *[f"images/{f}" for f in image_order]],
+            # Images are generated for real at write time by the Artwork Studio.
+            "_studio_brief": studio_brief,
+            "_alt_texts": alt_texts,
         }
 
     def _pricing(
@@ -323,7 +324,6 @@ class ListingFactory:
         product_name: str | None = None, retail_price: Any = None,
     ) -> str:
         keywords = ", ".join(brief.get("keywords", []))
-        mockups = ", ".join(self.mockups)
         product_line = ""
         if product_name:
             price_hint = f" priced around {float(retail_price):.2f}" if retail_price else ""
@@ -350,8 +350,8 @@ Produce:
 - `primary_colour` and `secondary_colour`.
 - `category`: an Etsy-style category path.
 - `seo_keywords`: 6-10 strong search phrases.
-- `image_alt_texts`: EXACTLY {len(self.mockups)} alt texts, one per mock-up in
-  this order: {mockups}.
+- `image_alt_texts`: {self.gallery_count} descriptive alt texts for the Etsy
+  gallery (hero, lifestyle, close-up, scale, room), accessible and specific.
 - `product_attributes`: name/value pairs (e.g. style, room, occasion, finish).
 Original, on-brand premium Mediterranean lifestyle. No trademarks, no
 copyrighted characters, no third-party logos.
@@ -386,23 +386,53 @@ copyrighted characters, no third-party logos.
         images_dir = folder / "images"
         images_dir.mkdir(parents=True, exist_ok=True)
 
-        # Write a placeholder file for every required mock-up.
-        for img in listing["images"]:
-            (images_dir / img["filename"]).write_bytes(_PLACEHOLDER_PNG)
+        # Generate the REAL commercial assets (not placeholders): the master
+        # artwork + print file at the folder root, and an 8-10 image Etsy gallery.
+        studio_brief = listing.pop("_studio_brief", {})
+        alt_texts = listing.pop("_alt_texts", [])
+        design_package = {"design_brief": studio_brief}
+        product = {"product_key": listing.get("product_key") or str(campaign_id),
+                   "product_name": listing.get("product_name")
+                   or listing.get("campaign_name")}
+        master = self.studio.generate_master(design_package, folder)
+        gallery = self.studio.build_product_gallery(
+            design_package, product, images_dir, alt_texts=alt_texts)
 
-        # Validate every required image exists and is non-empty.
+        images = [
+            {"order": m["order"], "mockup_type": m["scene"], "filename": m["filename"],
+             "alt_text": m["alt_text"], "source": m["source"],
+             "quality_score": m["review"]["score"]}
+            for m in gallery
+        ]
+        image_order = [img["filename"] for img in images]
+        listing["images"] = images
+        listing["image_order"] = image_order
+        listing["mockup_manifest"] = images
+        listing["artwork_backend"] = master["backend"]
+        listing["file_manifest"] = [
+            "listing.json", "manifest.json", "master_artwork.png", "print_file.png",
+            *[f"images/{f}" for f in image_order],
+        ]
+
+        # Validate every generated image exists and is non-empty — real files.
         missing = [
-            img["filename"]
-            for img in listing["images"]
+            img["filename"] for img in images
             if not (images_dir / img["filename"]).exists()
             or (images_dir / img["filename"]).stat().st_size == 0
         ]
+        production_files = ["master_artwork.png", "print_file.png"]
+        missing_production = [f for f in production_files
+                              if not (folder / f).exists()
+                              or (folder / f).stat().st_size == 0]
         validation = {
-            "required_images": len(listing["images"]),
-            "present_images": len(listing["images"]) - len(missing),
-            "all_images_present": not missing,
-            "missing": missing,
+            "required_images": len(images),
+            "present_images": len(images) - len(missing),
+            "all_images_present": not missing and not missing_production,
+            "missing": missing + missing_production,
             "tag_count_ok": len(listing["tags"]) == _TAG_COUNT,
+            "master_artwork_present": "master_artwork.png" not in missing_production,
+            "print_file_present": "print_file.png" not in missing_production,
+            "gallery_size_ok": 8 <= len(images) <= 10,
         }
 
         (folder / "listing.json").write_text(json.dumps(listing, indent=2), encoding="utf-8")
@@ -410,8 +440,12 @@ copyrighted characters, no third-party logos.
         manifest = {
             "campaign_id": campaign_id,
             "generated_at": listing["generated_at"],
-            "image_order": listing["image_order"],
-            "mockup_manifest": listing["mockup_manifest"],
+            "artwork_backend": master["backend"],
+            "image_order": image_order,
+            "mockup_manifest": images,
+            "production_files": production_files,
+            "master_review": master["master_review"],
+            "print_review": master["print_review"],
             "files": self._file_listing(folder),
             "validation": validation,
             "compliance": {

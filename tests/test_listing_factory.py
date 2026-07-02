@@ -146,16 +146,37 @@ def test_pricing_is_deterministic(factory, db):
     assert listing["currency"] == "GBP"
 
 
-def test_every_mockup_image_is_created_and_validated(factory, db, tmp_path):
+def test_every_gallery_image_is_a_real_file(factory, db, tmp_path):
+    from PIL import Image
+
     cid = _approved_campaign(db)
     pkg = factory.export(cid)
     images_dir = tmp_path / "exports" / str(cid) / "images"
 
     assert pkg["validation"]["all_images_present"] is True
-    assert pkg["validation"]["required_images"] == 5
+    assert pkg["validation"]["required_images"] == factory.gallery_count
+    assert pkg["validation"]["gallery_size_ok"] is True   # 8-10 images
     for img in pkg["listing"]["images"]:
         path = images_dir / img["filename"]
         assert path.exists() and path.stat().st_size > 0   # real, non-empty file
+        Image.open(path).verify()                          # a valid, decodable image
+
+
+def test_master_artwork_and_print_file_are_produced(factory, db, tmp_path):
+    from PIL import Image
+
+    cid = _approved_campaign(db)
+    pkg = factory.export(cid)
+    folder = tmp_path / "exports" / str(cid)
+
+    for production_file in ("master_artwork.png", "print_file.png"):
+        path = folder / production_file
+        assert path.exists() and path.stat().st_size > 0
+        Image.open(path).verify()
+    assert pkg["validation"]["master_artwork_present"] is True
+    assert pkg["validation"]["print_file_present"] is True
+    # The artwork backend is recorded (local renderer by default).
+    assert pkg["listing"]["artwork_backend"] == "local"
 
 
 def test_folder_structure_and_files_written(factory, db, tmp_path):
@@ -166,17 +187,32 @@ def test_folder_structure_and_files_written(factory, db, tmp_path):
     assert (folder / "listing.json").exists()
     assert (folder / "manifest.json").exists()
     assert (folder / "images").is_dir()
+    assert (folder / "master_artwork.png").exists()
+    assert (folder / "print_file.png").exists()
 
     listing = json.loads((folder / "listing.json").read_text())
     assert listing["title"]
+    # Internal studio hand-off keys are stripped before the listing is written.
+    assert "_studio_brief" not in listing and "_alt_texts" not in listing
     manifest = json.loads((folder / "manifest.json").read_text())
     assert manifest["validation"]["all_images_present"] is True
     assert manifest["compliance"]["verdict"] == "APPROVE"
-    assert len(manifest["image_order"]) == 5
+    assert len(manifest["image_order"]) == factory.gallery_count
+    # The QC review of the master/print files is recorded.
+    assert manifest["master_review"]["accepted"] is True
 
 
-def test_alt_text_coerced_to_one_per_mockup(factory, db):
+def test_gallery_has_hero_mockups_and_gallery_images(factory, db):
+    cid = _approved_campaign(db)
+    filenames = [img["filename"] for img in factory.export(cid)["listing"]["images"]]
+    assert filenames[0] == "hero.jpg"
+    assert any(f.startswith("mockup_") for f in filenames)
+    assert any(f.startswith("gallery_") for f in filenames)
+
+
+def test_alt_text_present_on_every_gallery_image(factory, db):
     cid = _approved_campaign(db)
     images = factory.export(cid)["listing"]["images"]
-    assert len(images) == 5
+    assert len(images) == factory.gallery_count
+    assert 8 <= len(images) <= 10
     assert all(img["alt_text"] for img in images)   # every image has alt text

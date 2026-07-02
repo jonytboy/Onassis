@@ -152,6 +152,10 @@ class ProductionReadiness:
         ai, etsy, pin = self.has_ai, self.has_etsy, self.has_pinterest
         ai_b = [] if ai else [self._ai_blocker()]
         etsy_b = [] if etsy else [self._etsy_blocker()]
+        # A remote image backend is optional — the local renderer needs no key.
+        image_cfg = self.config.image or {}
+        image_key = bool(image_cfg.get("api_key")) and \
+            str(image_cfg.get("backend", "local")).lower() in ("remote", "auto")
 
         modules: list[dict[str, Any]] = [
             # --- Infrastructure (deterministic, no external dependency) ---
@@ -274,20 +278,29 @@ class ProductionReadiness:
                      "AI provider.",
                 list(ai_b)),
             self._module(
-                "onassis/listing_factory.py", "Listing Factory",
-                PARTIAL if ai else DEV_ONLY,
-                "Builds upload-ready Etsy listing packages; copy is LLM-generated, "
-                "pricing deterministic. Mock-up images are placeholder PNGs.",
-                list(ai_b) + [
+                "onassis/artwork.py", "Artwork Studio", READY,
+                "Generates the REAL commercial image files — master artwork, print "
+                "file, product artwork, mock-ups and an 8-10 image Etsy gallery — "
+                "each passed through a deterministic quality gate. The image "
+                "backend is replaceable (local renderer by default).",
+                [
                     _blocker(
-                        "Mock-up images are 1x1 placeholder PNGs (source='placeholder'); "
-                        "no real product imagery is generated.",
-                        MEDIUM,
-                        "2-3 days (integrate an image/mock-up generator)",
-                        "Replace _PLACEHOLDER_PNG with a real image-generation or "
-                        "mock-up service that fills each required mock-up slot.",
+                        "The default backend is the built-in local renderer; "
+                        "photo-real AI artwork needs a remote image backend.",
+                        LOW,
+                        "0.5 day (set image.backend=remote + an image API key)",
+                        "Set image.backend to 'remote' (or 'auto') and provide "
+                        "IMAGE_API_KEY/OPENAI_API_KEY to generate AI artwork; the "
+                        "local renderer remains the safe, no-key default.",
                     ),
-                ]),
+                ] if not image_key else []),
+            self._module(
+                "onassis/listing_factory.py", "Listing Factory",
+                READY if ai else DEV_ONLY,
+                "Builds upload-ready Etsy listing packages with REAL generated "
+                "artwork and an 8-10 image commercial gallery (via the Artwork "
+                "Studio); copy is LLM-generated, pricing deterministic.",
+                list(ai_b)),
             self._module(
                 "onassis/publishing.py", "Autonomous Publisher",
                 (READY if etsy else PARTIAL),

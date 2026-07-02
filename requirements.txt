@@ -8,3 +8,4 @@ schedule>=1.2        # Lightweight in-process daily scheduler
 anthropic>=0.69      # Anthropic API client — powers LLM content generation
 fastapi>=0.110       # REST API — the service interface (Swagger at /docs)
 uvicorn[standard]>=0.29  # ASGI server to run the FastAPI app
+Pillow>=10.0         # Renders the real commercial artwork/mock-ups (Artwork Studio)

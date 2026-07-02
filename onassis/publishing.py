@@ -137,22 +137,30 @@ class PublisherService:
             return {"status": "not_configured", "campaign_id": campaign_id,
                     "reason": "Etsy write credentials are not set."}
 
-        return self._publish_draft(campaign_id, product_id, listing)
+        images_dir = self._listing_folder(campaign_id, product_key) / "images"
+        return self._publish_draft(campaign_id, product_id, listing, images_dir)
 
     def _publish_draft(
-        self, campaign_id: int, product_id: str | None, listing: dict[str, Any]
+        self, campaign_id: int, product_id: str | None, listing: dict[str, Any],
+        images_dir: Path | None = None,
     ) -> dict[str, Any]:
         last_error = ""
         for attempt in range(1, self.max_retries + 1):
             try:
-                result = self._draft_backend().create_draft(listing)
+                backend = self._draft_backend()
+                result = backend.create_draft(listing)
                 listing_id = str(result.get("listing_id"))
+                uploads = self._upload_images(backend, listing_id, listing, images_dir)
                 pub = {"platform": PLATFORM, "product_id": product_id,
                        "campaign_id": campaign_id, "listing_id": listing_id,
-                       "mode": DRAFT, "status": DRAFT, "attempts": attempt}
+                       "mode": DRAFT, "status": DRAFT, "attempts": attempt,
+                       "images_uploaded": uploads["uploaded"],
+                       "images_failed": uploads["failed"]}
                 pub["id"] = self.db.insert_publication(pub)
-                log.info("Published campaign #%s as Etsy draft %s", campaign_id, listing_id)
-                return {"status": DRAFT, "campaign_id": campaign_id, "publication": pub}
+                log.info("Published campaign #%s as Etsy draft %s (%d image(s) attached)",
+                         campaign_id, listing_id, uploads["uploaded"])
+                return {"status": DRAFT, "campaign_id": campaign_id, "publication": pub,
+                        "images": uploads}
             except Exception as exc:  # transient failure — retry safely
                 last_error = str(exc)
                 log.warning("Publish attempt %d for campaign #%s failed: %s",
@@ -254,16 +262,49 @@ class PublisherService:
             )
         return self._draft_client
 
-    def _load_listing(
-        self, campaign_id: int, product_key: str | None = None
-    ) -> dict[str, Any] | None:
+    def _listing_folder(self, campaign_id: int, product_key: str | None = None) -> Path:
         base = Path(self.listing_cfg.get("exports_dir", "exports"))
         if not base.is_absolute():
             base = ROOT_DIR / base
         folder = base / str(campaign_id)
         if product_key:  # the approved product's own package sub-folder
             folder = folder / product_key
-        path = folder / "listing.json"
+        return folder
+
+    def _load_listing(
+        self, campaign_id: int, product_key: str | None = None
+    ) -> dict[str, Any] | None:
+        path = self._listing_folder(campaign_id, product_key) / "listing.json"
         if not path.exists():
             return None
         return json.loads(path.read_text(encoding="utf-8"))
+
+    def _upload_images(
+        self, backend: Any, listing_id: str, listing: dict[str, Any],
+        images_dir: Path | None,
+    ) -> dict[str, Any]:
+        """Upload every generated gallery image to the Etsy draft, in order.
+
+        Best-effort per image: a single image failure is logged and counted but
+        never aborts the publish (the draft already exists). A backend without
+        image support (e.g. a dry-run stub) is skipped cleanly.
+        """
+        images = listing.get("images") or []
+        if images_dir is None or not hasattr(backend, "upload_listing_image"):
+            return {"uploaded": 0, "failed": 0, "skipped": len(images)}
+        uploaded, failed = 0, 0
+        for img in images:
+            path = images_dir / img["filename"]
+            if not path.exists():
+                failed += 1
+                continue
+            try:
+                backend.upload_listing_image(
+                    listing_id, str(path), rank=img.get("order", 1),
+                    alt_text=img.get("alt_text"))
+                uploaded += 1
+            except Exception as exc:  # keep the draft; record the miss
+                failed += 1
+                log.warning("Image upload failed for listing %s (%s): %s",
+                            listing_id, img["filename"], exc)
+        return {"uploaded": uploaded, "failed": failed, "skipped": 0}

@@ -282,3 +282,36 @@ class EtsyDraftClient(EtsyClient):
                 f"Etsy createDraftListing returned HTTP {resp.status_code}: {detail}"
             )
         return resp.json()
+
+    def upload_listing_image(
+        self, listing_id: int | str, image_path: str, *, rank: int = 1,
+        alt_text: str | None = None, overwrite: bool = False,
+    ) -> dict[str, Any]:
+        """Attach one image file to a draft listing (uploadListingImage).
+
+        POST multipart/form-data to
+        ``/shops/{shop_id}/listings/{listing_id}/images``. ``rank`` sets the
+        gallery order (1 = primary). The image bytes are sent as a file part, so
+        the ``x-api-key``/``Authorization`` headers are used *without* forcing a
+        JSON content type (httpx sets the multipart boundary).
+        """
+        from pathlib import Path
+
+        url = (f"{self.base_url}/shops/{self.resolve_shop_id()}"
+               f"/listings/{listing_id}/images")
+        data: dict[str, Any] = {"rank": int(rank), "overwrite": str(bool(overwrite)).lower()}
+        if alt_text:
+            data["alt_text"] = alt_text[:250]
+        path = Path(image_path)
+        with path.open("rb") as fh:
+            files = {"image": (path.name, fh, "image/jpeg")}
+            resp = httpx.post(url, headers=self._headers(), data=data, files=files,
+                              timeout=self.timeout)
+        if resp.status_code >= 400:
+            detail = _response_detail(resp)
+            log.error("Etsy uploadListingImage failed: HTTP %s\n%s",
+                      resp.status_code, detail)
+            raise EtsyApiError(
+                f"Etsy uploadListingImage returned HTTP {resp.status_code}: {detail}"
+            )
+        return resp.json()

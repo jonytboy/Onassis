@@ -122,6 +122,8 @@ modified after publication.
 **Per approved product:** `publish_products(campaign_id)` publishes **one draft
 per CEO-approved product** — iterating only the launched set and de-duplicating
 per product — so one design becomes the full set of live-ready Etsy drafts.
+After creating each draft it **uploads every generated gallery image** to the
+listing (in gallery order); a single image failure is recorded, not fatal.
 
 ```bash
 python main.py --publish <campaign_id> --mode draft   # or --mode dry_run
@@ -154,7 +156,44 @@ python main.py --approve-launch <campaign_id> # approve the design + all product
 `GET /launch/status/{campaign_id}` returns the status;
 `GET /launch/pending` lists designs at Launch Ready.
 
-## Listing Factory — upload-ready Etsy packages (no publishing)
+## Artwork Studio — real commercial image generation
+
+The Artwork Studio (`onassis/artwork.py`) is the production stage that generates
+the **actual image files** required to sell a product — not prompts, not
+descriptions, not placeholders. For a design (and each approved product) it
+produces:
+
+* **master artwork** (`master_artwork.png`) — the original commercial artwork.
+* **print file** (`print_file.png`) — the Gelato print file at the right size /
+  resolution, with a transparent background where appropriate.
+* **product artwork** — the artwork adapted to the specific product.
+* **mock-ups** — real commercial scenes (hero, lifestyle, close-up, scale, room).
+* a complete **Etsy gallery** of **8-10** conversion-focused images.
+
+Every image passes a **deterministic quality gate** before it is accepted
+(valid, correctly sized, not blank/flat, readable detail); a failing image is
+**regenerated** up to `image.max_attempts` times, keeping the best result. The
+gate is a measurable check, not a new AI agent.
+
+**The image backend is replaceable** (`onassis/connectors/image_backend.py`) so
+ONASSIS is never locked to one provider:
+
+| `image.backend` | Behaviour |
+|---|---|
+| `local` *(default)* | Built-in renderer (Pillow) — always produces real files, no API key. |
+| `remote` | OpenAI-compatible `/images/generations` — AI artwork (needs a key). |
+| `auto` | Remote when a key is present, else local. |
+
+Set `IMAGE_API_KEY` / `OPENAI_API_KEY` and `image.backend: remote` for photo-real
+AI artwork; the local renderer stays the safe, no-key default and is used as a
+fallback if the remote backend errors, so a real file is always produced.
+
+```bash
+python main.py --build-design-package OPP-xxxx   # design brief (the master design)
+python main.py --generate-artwork OPP-xxxx       # real master_artwork.png + print_file.png
+```
+
+## Listing Factory — upload-ready Etsy packages with real artwork
 
 The Listing Factory (`onassis/listing_factory.py`) turns an **approved**
 campaign into a complete, **upload-ready** Etsy listing package — no manual
@@ -162,29 +201,29 @@ editing — and writes it to disk. It does **not** publish or touch Etsy.
 
 It generates every Etsy upload field (title, description, 13 tags, materials,
 primary/secondary colour, category, SEO keywords, image alt text, product
-attributes, **deterministic** pricing recommendation), a mock-up manifest,
-image order, and file manifest; creates a file for every required mock-up;
-validates every image exists; and **validates compliance before export**.
-Two gates protect it: the campaign must be compliance-approved, and the
-generated listing is re-reviewed by the Compliance Director.
+attributes, **deterministic** pricing recommendation), then calls the **Artwork
+Studio** to produce the **real** master artwork, print file, and an **8-10 image
+commercial gallery** for the product. Two gates protect it: the campaign must be
+compliance-approved, and the generated listing is re-reviewed by the Compliance
+Director before any image is rendered.
 
 ```
-exports/<campaign_id>/
-    listing.json     # every field required for an Etsy upload
-    manifest.json    # files, image order, validation, compliance
-    images/          # one file per required mock-up
+exports/<campaign_id>/<product_key>/
+    listing.json       # every field required for an Etsy upload
+    manifest.json      # files, image order, QC reviews, compliance
+    master_artwork.png # the original commercial artwork
+    print_file.png     # the Gelato print file
+    images/            # hero.jpg, mockup_01-03.jpg, gallery_01-NN.jpg (8-10)
 ```
 
 **Per approved product (Revenue Expansion):** `export_products(campaign_id)`
-builds **one listing package per CEO-approved product** — iterating only the
-products the Expansion Engine launched (never the rejected ones) — adapting the
-title, attributes and pricing (catalogue retail) to each, from the same master
-design artwork. Each is written to `exports/<campaign_id>/<product_key>/`.
+builds **one package per CEO-approved product** — iterating only the products the
+Expansion Engine launched (never the rejected ones) — adapting the title,
+attributes, pricing (catalogue retail) **and its own generated gallery** to each.
 
 `GET /listing/{campaign_id}` builds the single package;
 `GET /listing/{campaign_id}/products` builds one per approved product. CLI
-`--build-listing <id>`. (Mock-up images are placeholders pending a future image
-generator; the structure is upload-ready.)
+`--build-listing <id>`.
 
 ## Product Optimiser — improve earners before building new ones
 

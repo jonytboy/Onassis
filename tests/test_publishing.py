@@ -73,6 +73,46 @@ def _write_product_package(tmp_path, cid, product_key):
     }))
 
 
+class UploadingDraftClient(StubDraftClient):
+    """A draft client that also supports uploadListingImage — records uploads."""
+
+    def __init__(self, listing_id=555, fail_on=None):
+        super().__init__(listing_id)
+        self.uploaded: list[tuple[str, int]] = []
+        self.fail_on = set(fail_on or ())
+
+    def upload_listing_image(self, listing_id, image_path, *, rank=1,
+                             alt_text=None, overwrite=False):
+        from pathlib import Path
+
+        name = Path(image_path).name
+        if name in self.fail_on:
+            raise RuntimeError("image upload boom")
+        self.uploaded.append((name, rank))
+        return {"listing_image_id": len(self.uploaded)}
+
+
+def _write_package_with_images(tmp_path, cid, product_key=None, n=3):
+    folder = tmp_path / "exports" / str(cid)
+    if product_key:
+        folder = folder / product_key
+    images_dir = folder / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+    images = []
+    for i in range(n):
+        fn = f"gallery_{i:02d}.jpg"
+        (images_dir / fn).write_bytes(b"\xff\xd8\xff\xe0-real-jpeg-" + bytes([i]) * 32)
+        images.append({"order": i + 1, "filename": fn, "alt_text": f"alt {i}",
+                       "mockup_type": "hero"})
+    (folder / "listing.json").write_text(json.dumps({
+        "campaign_id": cid,
+        "product_id": f"{cid}-{product_key}" if product_key else "SKU1",
+        "product_key": product_key, "title": "T", "description": "d", "tags": ["a"],
+        "price": 30.0, "quantity": 50, "images": images,
+        "image_order": [im["filename"] for im in images],
+    }))
+
+
 def _launch(db, cid, key, launched=1):
     db.insert_product_score({"campaign_id": cid, "product_key": key, "product_name": key,
                              "launched": launched, "composite_score": 85,
@@ -105,6 +145,52 @@ def test_publish_products_never_duplicates_per_product(publisher, db, tmp_path):
 def test_publish_products_blocked_without_approved_set(publisher, db):
     cid = _approved_campaign(db)
     assert publisher.publish_products(cid, mode="draft")["status"] == "blocked"
+
+
+# --- Image upload to Etsy (every generated image attached) ----------
+
+def test_publish_uploads_every_generated_image(config, db, tmp_path):
+    config.listing = {"exports_dir": str(tmp_path / "exports")}
+    config.publishing = {"enabled_modes": ["draft"], "max_retries": 3}
+    client = UploadingDraftClient()
+    pub = PublisherService(config, db, draft_client=client)
+    cid = _approved_campaign(db)
+    _write_package_with_images(tmp_path, cid, "ceramic_mug", n=3)
+    _launch(db, cid, "ceramic_mug")
+
+    result = pub.publish(cid, mode="draft", product_key="ceramic_mug")
+    assert result["status"] == "draft"
+    assert result["publication"]["images_uploaded"] == 3
+    assert result["publication"]["images_failed"] == 0
+    # Uploaded in gallery order (rank 1..3).
+    assert [r for _, r in client.uploaded] == [1, 2, 3]
+    assert {name for name, _ in client.uploaded} == {
+        "gallery_00.jpg", "gallery_01.jpg", "gallery_02.jpg"}
+
+
+def test_image_upload_failure_does_not_fail_the_draft(config, db, tmp_path):
+    config.listing = {"exports_dir": str(tmp_path / "exports")}
+    config.publishing = {"enabled_modes": ["draft"], "max_retries": 3}
+    client = UploadingDraftClient(fail_on={"gallery_01.jpg"})
+    pub = PublisherService(config, db, draft_client=client)
+    cid = _approved_campaign(db)
+    _write_package_with_images(tmp_path, cid, "ceramic_mug", n=3)
+    _launch(db, cid, "ceramic_mug")
+
+    result = pub.publish(cid, mode="draft", product_key="ceramic_mug")
+    # The draft survives; the failed image is counted, not fatal.
+    assert result["status"] == "draft"
+    assert result["publication"]["images_uploaded"] == 2
+    assert result["publication"]["images_failed"] == 1
+
+
+def test_client_without_image_support_is_skipped_cleanly(publisher, db, tmp_path):
+    cid = _approved_campaign(db)
+    _write_package_with_images(tmp_path, cid, product_key=None, n=3)  # StubDraftClient
+    result = publisher.publish(cid, mode="draft")
+    assert result["status"] == "draft"
+    assert result["publication"]["images_uploaded"] == 0   # stub can't upload
+    assert result["images"]["skipped"] == 3
 
 
 # --- Draft publishing -----------------------------------------------

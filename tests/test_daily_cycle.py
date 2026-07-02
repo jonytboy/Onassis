@@ -23,7 +23,7 @@ _LISTING = {
 _EXPECTED_STAGES = [
     "Sync Etsy", "Sync Pinterest", "Import Revenue", "Import Analytics",
     "Run Product Optimiser", "CEO Decision",
-    "Create Product Opportunity", "Build Design Package",
+    "Create Product Opportunity", "Build Design Package", "Generate Master Artwork",
     "Create Product Campaign", "Expand Products", "Build Etsy Listing Package",
     "Generate Marketing Content", "Publish Draft", "Record Results",
 ]
@@ -61,9 +61,9 @@ def test_dry_run_executes_all_stages_without_side_effects(config, db):
     # Product creation, marketing, and publishing are skipped in dry run.
     by_stage = {s["stage"]: s for s in summary["stages"]}
     for stage in ("Create Product Opportunity", "Build Design Package",
-                  "Create Product Campaign", "Expand Products",
-                  "Build Etsy Listing Package", "Generate Marketing Content",
-                  "Publish Draft"):
+                  "Generate Master Artwork", "Create Product Campaign",
+                  "Expand Products", "Build Etsy Listing Package",
+                  "Generate Marketing Content", "Publish Draft"):
         assert by_stage[stage]["status"] == "skipped"
     # The run is recorded and retrievable.
     assert db.get_latest_daily_run()["mode"] == "dry_run"
@@ -144,12 +144,19 @@ def test_production_runs_full_pipeline_and_publishes(production_cycle, db):
     # Product-first: opportunity -> design -> campaign -> listing, then content.
     assert by_stage["Create Product Opportunity"]["status"] == "ok"
     assert by_stage["Build Design Package"]["status"] == "ok"
+    # Real master artwork + print file are generated and pass the quality gate.
+    assert by_stage["Generate Master Artwork"]["status"] == "ok"
+    art = by_stage["Generate Master Artwork"]["detail"]
+    assert art["files"] == ["master_artwork.png", "print_file.png"]
+    assert art["master_accepted"] and art["print_accepted"]
     assert by_stage["Create Product Campaign"]["status"] == "ok"
     assert by_stage["Expand Products"]["status"] == "ok"
     assert by_stage["Expand Products"]["detail"]["products_launched"] >= 1
     assert by_stage["Build Etsy Listing Package"]["status"] == "ok"
     # One listing package per approved product (the expansion launched >= 1).
     assert by_stage["Build Etsy Listing Package"]["detail"]["products_built"] >= 1
+    # Every product got a full 8-10 image commercial gallery (real files).
+    assert by_stage["Build Etsy Listing Package"]["detail"]["images_generated"] >= 8
     assert by_stage["Generate Marketing Content"]["status"] == "ok"
     assert by_stage["Publish Draft"]["status"] == "ok"
     assert by_stage["Publish Draft"]["detail"]["published"] >= 1

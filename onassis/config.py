@@ -73,6 +73,7 @@ class Config:
     design: dict[str, Any] = field(default_factory=dict)
     expansion: dict[str, Any] = field(default_factory=dict)
     launch: dict[str, Any] = field(default_factory=dict)
+    image: dict[str, Any] = field(default_factory=dict)
 
     # secrets / future integrations
     anthropic_api_key: str | None = None
@@ -125,6 +126,11 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
     design = raw.get("design", {})
     expansion = raw.get("expansion", {})
     launch = raw.get("launch", {})
+    image = raw.get("image", {})
+    image = {
+        **image,
+        "api_key": _env("IMAGE_API_KEY", _env("OPENAI_API_KEY", image.get("api_key"))),
+    }
     etsy = raw.get("etsy", {})
     pinterest = raw.get("pinterest", {})
     pinterest = {
@@ -181,5 +187,6 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         design=design,
         expansion=expansion,
         launch=launch,
+        image=image,
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
     )

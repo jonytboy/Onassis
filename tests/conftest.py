@@ -46,6 +46,10 @@ def config(tmp_path: Path):
     cfg = load_config()
     cfg.db_path = tmp_path / "test.db"
     cfg.anthropic_api_key = "test-key"  # present so LLMClient construction wouldn't fail
+    # Keep artwork generation tiny & fast in tests (real files, small pixels).
+    cfg.image = {**(cfg.image or {}), "backend": "local", "master_px": 96,
+                 "print_px": 96, "gallery_px": 96, "gallery_count": 9,
+                 "max_attempts": 2}
     return cfg
 
 

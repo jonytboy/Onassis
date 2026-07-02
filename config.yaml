@@ -328,6 +328,28 @@ listing:
     - scale
     - detail
 
+# --- Artwork Studio (real commercial image generation) ---------------
+# Generates the ACTUAL image files (master artwork, print file, product artwork,
+# mock-ups, and an 8-10 image Etsy gallery) — not prompts. The backend is
+# replaceable so ONASSIS is never locked to one image provider.
+image:
+  # local  -> the built-in renderer (Pillow); always produces real files, no key.
+  # remote -> an OpenAI-compatible /images/generations backend (needs a key).
+  # auto   -> remote when a key is present, else local.
+  backend: local
+  base_url: https://api.openai.com/v1
+  model: gpt-image-1
+  # api_key is read from IMAGE_API_KEY / OPENAI_API_KEY (never hard-code it).
+  gallery_count: 9              # Etsy gallery images per product (8-10)
+  max_attempts: 3              # QC regeneration attempts before best-effort accept
+  master_px: 2048              # master artwork square size
+  print_px: 3600               # print file size (~300 DPI, A3-ish print area)
+  gallery_px: 1200             # commercial gallery image size
+  quality:                     # the deterministic quality gate thresholds
+    min_coverage: 0.015        # reject near-blank images
+    max_coverage: 0.995        # reject solid/flat images
+    min_stddev: 6.0            # require visible detail/contrast (readability)
+
 # --- Publisher -------------------------------------------------------
 # Publishes approved listing packages. Only Draft (and Dry Run) are enabled;
 # Live publishing is intentionally not implemented yet.

@@ -152,6 +152,10 @@ def _parse_args() -> argparse.Namespace:
         help="Score the catalogue for a design and launch the profitable set (CEO).",
     )
     parser.add_argument(
+        "--generate-artwork", metavar="OPPORTUNITY_ID",
+        help="Generate the REAL master artwork + print file for a built design package.",
+    )
+    parser.add_argument(
         "--build-listing", type=int, metavar="CAMPAIGN_ID",
         help="Build & export an upload-ready Etsy listing package for a campaign.",
     )
@@ -580,6 +584,29 @@ def main() -> int:
               f"DPI: {b['dpi_requirement']}")
         print(f"  Files      : {', '.join(pkg['files'])}")
         print(f"  Path       : {pkg['path']}\n")
+        return 0
+
+    if args.generate_artwork is not None:
+        from pathlib import Path
+
+        from onassis.artwork import ArtworkStudio
+        from onassis.design_package import DesignPackageBuilder
+
+        pkg = DesignPackageBuilder(config, db).get_package(args.generate_artwork)
+        if pkg is None:
+            print(f"No design package for {args.generate_artwork}. Build it first with "
+                  f"--build-design-package {args.generate_artwork}.")
+            return 1
+        studio = ArtworkStudio(config, db)
+        result = studio.generate_master(pkg, Path(pkg["path"]))
+        print(f"\nMASTER ARTWORK GENERATED — {args.generate_artwork} "
+              f"(backend: {result['backend']})\n")
+        print(f"  Files      : {', '.join(result['files'])}")
+        print(f"  Path       : {result['path']}")
+        print(f"  Master QC  : {'PASS' if result['master_review']['accepted'] else 'BEST-EFFORT'}"
+              f" (score {result['master_review']['score']:.0f})")
+        print(f"  Print QC   : {'PASS' if result['print_review']['accepted'] else 'BEST-EFFORT'}"
+              f" (score {result['print_review']['score']:.0f})\n")
         return 0
 
     if args.build_listing is not None:

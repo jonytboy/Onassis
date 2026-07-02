@@ -13,12 +13,13 @@ Order:
     4. Import Analytics          5. Run Product Optimiser 6. CEO Decision
     7. Create Product Opportunity     (the product idea, CEO-approved)
     8. Build Design Package           (design brief + artwork prompt, compliance-gated)
-    9. Create Product Campaign        (campaign + product from the opportunity)
-   10. Expand Products                (score the catalogue; CEO launches the profitable set)
-   11. Build Etsy Listing Package     (the upload-ready Etsy product)
-   12. Generate Marketing Content     (Pinterest/Instagram/Facebook — promotes the product)
-   13. Publish Draft                  (the product becomes a real Etsy draft)
-   14. Record Results
+    9. Generate Master Artwork        (the REAL master artwork + print file, QC-gated)
+   10. Create Product Campaign        (campaign + product from the opportunity)
+   11. Expand Products                (score the catalogue; CEO launches the profitable set)
+   12. Build Etsy Listing Package     (real artwork, mockups & 8-10 image gallery per product)
+   13. Generate Marketing Content     (Pinterest/Instagram/Facebook — promotes the product)
+   14. Publish Draft                  (real Etsy draft with every generated image attached)
+   15. Record Results
 
 Every stage logs start/finish, records its duration, captures failures, and the
 cycle continues safely past a failed stage. Two modes are supported: ``dry_run``
@@ -33,6 +34,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from onassis.analytics import AnalyticsEngine
+from onassis.artwork import ArtworkStudio
 from onassis.config import Config
 from onassis.connectors.etsy import EtsyConnector
 from onassis.connectors.pinterest import PinterestConnector
@@ -69,7 +71,10 @@ class DailyCycle:
         self.design = DesignPackageBuilder(config, db)
         self.expansion = RevenueExpansionEngine(config, db)
         self.orchestrator = Orchestrator(config, db)
-        self.listing_factory = ListingFactory(config, db)
+        # One Artwork Studio produces every real image; the Listing Factory
+        # reuses it so master artwork and product galleries share a backend.
+        self.artwork = ArtworkStudio(config, db)
+        self.listing_factory = ListingFactory(config, db, studio=self.artwork)
         self.publisher = PublisherService(config, db)
         # Campaign/Brain/Compliance are owned by the orchestrator — reuse them.
         self.campaigns = self.orchestrator.campaigns
@@ -95,6 +100,7 @@ class DailyCycle:
         # --- Product first: create the product, then promote it. ---
         self._stage(stages, "Create Product Opportunity", self._create_opportunity, ctx)
         self._stage(stages, "Build Design Package", self._build_design_package, ctx)
+        self._stage(stages, "Generate Master Artwork", self._generate_master_artwork, ctx)
         self._stage(stages, "Create Product Campaign", self._create_campaign, ctx)
         self._stage(stages, "Expand Products", self._expand_products, ctx)
         self._stage(stages, "Build Etsy Listing Package", self._build_listing, ctx)
@@ -218,6 +224,26 @@ class DailyCycle:
         ctx["design_package"] = pkg
         return {"status": "ok", "detail": {"path": pkg["path"]}}
 
+    def _generate_master_artwork(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """Generate the REAL master artwork + print file from the design, and
+        run the artwork quality gate before it feeds product production."""
+        if ctx["dry"]:
+            return {"status": "skipped", "detail": "dry run"}
+        pkg = ctx.get("design_package")
+        if not pkg:
+            return {"status": "skipped", "detail": "no design package"}
+        from pathlib import Path
+
+        master = self.artwork.generate_master(pkg, Path(pkg["path"]))
+        ctx["master_artwork"] = master
+        return {"status": "ok", "detail": {
+            "backend": master["backend"],
+            "files": master["files"],
+            "master_quality": master["master_review"]["score"],
+            "print_quality": master["print_review"]["score"],
+            "master_accepted": master["master_review"]["accepted"],
+            "print_accepted": master["print_review"]["accepted"]}}
+
     def _create_campaign(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """Create the campaign + product FROM the opportunity (product-driven)."""
         if ctx["dry"]:
@@ -269,7 +295,10 @@ class DailyCycle:
         if pkg.get("status") != "ready":
             return {"status": "blocked", "detail": pkg.get("reason")}
         ctx["listing_ready"] = True
-        return {"status": "ok", "detail": {"products_built": pkg["count"]}}
+        images = sum(len(p.get("listing", {}).get("images", []))
+                     for p in pkg["products"] if p.get("status") == "ready")
+        return {"status": "ok", "detail": {"products_built": pkg["count"],
+                                           "images_generated": images}}
 
     def _generate_content(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """Generate marketing content LAST — only to promote the new product."""
