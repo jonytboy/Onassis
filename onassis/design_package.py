@@ -131,21 +131,34 @@ class DesignPackageBuilder:
             }
         opp = selection["opportunity"]
 
-        design = self._generate_design(opp)
-        brief = self._build_brief(opp, design)
+        # Gate 2 — Compliance, run autonomously. If the brief needs changes, the
+        # builder amends the design (feeding the required corrections back into
+        # generation) and re-runs compliance, up to a bounded number of attempts.
+        def _produce(corrections: list[str] | None) -> dict[str, Any]:
+            design = self._generate_design(opp, corrections)
+            return {"design": design, "brief": self._build_brief(opp, design)}
 
-        # Gate 2 — Compliance reviews the design brief before export.
-        review = self._review_brief(opp, brief)
-        if review["verdict"] != APPROVE:
+        outcome = self.compliance.resolve(
+            _produce, lambda a: self._review_brief(opp, a["brief"]))
+        if outcome["status"] != "approved":
+            reason = ("Design brief was REJECTED by compliance."
+                      if outcome["status"] == "rejected" else
+                      f"Design brief still required changes after "
+                      f"{outcome['attempts']} amendment attempt(s).")
             return {
                 "status": "blocked",
                 "opportunity_id": opportunity_id,
-                "reason": "Design brief failed compliance review.",
-                "compliance": review,
+                "reason": reason,
+                "missing": outcome["missing"],       # precisely what's still wrong
+                "compliance_attempts": outcome["attempts"],
+                "compliance": outcome["report"],
             }
 
-        package = self._write_package(opp, brief, design, review)
-        log.info("Design package ready for %s at %s", opportunity_id, package["path"])
+        design, brief = outcome["artifact"]["design"], outcome["artifact"]["brief"]
+        package = self._write_package(opp, brief, design, outcome["report"])
+        package["compliance_attempts"] = outcome["attempts"]
+        log.info("Design package ready for %s at %s (%d compliance attempt(s))",
+                 opportunity_id, package["path"], outcome["attempts"])
         return package
 
     def get_package(self, opportunity_id: str) -> dict[str, Any] | None:
@@ -168,9 +181,11 @@ class DesignPackageBuilder:
 
     # --- Generation -------------------------------------------------
 
-    def _generate_design(self, opp: dict[str, Any]) -> dict[str, Any]:
+    def _generate_design(
+        self, opp: dict[str, Any], corrections: list[str] | None = None
+    ) -> dict[str, Any]:
         gen = self.llm.generate_json(
-            system=_SYSTEM, prompt=self._prompt(opp), schema=_SCHEMA
+            system=_SYSTEM, prompt=self._prompt(opp, corrections), schema=_SCHEMA
         )
         gen["listing_tags_seed"] = [
             str(t).strip() for t in gen.get("listing_tags_seed", []) if str(t).strip()
@@ -282,9 +297,19 @@ class DesignPackageBuilder:
             f"the product is the hero."
         )
 
-    def _prompt(self, opp: dict[str, Any]) -> str:
+    def _prompt(self, opp: dict[str, Any], corrections: list[str] | None = None) -> str:
         palette = ", ".join(opp.get("colour_palette", []))
+        amend = ""
+        if corrections:
+            bullets = "\n".join(f"- {c}" for c in corrections)
+            amend = (
+                "\nREQUIRED COMPLIANCE AMENDMENTS — a prior version was flagged. You "
+                "MUST apply ALL of these and produce a revised, LOWER-RISK design "
+                "(keep it original, no trademarks/copyright/celebrity/logos):\n"
+                f"{bullets}\n"
+            )
         return f"""Translate this approved product opportunity into a print-ready design direction.
+{amend}
 
 OPPORTUNITY
 - Product name: {opp.get('product_name')}

@@ -24,7 +24,10 @@ class FakeLLM:
     the prompt/schema the agent built.
     """
 
-    def __init__(self, response: dict[str, Any]) -> None:
+    def __init__(self, response: dict[str, Any] | list[dict[str, Any]]) -> None:
+        # A single dict is returned every call; a list is consumed in order and
+        # then sticks on the last item (for testing multi-pass remediation loops).
+        self._sequence = response if isinstance(response, list) else None
         self.response = response
         self.calls: list[dict[str, Any]] = []
 
@@ -32,6 +35,9 @@ class FakeLLM:
         self, *, system: str, prompt: str, schema: dict[str, Any]
     ) -> dict[str, Any]:
         self.calls.append({"system": system, "prompt": prompt, "schema": schema})
+        if self._sequence is not None:
+            i = min(len(self.calls) - 1, len(self._sequence) - 1)
+            return self._sequence[i]
         return self.response
 
     @property

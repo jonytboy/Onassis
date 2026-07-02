@@ -112,9 +112,35 @@ def test_listing_failing_compliance_is_not_exported(factory, db, tmp_path):
     factory.compliance._llm = FakeLLM(make_compliance_response(copyright=95))  # listing trips veto
     result = factory.export(cid)
     assert result["status"] == "blocked"
-    assert "failed compliance" in result["reason"]
+    assert "REJECTED by compliance" in result["reason"]
     # Nothing should have been written.
     assert not (tmp_path / "exports" / str(cid)).exists()
+
+
+def test_listing_compliance_amends_then_approves(factory, db):
+    cid = _approved_campaign(db)
+    # First pass needs changes; the amended copy is clean -> exported.
+    factory.compliance._llm = FakeLLM([
+        make_compliance_response(platform=55, corrections=["Rewrite the bold health claim"]),
+        make_compliance_response(),
+    ])
+    result = factory.export(cid)
+    assert result["status"] == "ready"
+    assert result["compliance_attempts"] == 2
+    # The listing copy was REGENERATED with the required amendment applied.
+    assert "Rewrite the bold health claim" in factory._llm.calls[1]["prompt"]
+
+
+def test_listing_compliance_regeneration_is_bounded(factory, db, tmp_path):
+    cid = _approved_campaign(db)
+    factory.compliance.max_remediation_attempts = 2
+    factory.compliance._llm = FakeLLM(make_compliance_response(
+        platform=55, corrections=["still non-compliant"]))
+    result = factory.export(cid)
+    assert result["status"] == "blocked"
+    assert "changes" in result["reason"].lower()
+    assert result["missing"] == ["still non-compliant"]
+    assert not (tmp_path / "exports" / str(cid)).exists()   # nothing written
 
 
 # --- Successful export ----------------------------------------------

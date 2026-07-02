@@ -49,7 +49,7 @@ from onassis.opportunities import OpportunityEngine
 from onassis.optimiser import ProductOptimiser
 from onassis.orchestrator import Orchestrator
 from onassis.profit import ProfitEngine
-from onassis.proposals import APPROVE
+from onassis.proposals import APPROVE, is_compliant
 from onassis.publishing import PublisherService
 from onassis.reporting import DailyReport
 from onassis.revenue import RevenueEngine
@@ -279,9 +279,11 @@ class DailyCycle:
         # Governance for the marketing campaign: predict + compliance review.
         self.brain.generate_for_campaign(campaign, brief)
         review = self.compliance.review_campaign(campaign, [])
-        ctx["campaign_approved"] = review["verdict"] == APPROVE
+        # Cleared to proceed on APPROVE or APPROVE_WITH_CHANGES; only REJECT blocks
+        # (the autonomous pipeline never stalls waiting for a human).
+        ctx["campaign_approved"] = is_compliant(review["verdict"])
         if not ctx["campaign_approved"]:
-            return {"status": "blocked", "detail": "campaign failed compliance review"}
+            return {"status": "blocked", "detail": "campaign REJECTED by compliance"}
         return {"status": "ok", "detail": {"campaign_id": campaign["id"],
                                            "product": opp["product_name"]}}
 

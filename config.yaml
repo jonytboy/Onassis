@@ -399,6 +399,10 @@ publishing:
 # --- Compliance thresholds -------------------------------------------
 # The Compliance Director's veto rules (Sprint 7). Risk scores are 0-100.
 compliance:
-  high_risk_threshold: 70        # any risk at/above this -> hard reject (veto)
-  medium_risk_threshold: 40      # any risk at/above this -> request changes
+  high_risk_threshold: 70        # any risk at/above this -> hard REJECT (veto)
+  medium_risk_threshold: 40      # any risk at/above this -> APPROVE_WITH_CHANGES
   brand_consistency_min: 70      # min brand-consistency score to approve
+  # The autonomous pipeline has no human to answer "more info". A design/listing
+  # flagged APPROVE_WITH_CHANGES is auto-amended and re-reviewed up to this many
+  # times; still not clean -> the product is blocked (bounded, never hangs).
+  max_remediation_attempts: 3

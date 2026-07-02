@@ -19,8 +19,21 @@ from typing import Any
 # Shared verdict vocabulary (CEO and Compliance both speak it).
 APPROVE = "APPROVE"
 REJECT = "REJECT"
-REQUEST_MORE_INFO = "REQUEST_MORE_INFO"
-VERDICTS = (APPROVE, REJECT, REQUEST_MORE_INFO)
+REQUEST_MORE_INFO = "REQUEST_MORE_INFO"  # CEO-only (capital): needs stronger evidence.
+# The autonomous pipeline has no human to answer REQUEST_MORE_INFO, so the
+# Compliance Director resolves to one of three terminal-or-remediable verdicts.
+# APPROVE_WITH_CHANGES means "approved provided the stated amendments are applied"
+# — the producer auto-applies them and re-runs compliance.
+APPROVE_WITH_CHANGES = "APPROVE_WITH_CHANGES"
+COMPLIANCE_VERDICTS = (APPROVE, APPROVE_WITH_CHANGES, REJECT)
+VERDICTS = (APPROVE, APPROVE_WITH_CHANGES, REJECT, REQUEST_MORE_INFO)
+
+
+def is_compliant(verdict: str) -> bool:
+    """Whether a compliance verdict clears a subject to proceed. APPROVE and
+    APPROVE_WITH_CHANGES both clear it (the amendments having been applied);
+    REJECT (and any non-clearing verdict) does not."""
+    return verdict in (APPROVE, APPROVE_WITH_CHANGES)
 
 RISK_LEVELS = ("low", "medium", "high")
 # Default discount applied to ROI per risk level (overridable via policy).

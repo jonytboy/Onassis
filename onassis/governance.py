@@ -28,12 +28,15 @@ from onassis.config import Config
 from onassis.database import Database
 from onassis.logger import get_logger
 from onassis.profit import ProfitEngine
-from onassis.proposals import APPROVE, REJECT, REQUEST_MORE_INFO, Proposal
+from onassis.proposals import (
+    APPROVE, APPROVE_WITH_CHANGES, REJECT, REQUEST_MORE_INFO, Proposal, is_compliant,
+)
 
 log = get_logger(__name__)
 
 _STATUS_FOR_VERDICT = {
     APPROVE: "approved",
+    APPROVE_WITH_CHANGES: "approved",   # cleared with amendments applied
     REJECT: "rejected",
     REQUEST_MORE_INFO: "needs_info",
 }
@@ -90,7 +93,7 @@ class Governance:
             pid = self.db.insert_proposal(p.to_dict())
             report = self.compliance.review_proposal(p, proposal_id=pid)
             self._record_decision(pid, self.compliance.name, report["verdict"], report["reasoning"])
-            if report["verdict"] == APPROVE:
+            if is_compliant(report["verdict"]):
                 screened.append(
                     {
                         "proposal": p,
@@ -154,8 +157,10 @@ class Governance:
     # --- Helpers ----------------------------------------------------
 
     def _resolve(self, report: dict[str, Any], ceo_decision: dict[str, Any]) -> tuple[str, str]:
-        if report["verdict"] != APPROVE:
-            return report["verdict"], self.compliance.name  # Compliance overrules
+        # Compliance overrules only with a hard REJECT; APPROVE / APPROVE_WITH_CHANGES
+        # clear the subject through to the CEO's capital decision.
+        if not is_compliant(report["verdict"]):
+            return report["verdict"], self.compliance.name
         return ceo_decision["verdict"], self.ceo.name
 
     def _record_decision(

@@ -153,6 +153,44 @@ def test_compliance_reviews_before_export(config, db, tmp_path):
     assert "Amalfi Morning Tee" in builder.compliance._llm.last_prompt
 
 
+# --- Autonomous compliance remediation (no human in the loop) -------
+
+def test_compliance_amendments_are_applied_then_approved(config, db, tmp_path):
+    config.design = {**config.design, "exports_dir": str(tmp_path)}
+    oid = _seed_opportunity(config, db)
+    builder = _builder(config, db)
+    # First review needs changes; the amended design is clean.
+    builder.compliance._llm = FakeLLM([
+        make_compliance_response(platform=55,
+                                 corrections=["Remove the lemon-brand reference"]),
+        make_compliance_response(),
+    ])
+    result = builder.build(oid)
+
+    assert result["status"] == "ready"
+    assert result["compliance_attempts"] == 2
+    # The design was REGENERATED with the required amendment fed back in.
+    assert len(builder._llm.calls) == 2
+    assert "Remove the lemon-brand reference" in builder._llm.calls[1]["prompt"]
+    assert (Path(tmp_path) / "opportunities" / oid / "design_brief.json").exists()
+
+
+def test_compliance_regeneration_is_bounded_then_blocks(config, db, tmp_path):
+    config.design = {**config.design, "exports_dir": str(tmp_path)}
+    config.compliance = {**(config.compliance or {}), "max_remediation_attempts": 2}
+    oid = _seed_opportunity(config, db)
+    # Every pass still needs changes — the loop is bounded, then blocks.
+    builder = _builder(config, db, compliance=make_compliance_response(
+        platform=55, corrections=["still too close to a trademark"]))
+    result = builder.build(oid)
+
+    assert result["status"] == "blocked"
+    assert result["compliance_attempts"] == 2                 # bounded, never hangs
+    assert result["missing"] == ["still too close to a trademark"]
+    assert "changes" in result["reason"].lower()
+    assert not (Path(tmp_path) / "opportunities" / oid).exists()   # nothing written
+
+
 # --- Reads + errors -------------------------------------------------
 
 def test_get_package_round_trip(config, db, tmp_path):

@@ -17,17 +17,32 @@ judgment calls); the *verdict* is then computed deterministically from the
 configured thresholds, so the veto is explainable and testable. Every report
 is stored, and past rejections are fed back into the prompt so the Director
 learns from previous decisions.
+
+**Autonomous verdicts.** The production pipeline has no human to answer a
+request for more information, so the Director speaks only three verdicts:
+
+* ``APPROVE`` — clean, proceed.
+* ``APPROVE_WITH_CHANGES`` — medium risk: approved *provided* the stated
+  amendments are applied. The producer must apply them and re-run compliance.
+* ``REJECT`` — high risk / off-brand: a hard veto.
+
+:meth:`resolve` drives a subject to a terminal decision: it re-generates with
+the required corrections and re-reviews, terminating only on approval, a
+rejection, or a **bounded** number of failed amendment attempts — the pipeline
+never stalls waiting for input.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from onassis.config import Config
 from onassis.database import Database
 from onassis.llm import LLMClient
 from onassis.logger import get_logger
-from onassis.proposals import APPROVE, REJECT, REQUEST_MORE_INFO, Proposal
+from onassis.proposals import (
+    APPROVE, APPROVE_WITH_CHANGES, REJECT, Proposal,
+)
 
 log = get_logger(__name__)
 
@@ -35,6 +50,7 @@ _DEFAULTS = {
     "high_risk_threshold": 70,
     "medium_risk_threshold": 40,
     "brand_consistency_min": 70,
+    "max_remediation_attempts": 3,
 }
 
 _SCHEMA: dict[str, Any] = {
@@ -89,6 +105,7 @@ class ComplianceDirector:
         self.config = config
         self.db = db
         self.thresholds = {**_DEFAULTS, **(config.compliance or {})}
+        self.max_remediation_attempts = int(self.thresholds["max_remediation_attempts"])
         self._llm: LLMClient | None = None
 
     @property
@@ -177,6 +194,13 @@ class ComplianceDirector:
         return report
 
     def _verdict(self, tm: int, cr: int, pl: int, brand: int) -> str:
+        """Three terminal-or-remediable verdicts — never REQUEST_MORE_INFO.
+
+        The autonomous pipeline has no human to answer a request for more
+        information, so a medium-risk subject is not parked: it is
+        APPROVE_WITH_CHANGES, and the producer must apply the stated amendments
+        and re-run compliance. Only high risk (or off-brand) is a hard REJECT.
+        """
         high = self.thresholds["high_risk_threshold"]
         medium = self.thresholds["medium_risk_threshold"]
         brand_min = self.thresholds["brand_consistency_min"]
@@ -186,8 +210,63 @@ class ComplianceDirector:
         if brand < brand_min:
             return REJECT
         if worst >= medium:
-            return REQUEST_MORE_INFO
+            return APPROVE_WITH_CHANGES
         return APPROVE
+
+    # --- Autonomous remediation loop --------------------------------
+
+    def resolve(
+        self,
+        produce: "Callable[[list[str] | None], Any]",
+        review: "Callable[[Any], dict[str, Any]]",
+        *,
+        max_attempts: int | None = None,
+    ) -> dict[str, Any]:
+        """Drive a subject to a terminal compliance decision, autonomously.
+
+        ``produce(corrections)`` builds (or amends) the artifact — ``corrections``
+        is ``None`` on the first attempt, then the list of required amendments to
+        apply. ``review(artifact)`` returns a compliance report.
+
+        The loop applies APPROVE_WITH_CHANGES amendments and re-reviews, and
+        terminates only on:
+
+        * ``approved`` — a clean APPROVE, or
+        * ``rejected`` — a hard REJECT, or
+        * ``exhausted`` — still requiring changes after ``max_attempts`` (a bounded
+          number of failed regeneration attempts).
+
+        Returns ``{status, artifact, report, attempts, missing, history}``. There
+        is no ``needs_info`` outcome — the pipeline never waits on a human.
+        """
+        limit = max_attempts or self.max_remediation_attempts
+        corrections: list[str] | None = None
+        history: list[dict[str, Any]] = []
+        artifact: Any = None
+        report: dict[str, Any] = {}
+        for attempt in range(1, limit + 1):
+            artifact = produce(corrections)
+            report = review(artifact)
+            verdict = report["verdict"]
+            history.append({"attempt": attempt, "verdict": verdict,
+                            "corrections": report.get("corrections", [])})
+            if verdict == APPROVE:
+                return {"status": "approved", "artifact": artifact, "report": report,
+                        "attempts": attempt, "missing": [], "history": history}
+            if verdict == REJECT:
+                return {"status": "rejected", "artifact": artifact, "report": report,
+                        "attempts": attempt, "missing": report.get("corrections", []),
+                        "history": history}
+            # APPROVE_WITH_CHANGES — state what's missing, amend, and re-review.
+            corrections = report.get("corrections", []) or [report.get("reasoning", "")]
+            log.info(
+                "Compliance requires changes (attempt %d/%d) for '%s': %s — "
+                "amending and re-reviewing.", attempt, limit,
+                report.get("subject", "?"), "; ".join(corrections),
+            )
+        return {"status": "exhausted", "artifact": artifact, "report": report,
+                "attempts": limit, "missing": report.get("corrections", []),
+                "history": history}
 
     # --- Learning ---------------------------------------------------
 

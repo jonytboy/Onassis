@@ -35,7 +35,7 @@ from onassis.config import ROOT_DIR, Config
 from onassis.database import Database
 from onassis.llm import LLMClient
 from onassis.logger import get_logger
-from onassis.proposals import APPROVE, Proposal
+from onassis.proposals import APPROVE, Proposal, is_compliant
 
 log = get_logger(__name__)
 
@@ -135,29 +135,37 @@ class ListingFactory:
         if campaign is None:
             raise ListingError(f"No campaign with id {campaign_id}")
 
-        # Gate 1 — only approved campaigns may proceed (Company Law).
+        # Gate 1 — only compliance-cleared campaigns may proceed (Company Law).
         approval = self.db.get_compliance_for_campaign(campaign_id)
-        if not approval or approval.get("verdict") != APPROVE:
+        if not approval or not is_compliant(approval.get("verdict", "")):
             return {
                 "status": "blocked",
                 "campaign_id": campaign_id,
                 "reason": "Campaign is not compliance-approved; cannot prepare a listing.",
             }
 
-        listing = self._build_listing(campaign, design_package=design_package)
-
-        # Gate 2 — validate the generated listing's compliance before export.
-        review = self._review_listing(listing, campaign_id)
-        if review["verdict"] != APPROVE:
+        # Gate 2 — Compliance on the generated listing, run autonomously: amend
+        # the copy and re-review until approved or a bounded attempt limit.
+        outcome = self.compliance.resolve(
+            lambda corr: self._build_listing(campaign, design_package=design_package,
+                                             corrections=corr),
+            lambda listing: self._review_listing(listing, campaign_id))
+        if outcome["status"] != "approved":
             return {
                 "status": "blocked",
                 "campaign_id": campaign_id,
-                "reason": "Generated listing failed compliance review.",
-                "compliance": review,
+                "reason": ("Generated listing was REJECTED by compliance."
+                           if outcome["status"] == "rejected" else
+                           f"Listing still required changes after "
+                           f"{outcome['attempts']} amendment attempt(s)."),
+                "missing": outcome["missing"],
+                "compliance": outcome["report"],
             }
 
-        package = self._write_package(campaign_id, listing, review)
-        log.info("Listing package ready for campaign #%s at %s", campaign_id, package["path"])
+        package = self._write_package(campaign_id, outcome["artifact"], outcome["report"])
+        package["compliance_attempts"] = outcome["attempts"]
+        log.info("Listing package ready for campaign #%s at %s (%d compliance attempt(s))",
+                 campaign_id, package["path"], outcome["attempts"])
         return package
 
     def export_products(self, campaign_id: int,
@@ -177,7 +185,7 @@ class ListingFactory:
             raise ListingError(f"No campaign with id {campaign_id}")
 
         approval = self.db.get_compliance_for_campaign(campaign_id)
-        if not approval or approval.get("verdict") != APPROVE:
+        if not approval or not is_compliant(approval.get("verdict", "")):
             return {"status": "blocked", "campaign_id": campaign_id,
                     "reason": "Campaign is not compliance-approved; cannot prepare listings."}
 
@@ -188,14 +196,23 @@ class ListingFactory:
 
         packages: list[dict[str, Any]] = []
         for spec in launched:
-            listing = self._build_listing(campaign, product=spec,
-                                          design_package=design_package)
-            review = self._review_listing(listing, campaign_id)
-            if review["verdict"] != APPROVE:
+            # Autonomous compliance per product: amend the copy and re-review
+            # until approved, or block this product after a bounded attempt limit.
+            outcome = self.compliance.resolve(
+                lambda corr, spec=spec: self._build_listing(
+                    campaign, product=spec, design_package=design_package, corrections=corr),
+                lambda listing: self._review_listing(listing, campaign_id))
+            if outcome["status"] != "approved":
                 packages.append({"product_key": spec["product_key"], "status": "blocked",
-                                 "reason": "Generated listing failed compliance review."})
+                                 "reason": ("Listing REJECTED by compliance."
+                                            if outcome["status"] == "rejected" else
+                                            f"Still needed changes after "
+                                            f"{outcome['attempts']} attempt(s)."),
+                                 "missing": outcome["missing"]})
                 continue
-            pkg = self._write_package(campaign_id, listing, review, subdir=spec["product_key"])
+            pkg = self._write_package(campaign_id, outcome["artifact"], outcome["report"],
+                                      subdir=spec["product_key"])
+            pkg["compliance_attempts"] = outcome["attempts"]
             packages.append({"product_key": spec["product_key"], **pkg})
 
         ready = [p for p in packages if p.get("status") == "ready"]
@@ -213,6 +230,7 @@ class ListingFactory:
     def _build_listing(
         self, campaign: dict[str, Any], product: dict[str, Any] | None = None,
         design_package: dict[str, Any] | None = None,
+        corrections: list[str] | None = None,
     ) -> dict[str, Any]:
         brief = self.db.get_brief(campaign.get("brief_id")) or {}
         design_brief = (design_package or {}).get("design_brief", {}) or {}
@@ -234,7 +252,7 @@ class ListingFactory:
 
         gen = self.llm.generate_json(
             system=_SYSTEM,
-            prompt=self._prompt(campaign, brief, product_name, retail_price),
+            prompt=self._prompt(campaign, brief, product_name, retail_price, corrections),
             schema=_SCHEMA,
         )
 
@@ -338,6 +356,7 @@ class ListingFactory:
     def _prompt(
         self, campaign: dict[str, Any], brief: dict[str, Any],
         product_name: str | None = None, retail_price: Any = None,
+        corrections: list[str] | None = None,
     ) -> str:
         keywords = ", ".join(brief.get("keywords", []))
         product_line = ""
@@ -348,8 +367,17 @@ class ListingFactory:
                 f"description, tags, materials and attributes specifically for a "
                 f"{product_name} carrying this design.\n"
             )
+        amend = ""
+        if corrections:
+            bullets = "\n".join(f"- {c}" for c in corrections)
+            amend = (
+                "\nREQUIRED COMPLIANCE AMENDMENTS — a prior version of this listing "
+                "was flagged. You MUST apply ALL of these and produce revised, "
+                "lower-risk copy (original, no trademarks/celebrity/logos/misleading "
+                f"claims):\n{bullets}\n"
+            )
         return f"""Create a complete, upload-ready Etsy listing for this product.
-
+{amend}
 PRODUCT / CAMPAIGN
 - Name: {campaign.get('name', '')}
 - Theme: {campaign.get('theme', '')}

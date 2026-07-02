@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from onassis.governance import Governance
-from onassis.proposals import APPROVE, REJECT, REQUEST_MORE_INFO, Proposal
+from onassis.proposals import APPROVE, APPROVE_WITH_CHANGES, REJECT, Proposal
 from tests.conftest import FakeLLM, make_compliance_response
 
 _POLICY = {
@@ -71,12 +71,15 @@ def test_ceo_rejects_even_when_compliance_clears(config, db):
     assert result["final_authority"] == "CEO"
 
 
-def test_compliance_request_info_overrules(config, db):
+def test_medium_risk_clears_to_the_ceo_not_a_veto(config, db):
+    # Medium risk is APPROVE_WITH_CHANGES now — it does NOT veto; it clears the
+    # subject through to the CEO's capital decision (the pipeline never stalls).
     gov = _gov(config, db, make_compliance_response(platform=55))  # medium risk
     result = gov.submit(_sound_proposal())
-    assert result["final_verdict"] == REQUEST_MORE_INFO
-    assert result["final_authority"] == "Compliance"
-    assert db.get_proposal(result["proposal_id"])["status"] == "needs_info"
+    assert result["compliance"]["verdict"] == APPROVE_WITH_CHANGES
+    assert result["final_authority"] == "CEO"
+    assert result["final_verdict"] == APPROVE
+    assert db.get_proposal(result["proposal_id"])["status"] == "approved"
 
 
 def test_both_decisions_are_logged(config, db):

@@ -169,9 +169,11 @@ class CampaignManager:
             raise CampaignError(
                 f"Invalid status {status!r}. Must be one of: {', '.join(STATUSES)}"
             )
-        if status != "Draft":  # advancing requires Compliance approval
+        if status != "Draft":  # advancing requires Compliance clearance
+            from onassis.proposals import is_compliant
+
             report = self.db.get_compliance_for_campaign(campaign_id)
-            if report is None or report.get("verdict") != "APPROVE":
+            if report is None or not is_compliant(report.get("verdict", "")):
                 raise CampaignError(
                     "Compliance approval required before a campaign can progress "
                     f"beyond Draft (campaign #{campaign_id})."

@@ -728,8 +728,14 @@ confidence, risks, reasoning) and the governance layer decides:
 1. **Compliance Director** (`onassis/compliance.py`) — a permanent executive
    with **veto power over everyone, including the CEO**. It scores trademark,
    copyright, and platform risk plus brand consistency (LLM-reasoned), then
-   applies deterministic thresholds to verdict APPROVE / REJECT /
-   REQUEST_MORE_INFO. It stores every report and feeds past rejections back
+   applies deterministic thresholds. Because the autonomous pipeline has **no
+   human** to answer a request for more information, it speaks only three
+   verdicts: **APPROVE**, **APPROVE_WITH_CHANGES** (approved once the stated
+   amendments are applied), and **REJECT**. `resolve()` drives a design/listing
+   to a terminal decision — it auto-applies the required amendments, regenerates,
+   and re-reviews, stopping only on approval, a rejection, or a **bounded** number
+   of failed attempts (`compliance.max_remediation_attempts`), so the pipeline
+   never stalls. It stores every report and feeds past flagged decisions back
    into its prompt so it learns from precedent. *Company Law: ONASSIS never
    knowingly infringes IP or platform policy in pursuit of profit.*
 2. **CEO** (`onassis/ceo.py`) — the single business decision authority. A
@@ -737,9 +743,9 @@ confidence, risks, reasoning) and the governance layer decides:
    (min profit margin, cash reserve, max AI spend, max experiment budget,
    confidence, brand consistency) and writes its reasoning.
 3. **Governance** (`onassis/governance.py`) ties them together: Compliance
-   reviews first; if it doesn't APPROVE, its verdict **overrules** the CEO.
-   Only when Compliance approves does the CEO's verdict decide. Every
-   proposal, report, and decision is stored.
+   reviews first; a hard **REJECT overrules** the CEO. APPROVE and
+   APPROVE_WITH_CHANGES both clear the subject through to the CEO's capital
+   decision. Every proposal, report, and decision is stored.
 
 The daily pipeline now also runs a Compliance review of each generated
 campaign, and a campaign **cannot progress beyond `Draft`** without an

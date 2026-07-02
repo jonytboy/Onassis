@@ -27,7 +27,7 @@ from typing import Any
 from onassis.config import ROOT_DIR, Config
 from onassis.database import Database
 from onassis.logger import get_logger
-from onassis.proposals import APPROVE
+from onassis.proposals import is_compliant
 
 log = get_logger(__name__)
 
@@ -109,9 +109,10 @@ class PublisherService:
             return {"status": "blocked", "campaign_id": campaign_id,
                     "reason": "No such campaign."}
 
-        # Approval gate — only compliance-approved campaigns may publish.
+        # Approval gate — only compliance-cleared campaigns may publish
+        # (APPROVE or APPROVE_WITH_CHANGES; a REJECT never publishes).
         approval = self.db.get_compliance_for_campaign(campaign_id)
-        if not approval or approval.get("verdict") != APPROVE:
+        if not approval or not is_compliant(approval.get("verdict", "")):
             return {"status": "blocked", "campaign_id": campaign_id,
                     "reason": "Campaign is not compliance-approved."}
 

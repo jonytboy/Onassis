@@ -847,7 +847,7 @@ class Database:
             rows = conn.execute(
                 """
                 SELECT * FROM compliance_reports
-                WHERE verdict IN ('REJECT', 'REQUEST_MORE_INFO')
+                WHERE verdict IN ('REJECT', 'APPROVE_WITH_CHANGES', 'REQUEST_MORE_INFO')
                 ORDER BY id DESC LIMIT ?
                 """,
                 (limit,),
