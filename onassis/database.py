@@ -560,6 +560,24 @@ CREATE TABLE IF NOT EXISTS etsy_changes (
     error        TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_etsy_changes_listing ON etsy_changes(listing_id);
+
+-- Etsy search-term intelligence: which queries surfaced/were clicked for a
+-- listing (from a Shop-Stats provider). Fed to keyword optimisation.
+CREATE TABLE IF NOT EXISTS etsy_search_terms (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at    TEXT    NOT NULL,
+    snapshot_date TEXT    NOT NULL,
+    term          TEXT    NOT NULL,
+    listing_id    TEXT,
+    product_key   TEXT,
+    impressions   INTEGER NOT NULL DEFAULT 0,
+    clicks        INTEGER NOT NULL DEFAULT 0,
+    orders        INTEGER NOT NULL DEFAULT 0,
+    position      REAL,
+    source        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_search_terms_term ON etsy_search_terms(term);
+CREATE INDEX IF NOT EXISTS idx_search_terms_date ON etsy_search_terms(snapshot_date);
 """
 
 
@@ -2094,6 +2112,61 @@ class Database:
         params.append(limit)
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def insert_etsy_search_terms(self, rows: list[dict[str, Any]]) -> int:
+        now = _utcnow()
+        data = [
+            (now, r.get("snapshot_date") or now[:10], r["term"], r.get("listing_id"),
+             r.get("product_key"), int(r.get("impressions", 0) or 0),
+             int(r.get("clicks", 0) or 0), int(r.get("orders", 0) or 0),
+             r.get("position"), r.get("source"))
+            for r in rows
+        ]
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO etsy_search_terms
+                    (created_at, snapshot_date, term, listing_id, product_key,
+                     impressions, clicks, orders, position, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                data,
+            )
+        return len(data)
+
+    def list_etsy_search_terms(self, *, term: str | None = None,
+                               product_key: str | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM etsy_search_terms"
+        clauses: list[str] = []
+        params: list[Any] = []
+        if term is not None:
+            clauses.append("term = ?")
+            params.append(term)
+        if product_key is not None:
+            clauses.append("product_key = ?")
+            params.append(product_key)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY id DESC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def top_search_terms(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Aggregate search-term performance across history (impressions/clicks/orders)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT term,
+                       SUM(impressions) AS impressions,
+                       SUM(clicks) AS clicks,
+                       SUM(orders) AS orders
+                FROM etsy_search_terms GROUP BY term
+                ORDER BY orders DESC, clicks DESC, impressions DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
         return [dict(r) for r in rows]
 
     def get_publication_by_listing_id(self, listing_id: str) -> dict[str, Any] | None:

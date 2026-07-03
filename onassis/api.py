@@ -97,6 +97,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     ceo = daily.dashboard
     gelato = daily.gelato
     etsy_automation = daily.etsy_automation
+    etsy_intelligence = daily.etsy_intelligence
     experiments = ExperimentEngine(config, db)
     operations = OperationsManager(config, db, cycle=daily)
     readiness = ProductionReadiness(config, db)
@@ -137,6 +138,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.ceo = ceo
     app.state.gelato = gelato
     app.state.etsy_automation = etsy_automation
+    app.state.etsy_intelligence = etsy_intelligence
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""
@@ -380,6 +382,17 @@ def create_app(config: Config | None = None) -> FastAPI:
     def etsy_changes(listing_id: str | None = None) -> list[dict[str, Any]]:
         """The audit log of automated changes ONASSIS wrote to Etsy listings."""
         return etsy_automation.audit(listing_id)
+
+    @app.get("/etsy/intelligence", tags=["etsy"])
+    def etsy_intelligence_report() -> dict[str, Any]:
+        """Real conversion (per product + shop) and keyword performance from
+        synced Etsy data."""
+        return etsy_intelligence.intelligence()
+
+    @app.get("/etsy/search-terms", tags=["etsy"])
+    def etsy_search_terms() -> list[dict[str, Any]]:
+        """Aggregated search-term performance (impressions/clicks/orders/CTR)."""
+        return etsy_intelligence.keyword_performance()
 
     @app.get("/market/report", tags=["market"])
     def market_report(limit: int = 20) -> list[dict[str, Any]]:

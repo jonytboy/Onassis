@@ -734,6 +734,7 @@ def test_swagger_docs_available(app_and_client):
                  "/portfolio/archived", "/traffic/schedule", "/traffic/funnel",
                  "/marketing/{product_key}",
                  "/fulfilment/status", "/fulfilment/run", "/etsy/changes",
+                 "/etsy/intelligence", "/etsy/search-terms",
                  "/market/report", "/market/research",
                  "/analytics", "/analytics/product/{product_id}",
                  "/analytics/campaign/{campaign_id}",

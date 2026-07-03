@@ -57,6 +57,7 @@ from onassis.dashboard import CEODashboard
 from onassis.database import Database
 from onassis.design_package import DesignPackageBuilder
 from onassis.etsy_automation import EtsyAutomationEngine
+from onassis.etsy_intelligence import EtsyIntelligence
 from onassis.expansion import RevenueExpansionEngine
 from onassis.learning import LearningEngine
 from onassis.listing_factory import ListingFactory
@@ -106,6 +107,7 @@ class DailyCycle:
         self.learning = LearningEngine(config, db)
         self.portfolio = PortfolioManager(config, db)
         self.etsy_automation = EtsyAutomationEngine(config, db)
+        self.etsy_intelligence = EtsyIntelligence(config, db)
         self.marketing = MarketingEngine(config, db)
         self.traffic = TrafficEngine(config, db, pinterest=self.pinterest)
         self.dashboard = CEODashboard(config, db)
@@ -249,7 +251,18 @@ class DailyCycle:
         return {"status": status, "detail": ctx["fulfilment"]}
 
     def _import_analytics(self, ctx: dict[str, Any]) -> dict[str, Any]:
-        return {"status": "ok", "detail": self.analytics.collect()}
+        collected = self.analytics.collect()
+        # Etsy intelligence: import search terms (provider-gated) and compute REAL
+        # per-product conversion from synced views + orders, to feed learning.
+        terms = self.etsy_intelligence.import_search_terms()
+        report = self.etsy_intelligence.conversion_report()
+        ctx["conversion_lookup"] = {p["sku"]: p["conversion"]
+                                    for p in report["products"]}
+        ctx["etsy_intelligence"] = {"shop_conversion": report["shop"]["conversion"],
+                                    "search_terms_imported": terms["imported"]}
+        return {"status": "ok", "detail": {**collected,
+                                           "shop_conversion": report["shop"]["conversion"],
+                                           "search_terms": terms}}
 
     def _run_optimiser(self, ctx: dict[str, Any]) -> dict[str, Any]:
         rec = self.optimiser.top_recommendation()
@@ -266,8 +279,10 @@ class DailyCycle:
         and revive an archived type only if the market trend has turned."""
         if ctx["dry"]:
             return {"status": "skipped", "detail": "dry run (no archiving/writes)"}
-        digest = self.learning.run(
-            ctr_lookup=lambda sku: 0.0)  # CTR feeds in once the funnel has per-sku data
+        # Feed the Learning Engine the REAL per-listing conversion (from synced
+        # Etsy views + orders), computed in the Import Analytics stage.
+        conversion = ctx.get("conversion_lookup") or {}
+        digest = self.learning.run(ctr_lookup=lambda sku: float(conversion.get(sku, 0.0)))
         revived = self.portfolio.reconsider_archived()
         ctx["learning"] = digest
         # Act on the decisions: reflect reprice/retire back onto live Etsy listings
