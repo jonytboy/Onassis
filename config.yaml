@@ -155,6 +155,16 @@ marketing:
   email:
     from_name: "Local Celebrity"
 
+# --- Traffic Engine (distribute the marketing; measure the funnel) ---
+# Takes the marketing kit and actually posts it, starting with Pinterest:
+# 5-10 pins/day spread across boards, keywords and the current season, each
+# linking back to the Etsy listing. Logs the whole funnel so ONASSIS can see
+# where money comes from: Impressions -> Clicks -> Visits -> Sales.
+traffic:
+  min_pins_per_day: 5            # aim to post at least this many pins/day...
+  max_pins_per_day: 10           # ...never more than this
+  boards: []                     # explicit board rotation; empty -> per-pin board
+
 # --- Daily report (Revenue / Profit / Best / Worst / Recommendation) -
 report:
   min_traffic_to_judge: 60       # views a product needs before it can be Killed

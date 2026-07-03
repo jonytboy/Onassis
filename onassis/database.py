@@ -473,6 +473,46 @@ CREATE TABLE IF NOT EXISTS marketing_assets (
 );
 CREATE INDEX IF NOT EXISTS idx_marketing_product ON marketing_assets(product_key);
 CREATE INDEX IF NOT EXISTS idx_marketing_channel ON marketing_assets(channel);
+
+-- Traffic Engine: the Pinterest posting schedule (5-10 pins/day across boards,
+-- keywords and seasons). Each pin drives traffic back to its Etsy listing.
+CREATE TABLE IF NOT EXISTS pin_schedule (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at     TEXT    NOT NULL,
+    pin_key        TEXT    UNIQUE,           -- stable per-pin dedupe key
+    campaign_id    INTEGER,
+    product_key    TEXT,
+    listing_id     TEXT,
+    listing_url    TEXT,
+    board          TEXT,
+    keyword        TEXT,
+    season         TEXT,
+    aspect_ratio   TEXT,
+    title          TEXT,
+    description    TEXT,
+    scheduled_date TEXT,                     -- YYYY-MM-DD
+    status         TEXT    NOT NULL DEFAULT 'scheduled',  -- scheduled | posted | failed
+    pin_ref        TEXT,
+    posted_at      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pin_schedule_date ON pin_schedule(scheduled_date);
+CREATE INDEX IF NOT EXISTS idx_pin_schedule_status ON pin_schedule(status);
+
+-- Traffic funnel: Impressions -> Clicks -> Visits -> Sales, per product per day.
+CREATE TABLE IF NOT EXISTS traffic_funnel (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at   TEXT    NOT NULL,
+    funnel_date  TEXT    NOT NULL,           -- YYYY-MM-DD
+    product_key  TEXT,
+    listing_id   TEXT,
+    source       TEXT    NOT NULL DEFAULT 'pinterest',
+    impressions  INTEGER NOT NULL DEFAULT 0,
+    clicks       INTEGER NOT NULL DEFAULT 0,
+    visits       INTEGER NOT NULL DEFAULT 0,
+    sales        INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_funnel_date ON traffic_funnel(funnel_date);
+CREATE INDEX IF NOT EXISTS idx_funnel_product ON traffic_funnel(product_key);
 """
 
 
@@ -2054,6 +2094,124 @@ class Database:
             params.append(channel)
         with self._connect() as conn:
             return int(conn.execute(sql, params).fetchone()[0])
+
+    # --- Traffic: pin schedule --------------------------------------
+
+    def insert_pin_schedule(self, pin: dict[str, Any]) -> int | None:
+        """Schedule a pin. Returns None if this pin_key is already scheduled."""
+        with self._connect() as conn:
+            try:
+                cur = conn.execute(
+                    """
+                    INSERT INTO pin_schedule
+                        (created_at, pin_key, campaign_id, product_key, listing_id,
+                         listing_url, board, keyword, season, aspect_ratio, title,
+                         description, scheduled_date, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        _utcnow(), pin.get("pin_key"), pin.get("campaign_id"),
+                        pin.get("product_key"), pin.get("listing_id"),
+                        pin.get("listing_url"), pin.get("board"), pin.get("keyword"),
+                        pin.get("season"), pin.get("aspect_ratio"), pin.get("title"),
+                        pin.get("description"), pin.get("scheduled_date"),
+                        pin.get("status", "scheduled"),
+                    ),
+                )
+                return int(cur.lastrowid)
+            except sqlite3.IntegrityError:
+                return None  # already scheduled (unique pin_key)
+
+    def scheduled_pin_keys(self) -> set[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT pin_key FROM pin_schedule WHERE pin_key IS NOT NULL").fetchall()
+        return {r["pin_key"] for r in rows}
+
+    def list_pin_schedule(self, *, scheduled_date: str | None = None,
+                          status: str | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM pin_schedule"
+        clauses: list[str] = []
+        params: list[Any] = []
+        if scheduled_date is not None:
+            clauses.append("scheduled_date = ?")
+            params.append(scheduled_date)
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY id"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def count_pins_scheduled_on(self, scheduled_date: str) -> int:
+        with self._connect() as conn:
+            return int(conn.execute(
+                "SELECT COUNT(*) FROM pin_schedule WHERE scheduled_date = ?",
+                (scheduled_date,)).fetchone()[0])
+
+    def set_pin_status(self, pin_id: int, status: str, *, pin_ref: str | None = None,
+                       posted_at: str | None = None) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE pin_schedule SET status = ?, pin_ref = ?, posted_at = ? "
+                "WHERE id = ?",
+                (status, pin_ref, posted_at or (_utcnow() if status == "posted" else None),
+                 pin_id),
+            )
+            return cur.rowcount > 0
+
+    # --- Traffic: funnel --------------------------------------------
+
+    def insert_traffic_funnel(self, row: dict[str, Any]) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO traffic_funnel
+                    (created_at, funnel_date, product_key, listing_id, source,
+                     impressions, clicks, visits, sales)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utcnow(), row["funnel_date"], row.get("product_key"),
+                    row.get("listing_id"), row.get("source", "pinterest"),
+                    int(row.get("impressions", 0)), int(row.get("clicks", 0)),
+                    int(row.get("visits", 0)), int(row.get("sales", 0)),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_traffic_funnel(self, *, funnel_date: str | None = None,
+                            product_key: str | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM traffic_funnel"
+        clauses: list[str] = []
+        params: list[Any] = []
+        if funnel_date is not None:
+            clauses.append("funnel_date = ?")
+            params.append(funnel_date)
+        if product_key is not None:
+            clauses.append("product_key = ?")
+            params.append(product_key)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY id DESC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def funnel_totals(self, *, funnel_date: str | None = None) -> dict[str, int]:
+        sql = ("SELECT COALESCE(SUM(impressions),0) AS impressions, "
+               "COALESCE(SUM(clicks),0) AS clicks, COALESCE(SUM(visits),0) AS visits, "
+               "COALESCE(SUM(sales),0) AS sales FROM traffic_funnel")
+        params: list[Any] = []
+        if funnel_date is not None:
+            sql += " WHERE funnel_date = ?"
+            params.append(funnel_date)
+        with self._connect() as conn:
+            row = conn.execute(sql, params).fetchone()
+        return {k: int(row[k]) for k in ("impressions", "clicks", "visits", "sales")}
 
     def learned_ctr_by_variant(self) -> dict[str, float]:
         """Average CTR per hero variant across all history with real impressions."""
