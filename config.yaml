@@ -138,9 +138,18 @@ market:
   min_opportunity_band: HIGH     # opportunities are drawn from >= this band
   seed_keywords: []              # optional fixed candidates; empty -> provider proposes
 
-# --- Product portfolio (never flood Etsy) ----------------------------
+# --- Product portfolio (never flood Etsy; 30-day lifecycle) ----------
+# Every listing gets a probation window, then a verdict on real evidence
+# (CTR / conversion / visits / sales): KEEP a profitable seller, IMPROVE one
+# with interest but no conversion, or RETIRE (archive) a money-loser or a
+# listing the market has rejected. A retired product is never touched again
+# unless fresh market data shows its trend has turned (reconsider_band).
 portfolio:
   max_new_listings_per_day: 2    # hard cap on NEW live/draft listings per day
+  review_after_days: 30          # a listing is judged once it's this old
+  min_traffic_to_judge: 60       # views needed before "no sales" is a real rejection
+  max_improve_cycles: 1          # IMPROVE windows before a stagnant listing is retired
+  reconsider_band: "VERY HIGH"   # only revive an archived type at/above this market band
 
 # --- Etsy connector (read-only, observation only) --------------------
 # Credentials come from the environment (never commit them):

@@ -416,6 +416,27 @@ CREATE TABLE IF NOT EXISTS market_signals (
     payload           TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_market_run ON market_signals(run_at);
+
+-- Portfolio lifecycle: every listing gets a review window, then a verdict
+-- (KEEP / IMPROVE / RETIRE). Append-only — each 30-day review adds a row so the
+-- history of a product's judgements is preserved.
+CREATE TABLE IF NOT EXISTS portfolio_reviews (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at    TEXT    NOT NULL,
+    sku           TEXT    NOT NULL,
+    product_key   TEXT,
+    campaign_id   INTEGER,
+    age_days      INTEGER NOT NULL DEFAULT 0,
+    views         INTEGER NOT NULL DEFAULT 0,
+    favourites    INTEGER NOT NULL DEFAULT 0,
+    units         INTEGER NOT NULL DEFAULT 0,
+    net_profit    REAL    NOT NULL DEFAULT 0,
+    conversion    REAL    NOT NULL DEFAULT 0,
+    ctr           REAL    NOT NULL DEFAULT 0,
+    decision      TEXT    NOT NULL,          -- KEEP | IMPROVE | RETIRE
+    reason        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_portfolio_reviews_sku ON portfolio_reviews(sku);
 """
 
 
@@ -453,7 +474,8 @@ class Database:
             conn.executescript(_SCHEMA)
             # Idempotent additive column migrations (CREATE TABLE IF NOT EXISTS
             # can't add columns to a pre-existing table).
-            for table, column, decl in (("products", "product_key", "TEXT"),):
+            for table, column, decl in (("products", "product_key", "TEXT"),
+                                        ("products", "launched_at", "TEXT")):
                 try:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
                 except sqlite3.OperationalError:
@@ -980,11 +1002,13 @@ class Database:
                 """
                 INSERT INTO products
                     (created_at, sku, name, campaign_id, brand, marketplace,
-                     production_cost, active, product_key)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     production_cost, active, product_key, launched_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    _utcnow(),
+                    # `created_at`/`launched_at` may be back-dated by the caller
+                    # (e.g. importing history, or ageing a listing in tests).
+                    product.get("created_at") or _utcnow(),
                     product.get("sku"),
                     product.get("name", ""),
                     product.get("campaign_id"),
@@ -993,9 +1017,19 @@ class Database:
                     float(product.get("production_cost", 0) or 0),
                     1 if product.get("active", True) else 0,
                     product.get("product_key"),
+                    product.get("launched_at") or product.get("created_at") or _utcnow(),
                 ),
             )
             return int(cur.lastrowid)
+
+    def set_product_active(self, sku: str, active: bool) -> bool:
+        """Archive (active=0) or restore (active=1) a product by sku."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE products SET active = ? WHERE sku = ?",
+                (1 if active else 0, sku),
+            )
+            return cur.rowcount > 0
 
     def get_product(self, product_id: int) -> dict[str, Any] | None:
         with self._connect() as conn:
@@ -1819,6 +1853,63 @@ class Database:
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
+
+    # --- Portfolio lifecycle reviews --------------------------------
+
+    def insert_portfolio_review(self, review: dict[str, Any]) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO portfolio_reviews
+                    (created_at, sku, product_key, campaign_id, age_days, views,
+                     favourites, units, net_profit, conversion, ctr, decision, reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utcnow(),
+                    review["sku"],
+                    review.get("product_key"),
+                    review.get("campaign_id"),
+                    int(review.get("age_days", 0)),
+                    int(review.get("views", 0)),
+                    int(review.get("favourites", 0)),
+                    int(review.get("units", 0)),
+                    float(review.get("net_profit", 0) or 0),
+                    float(review.get("conversion", 0) or 0),
+                    float(review.get("ctr", 0) or 0),
+                    review["decision"],
+                    review.get("reason"),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_portfolio_reviews(self, sku: str | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM portfolio_reviews"
+        params: list[Any] = []
+        if sku is not None:
+            sql += " WHERE sku = ?"
+            params.append(sku)
+        sql += " ORDER BY id DESC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_last_portfolio_review(self, sku: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM portfolio_reviews WHERE sku = ? ORDER BY id DESC LIMIT 1",
+                (sku,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def count_portfolio_decisions(self, decision: str, since: str | None = None) -> int:
+        sql = "SELECT COUNT(*) FROM portfolio_reviews WHERE decision = ?"
+        params: list[Any] = [decision]
+        if since is not None:
+            sql += " AND created_at >= ?"
+            params.append(since)
+        with self._connect() as conn:
+            return int(conn.execute(sql, params).fetchone()[0])
 
 
 def _row_to_brief(row: sqlite3.Row) -> dict[str, Any]:
