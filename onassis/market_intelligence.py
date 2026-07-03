@@ -182,7 +182,16 @@ class MarketIntelligence:
         self.default_count = int(self.cfg.get("default_count", 8))
         self.competitor_ceiling = int(self.cfg.get("competitor_ceiling", 1500))
         self.review_ceiling = int(self.cfg.get("review_ceiling", 5000))
-        self.provider = signals_provider or LLMSignalsProvider(config)
+        self.provider = signals_provider or self._default_provider()
+
+    def _default_provider(self) -> "SignalsProvider":
+        """Select the signals provider from config: 'real' (live market data) or
+        'llm' (estimates). Built lazily — no network until research() runs."""
+        choice = str(self.cfg.get("signals_provider", "llm")).lower()
+        if choice == "real":
+            from onassis.market_truth import RealSignalsProvider
+            return RealSignalsProvider(self.config, self.db)
+        return LLMSignalsProvider(self.config)
 
     # --- Research ---------------------------------------------------
 
@@ -200,9 +209,17 @@ class MarketIntelligence:
         run_at = datetime.now(timezone.utc).isoformat()
         for row in scored:
             self.db.insert_market_signal({**row, "brand": brand, "run_at": run_at})
-        log.info("Market intelligence: scored %d keyword(s); top: %s.",
-                 len(scored), scored[0]["keyword"] if scored else "—")
-        return {"brand": brand, "count": len(scored), "keywords": scored}
+        provider = getattr(self.provider, "name", "llm")
+        log.info("Market intelligence (%s): scored %d keyword(s); top: %s.",
+                 provider, len(scored), scored[0]["keyword"] if scored else "—")
+        return {"brand": brand, "count": len(scored), "keywords": scored,
+                "provider": provider}
+
+    def recalculate_opportunity_scores(self, keywords: list[str] | None = None,
+                                       count: int | None = None) -> dict[str, Any]:
+        """Re-run research through the configured provider and re-score/rank the
+        opportunities — the entry point for refreshing scores from live data."""
+        return self.research(keywords, count)
 
     def _score(self, item: dict[str, Any]) -> dict[str, Any]:
         signals = {f: _clamp(item.get(f)) for f in _SIGNAL_FIELDS}

@@ -177,11 +177,19 @@ report:
 # replaceable provider (LLM by default; a real Etsy/Google-Trends provider can be
 # plugged in later); the scoring + opportunity banding are deterministic.
 market:
+  # Signals source: 'real' assembles live Google/Pinterest Trends + Etsy search
+  # data (conservative defaults only where a signal is genuinely unavailable);
+  # 'llm' uses model estimates. Scoring/banding is deterministic either way.
+  signals_provider: real         # real | llm
   default_count: 8               # keywords per research report
   competitor_ceiling: 1500       # competitor count that maps to 100 'crowdedness'
   review_ceiling: 5000           # review count that maps to 100 'crowdedness'
   min_opportunity_band: HIGH     # opportunities are drawn from >= this band
   seed_keywords: []              # optional fixed candidates; empty -> provider proposes
+  trends:
+    google_geo: "GB"             # Google Trends region
+    pinterest_region: "GB"       # Pinterest Trends region
+    etsy_impression_ceiling: 5000  # search impressions that map to demand 100
 
 # --- Product portfolio (never flood Etsy; 30-day lifecycle) ----------
 # Every listing gets a probation window, then a verdict on real evidence
