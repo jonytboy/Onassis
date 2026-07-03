@@ -542,6 +542,24 @@ CREATE TABLE IF NOT EXISTS fulfilments (
     shipped_at       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_fulfilments_status ON fulfilments(status);
+
+-- Etsy change audit: every write ONASSIS makes to a live Etsy listing is logged
+-- here (field, old -> new, why, source, result) so every automated change is
+-- traceable.
+CREATE TABLE IF NOT EXISTS etsy_changes (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at   TEXT    NOT NULL,
+    listing_id   TEXT,
+    product_key  TEXT,
+    field        TEXT    NOT NULL,          -- title|description|tags|price|quantity|images|state
+    old_value    TEXT,
+    new_value    TEXT,
+    reason       TEXT,
+    source       TEXT,                      -- learning|portfolio|manual|...
+    status       TEXT    NOT NULL,          -- applied | failed | skipped
+    error        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_etsy_changes_listing ON etsy_changes(listing_id);
 """
 
 
@@ -2038,6 +2056,45 @@ class Database:
             rows = conn.execute(
                 "SELECT order_ref FROM fulfilments WHERE order_ref IS NOT NULL").fetchall()
         return {r["order_ref"] for r in rows}
+
+    def insert_etsy_change(self, change: dict[str, Any]) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO etsy_changes
+                    (created_at, listing_id, product_key, field, old_value, new_value,
+                     reason, source, status, error)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utcnow(), change.get("listing_id"), change.get("product_key"),
+                    change["field"],
+                    (json.dumps(change["old_value"])
+                     if isinstance(change.get("old_value"), (dict, list))
+                     else (None if change.get("old_value") is None
+                           else str(change.get("old_value")))),
+                    (json.dumps(change["new_value"])
+                     if isinstance(change.get("new_value"), (dict, list))
+                     else (None if change.get("new_value") is None
+                           else str(change.get("new_value")))),
+                    change.get("reason"), change.get("source"),
+                    change.get("status", "applied"), change.get("error"),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_etsy_changes(self, listing_id: str | None = None,
+                          limit: int = 200) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM etsy_changes"
+        params: list[Any] = []
+        if listing_id is not None:
+            sql += " WHERE listing_id = ?"
+            params.append(str(listing_id))
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
 
     def get_publication_by_listing_id(self, listing_id: str) -> dict[str, Any] | None:
         """The publication that owns an Etsy listing id (links listing -> product)."""

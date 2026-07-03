@@ -56,6 +56,7 @@ from onassis.connectors.pinterest import PinterestConnector
 from onassis.dashboard import CEODashboard
 from onassis.database import Database
 from onassis.design_package import DesignPackageBuilder
+from onassis.etsy_automation import EtsyAutomationEngine
 from onassis.expansion import RevenueExpansionEngine
 from onassis.learning import LearningEngine
 from onassis.listing_factory import ListingFactory
@@ -104,6 +105,7 @@ class DailyCycle:
         # Revenue-optimisation engines (learn, promote, distribute, report money).
         self.learning = LearningEngine(config, db)
         self.portfolio = PortfolioManager(config, db)
+        self.etsy_automation = EtsyAutomationEngine(config, db)
         self.marketing = MarketingEngine(config, db)
         self.traffic = TrafficEngine(config, db, pinterest=self.pinterest)
         self.dashboard = CEODashboard(config, db)
@@ -268,12 +270,17 @@ class DailyCycle:
             ctr_lookup=lambda sku: 0.0)  # CTR feeds in once the funnel has per-sku data
         revived = self.portfolio.reconsider_archived()
         ctx["learning"] = digest
+        # Act on the decisions: reflect reprice/retire back onto live Etsy listings
+        # (safe no-op + audited until Etsy is configured for writes).
+        actuation = self.etsy_automation.apply_learning_actions(digest)
+        ctx["etsy_automation"] = actuation
         return {"status": "ok", "detail": {
             "headline": digest["headline"],
             "scaled": len(digest["actions"]["increase"]),
             "adjusted": len(digest["actions"]["adjust"]),
             "retired": len(digest["actions"]["retire"]),
-            "revived": len(revived["reactivated"])}}
+            "revived": len(revived["reactivated"]),
+            "etsy_changes_applied": actuation.get("applied", 0)}}
 
     def _ceo_decision(self, ctx: dict[str, Any]) -> dict[str, Any]:
         rec = ctx.get("recommendation")

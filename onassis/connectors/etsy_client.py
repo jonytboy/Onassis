@@ -55,6 +55,26 @@ def _sanitise_materials(materials: Any) -> list[str]:
     return out
 
 
+def _trim_inventory_products(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Reduce Etsy's getInventory ``products`` to the shape updateInventory wants:
+    only ``sku``, ``property_values`` and each offering's ``price``/``quantity``/
+    ``is_enabled`` (Etsy rejects the read-only fields it returns on GET)."""
+    trimmed: list[dict[str, Any]] = []
+    for product in products:
+        offerings = [
+            {"price": round(float(o.get("price", 0) or 0), 2),  # normalised upstream
+             "quantity": int(o.get("quantity", 0) or 0),
+             "is_enabled": bool(o.get("is_enabled", True))}
+            for o in product.get("offerings", []) or []
+        ]
+        trimmed.append({
+            "sku": product.get("sku", ""),
+            "property_values": product.get("property_values", []) or [],
+            "offerings": offerings,
+        })
+    return trimmed
+
+
 def api_key_header(keystring: str | None, shared_secret: str | None = None) -> str | None:
     """The value for Etsy's ``x-api-key`` header.
 
@@ -303,6 +323,90 @@ class EtsyDraftClient(EtsyClient):
             raise EtsyApiError(
                 f"Etsy updateListing (activate) returned HTTP {resp.status_code}: {detail}")
         return resp.json()
+
+    def update_listing(self, listing_id: int | str,
+                       fields: dict[str, Any]) -> dict[str, Any]:
+        """Edit a live/draft listing's editable fields (title/description/tags/
+        materials/state/price). PATCH-style PUT /shops/{shop}/listings/{id}."""
+        body: dict[str, Any] = {}
+        for key in ("title", "description", "state"):
+            if fields.get(key) is not None:
+                body[key] = fields[key]
+        if fields.get("tags") is not None:
+            body["tags"] = list(fields["tags"])
+        if fields.get("materials") is not None:
+            body["materials"] = _sanitise_materials(fields["materials"])
+        if fields.get("price") is not None:
+            body["price"] = round(float(fields["price"]), 2)
+        if not body:
+            return {"skipped": "no editable fields"}
+        url = (f"{self.base_url}/shops/{self.resolve_shop_id()}"
+               f"/listings/{listing_id}")
+        resp = httpx.put(url, headers=self._headers(), json=body, timeout=self.timeout)
+        if resp.status_code >= 400:
+            detail = _response_detail(resp)
+            log.error("Etsy updateListing failed: HTTP %s\n%s", resp.status_code, detail)
+            raise EtsyApiError(
+                f"Etsy updateListing returned HTTP {resp.status_code}: {detail}")
+        return resp.json()
+
+    def deactivate_listing(self, listing_id: int | str) -> dict[str, Any]:
+        """Take a live listing OUT of the shop (state=inactive) — used to retire it."""
+        return self.update_listing(listing_id, {"state": "inactive"})
+
+    def get_listing_inventory(self, listing_id: int | str) -> dict[str, Any]:
+        """GET the listing's inventory (offerings carry price + quantity)."""
+        return self._get(f"/listings/{listing_id}/inventory")
+
+    def update_listing_inventory(self, listing_id: int | str,
+                                 inventory: dict[str, Any]) -> dict[str, Any]:
+        """PUT the listing's inventory (the way price/quantity are changed for a
+        listing with product offerings)."""
+        url = f"{self.base_url}/listings/{listing_id}/inventory"
+        resp = httpx.put(url, headers=self._headers(), json=inventory, timeout=self.timeout)
+        if resp.status_code >= 400:
+            detail = _response_detail(resp)
+            log.error("Etsy updateInventory failed: HTTP %s\n%s", resp.status_code, detail)
+            raise EtsyApiError(
+                f"Etsy updateListingInventory returned HTTP {resp.status_code}: {detail}")
+        return resp.json()
+
+    def set_price_and_quantity(self, listing_id: int | str, *, price: float | None = None,
+                               quantity: int | None = None) -> dict[str, Any]:
+        """Read the listing's inventory, set price/quantity on every offering, and
+        write it back. This is Etsy's supported path for changing price/stock."""
+        inventory = self.get_listing_inventory(listing_id)
+        products = inventory.get("products", []) or []
+        for product in products:
+            for offering in product.get("offerings", []) or []:
+                current = offering.get("price")
+                if isinstance(current, dict):  # Etsy GET returns {amount, divisor}
+                    existing = float(current.get("amount", 0) or 0) / (current.get("divisor") or 100)
+                else:
+                    existing = float(current or 0)
+                offering["price"] = round(price if price is not None else existing, 2)
+                if quantity is not None:
+                    offering["quantity"] = int(quantity)
+        # Etsy's update payload wants a trimmed shape (products + the *_on_property
+        # arrays echoed back). Send products plus the property arrays it returned.
+        payload: dict[str, Any] = {"products": _trim_inventory_products(products)}
+        for key in ("price_on_property", "quantity_on_property", "sku_on_property"):
+            payload[key] = inventory.get(key, []) or []
+        return self.update_listing_inventory(listing_id, payload)
+
+    def delete_listing_image(self, listing_id: int | str,
+                             image_id: int | str) -> dict[str, Any]:
+        """Remove one image from a listing (DELETE …/images/{image_id})."""
+        url = (f"{self.base_url}/shops/{self.resolve_shop_id()}"
+               f"/listings/{listing_id}/images/{image_id}")
+        resp = httpx.delete(url, headers=self._headers(), timeout=self.timeout)
+        if resp.status_code >= 400:
+            detail = _response_detail(resp)
+            log.error("Etsy deleteListingImage failed: HTTP %s\n%s",
+                      resp.status_code, detail)
+            raise EtsyApiError(
+                f"Etsy deleteListingImage returned HTTP {resp.status_code}: {detail}")
+        return {"deleted": True, "image_id": image_id}
 
     def upload_listing_image(
         self, listing_id: int | str, image_path: str, *, rank: int = 1,

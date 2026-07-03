@@ -96,6 +96,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     traffic = daily.traffic
     ceo = daily.dashboard
     gelato = daily.gelato
+    etsy_automation = daily.etsy_automation
     experiments = ExperimentEngine(config, db)
     operations = OperationsManager(config, db, cycle=daily)
     readiness = ProductionReadiness(config, db)
@@ -135,6 +136,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.traffic = traffic
     app.state.ceo = ceo
     app.state.gelato = gelato
+    app.state.etsy_automation = etsy_automation
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""
@@ -373,6 +375,11 @@ def create_app(config: Config | None = None) -> FastAPI:
     def fulfilment_run() -> dict[str, Any]:
         """Submit new paid orders to Gelato and poll production status/tracking."""
         return {"submit": gelato.fulfil_new_orders(), "sync": gelato.sync_status()}
+
+    @app.get("/etsy/changes", tags=["etsy"])
+    def etsy_changes(listing_id: str | None = None) -> list[dict[str, Any]]:
+        """The audit log of automated changes ONASSIS wrote to Etsy listings."""
+        return etsy_automation.audit(listing_id)
 
     @app.get("/market/report", tags=["market"])
     def market_report(limit: int = 20) -> list[dict[str, Any]]:
