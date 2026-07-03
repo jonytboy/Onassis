@@ -61,6 +61,9 @@ def config(tmp_path: Path):
     cfg.listing = {**(cfg.listing or {}), "min_description_chars": 0}
     # Don't cap listings in most tests (cap is exercised in a dedicated test).
     cfg.portfolio = {**(cfg.portfolio or {}), "max_new_listings_per_day": 50}
+    # Keep deterministic catalogue pricing in most tests; expected-profit pricing
+    # is exercised in its own tests.
+    cfg.pricing = {**(cfg.pricing or {}), "optimise": False}
     return cfg
 
 

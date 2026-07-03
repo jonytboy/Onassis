@@ -149,6 +149,11 @@ class ListingFactory:
         # The Artwork Studio produces the REAL commercial images (no placeholders).
         self.studio = studio or ArtworkStudio(config, db)
         self.min_description_chars = int(self.cfg.get("min_description_chars", 120))
+        # Price for maximum EXPECTED PROFIT (opt-in), not cost-plus margin.
+        from onassis.pricing import PricingEngine
+
+        self.pricing = PricingEngine(config, db)
+        self.pricing_enabled = bool((config.pricing or {}).get("optimise", True))
         self._llm: LLMClient | None = None
 
     @property
@@ -385,6 +390,17 @@ class ListingFactory:
             production_cost if production_cost not in (None, "")
             else self.cfg.get("default_production_cost", 12.0)
         )
+        if self.pricing_enabled:  # choose the price that MAXIMISES EXPECTED PROFIT
+            reference = float(retail_price) if retail_price not in (None, "") else None
+            opt = self.pricing.optimise(production_cost, reference)
+            return {
+                "price": opt["price"], "currency": self.cfg.get("currency", "GBP"),
+                "production_cost": round(production_cost, 2),
+                "target_margin": opt["net_margin"], "strategy": "expected_profit",
+                "expected_profit": opt["expected_profit"],
+                "reference_price": opt["reference_price"],
+                "rationale": opt["rationale"], "pricing_curve": opt["curve"],
+            }
         if retail_price not in (None, ""):  # catalogue retail from the Expansion Engine
             price = round(float(retail_price), 2)
             margin = round((price - production_cost) / price, 4) if price else 0.0

@@ -213,6 +213,17 @@ def test_export_produces_complete_package(factory, db):
     assert listing["state"] == "draft"           # never published
 
 
+def test_expected_profit_pricing_when_enabled(factory, db):
+    factory.pricing_enabled = True
+    cid = _approved_campaign(db)
+    db.insert_product({"sku": str(cid), "production_cost": 8, "campaign_id": cid})
+    listing = factory.export(cid)["listing"]
+    rec = listing["pricing_recommendation"]
+    assert rec["strategy"] == "expected_profit"
+    assert rec["expected_profit"] > 0 and "pricing_curve" in rec
+    assert listing["price"] > 8            # above cost, chosen for max expected profit
+
+
 def test_pricing_is_deterministic(factory, db):
     cid = _approved_campaign(db)
     # Register a product with a known production cost.

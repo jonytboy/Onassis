@@ -30,6 +30,7 @@ class FeeModel:
     regulatory_rate: float = 0.0         # regulatory operating fee (region-specific)
     offsite_ads_rate: float = 0.15       # Offsite Ads fee on ATTRIBUTED orders
     offsite_ads_share: float = 0.30      # blended fraction of orders attributed
+    vat_rate: float = 0.0                # output VAT on the sale (0 if under threshold)
     currency: str = "GBP"
 
     @classmethod
@@ -43,6 +44,7 @@ class FeeModel:
             regulatory_rate=float(cfg.get("regulatory_rate", 0.0)),
             offsite_ads_rate=float(cfg.get("offsite_ads_rate", 0.15)),
             offsite_ads_share=float(cfg.get("offsite_ads_share", 0.30)),
+            vat_rate=float(cfg.get("vat_rate", 0.0)),
             currency=str(cfg.get("currency", "GBP")),
         )
 
@@ -68,11 +70,13 @@ class FeeModel:
         else:  # unknown → blended expectation for forecasts
             offsite_fee = self.offsite_ads_rate * self.offsite_ads_share * base
         marketplace += offsite_fee
+        vat = self.vat_rate * base   # output VAT owed on the sale (0 if unregistered)
         return {
             "marketplace_fees": round(marketplace, 2),
             "payment_fees": round(payment, 2),
             "offsite_fees": round(offsite_fee, 2),
-            "total_fees": round(marketplace + payment, 2),
+            "vat": round(vat, 2),
+            "total_fees": round(marketplace + payment + vat, 2),
         }
 
     def total_fees(self, item_total: float, shipping: float = 0.0,
