@@ -363,6 +363,11 @@ def create_app(config: Config | None = None) -> FastAPI:
         """The traffic funnel — Impressions -> Clicks -> Visits -> Sales."""
         return traffic.funnel(date)
 
+    @app.post("/traffic/run", tags=["traffic"])
+    def traffic_run() -> dict[str, Any]:
+        """Schedule pins, post the due ones, and import Pinterest metrics."""
+        return traffic.run()
+
     @app.get("/marketing/{product_key}", tags=["marketing"])
     def marketing_assets(product_key: str) -> list[dict[str, Any]]:
         """The stored marketing kit (per channel) for a product."""

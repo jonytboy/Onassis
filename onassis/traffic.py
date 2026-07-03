@@ -19,7 +19,8 @@ schedule and records the funnel from data the system already collects.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from onassis.config import Config
@@ -53,38 +54,47 @@ class TrafficEngine:
         cfg = getattr(config, "traffic", None) or {}
         self.min_per_day = int(cfg.get("min_pins_per_day", 5))
         self.max_per_day = int(cfg.get("max_pins_per_day", 10))
+        self.horizon_days = max(1, int(cfg.get("schedule_horizon_days", 7)))
         self.boards = cfg.get("boards") or []
 
     # --- Schedule ----------------------------------------------------
 
     def schedule(self, today: str | None = None,
                  campaign_id: int | None = None) -> dict[str, Any]:
-        """Queue up to ``max_pins_per_day`` fresh pins for today across boards/
-        keywords/seasons. Never re-queues a pin already scheduled."""
-        day = today or date.today().isoformat()
-        season = season_for(day)
-        already = self.db.count_pins_scheduled_on(day)
-        remaining = self.max_per_day - already
-        if remaining <= 0:
-            return {"date": day, "scheduled": 0, "season": season,
-                    "reason": f"daily pin cap reached ({already}/{self.max_per_day})"}
-
+        """Fill a rolling calendar: spread fresh pins across today..+horizon days,
+        each day capped at ``max_pins_per_day``, across boards/keywords/seasons.
+        Each pin carries its product's hero image. Never re-queues a scheduled pin."""
+        base = today or date.today().isoformat()
         seen = self.db.scheduled_pin_keys()
         candidates = self._candidates(campaign_id, seen)
-        chosen = candidates[:remaining]
+
+        # Per-day remaining capacity across the horizon.
+        days = [self._add_days(base, i) for i in range(self.horizon_days)]
+        capacity = {d: max(0, self.max_per_day - self.db.count_pins_scheduled_on(d))
+                    for d in days}
+
         scheduled = 0
         boards_used: set[str] = set()
-        for slot, pin in enumerate(chosen):
+        by_day: dict[str, int] = {}
+        slot = 0
+        for pin in candidates:
+            target = next((d for d in days if capacity[d] > 0), None)
+            if target is None:
+                break  # the whole horizon is full
             board = self._board(pin, slot)
-            row = {**pin, "board": board, "season": season,
-                   "scheduled_date": day, "status": "scheduled"}
+            row = {**pin, "board": board, "season": season_for(target),
+                   "scheduled_date": target, "status": "scheduled"}
             if self.db.insert_pin_schedule(row) is not None:
+                capacity[target] -= 1
                 scheduled += 1
+                slot += 1
                 boards_used.add(board)
-        log.info("Traffic: scheduled %d pin(s) for %s (%s) across %d board(s).",
-                 scheduled, day, season, len(boards_used))
-        return {"date": day, "season": season, "scheduled": scheduled,
+                by_day[target] = by_day.get(target, 0) + 1
+        log.info("Traffic: scheduled %d pin(s) across %d day(s), %d board(s).",
+                 scheduled, len(by_day), len(boards_used))
+        return {"date": base, "season": season_for(base), "scheduled": scheduled,
                 "available": len(candidates), "boards": sorted(boards_used),
+                "by_day": by_day, "horizon_days": self.horizon_days,
                 "met_minimum": scheduled >= min(self.min_per_day, len(candidates))}
 
     def _candidates(self, campaign_id: int | None,
@@ -96,6 +106,7 @@ class TrafficEngine:
         for asset in reversed(rows):
             product_key = asset.get("product_key")
             pins = (asset.get("payload") or {}).get("pins", [])
+            hero = self._hero_path(asset.get("campaign_id"), product_key)
             for i, pin in enumerate(pins):
                 pin_key = f"{product_key}:{i}:{pin.get('aspect_ratio')}"
                 if pin_key in seen:
@@ -107,31 +118,56 @@ class TrafficEngine:
                     "keyword": (pin.get("keywords") or [None])[0] or pin.get("title"),
                     "aspect_ratio": pin.get("aspect_ratio"),
                     "title": pin.get("title"), "description": pin.get("description"),
-                    "_board_hint": pin.get("board"),
+                    "image_path": hero, "_board_hint": pin.get("board"),
                 })
         return out
+
+    def _hero_path(self, campaign_id: Any, product_key: str | None) -> str | None:
+        """The product's chosen hero image (what a live pin must display)."""
+        if campaign_id is None or not product_key:
+            return None
+        from onassis.config import ROOT_DIR
+
+        base = Path((self.config.listing or {}).get("exports_dir", "exports"))
+        if not base.is_absolute():
+            base = ROOT_DIR / base
+        hero = base / str(campaign_id) / str(product_key) / "images" / "hero.jpg"
+        return str(hero) if hero.exists() else None
 
     def _board(self, pin: dict[str, Any], slot: int) -> str:
         if self.boards:
             return self.boards[slot % len(self.boards)]
         return pin.get("_board_hint") or "Local Celebrity"
 
+    @staticmethod
+    def _add_days(day: str, n: int) -> str:
+        try:
+            return (date.fromisoformat(day[:10]) + timedelta(days=n)).isoformat()
+        except ValueError:
+            return day
+
     # --- Distribute --------------------------------------------------
 
     def distribute(self, today: str | None = None) -> dict[str, Any]:
-        """Post today's due pins to Pinterest (safe no-op until configured)."""
+        """Post every pin whose scheduled date has arrived, with its hero image
+        attached. A pin with no image file is left queued (Pinterest needs media).
+        Safe no-op until Pinterest is configured."""
         day = today or date.today().isoformat()
-        due = self.db.list_pin_schedule(scheduled_date=day, status="scheduled")
+        due = self.db.due_pins(day)
         if not due:
             return {"date": day, "posted": 0, "queued": 0, "detail": "nothing due"}
         if not self.pinterest.can_publish:
             return {"date": day, "posted": 0, "queued": len(due),
                     "detail": "Pinterest not configured — pins stay queued"}
-        posted = failed = 0
+        posted = failed = no_image = 0
         for pin in due:
+            image = pin.get("image_path")
+            if not image or not Path(image).exists():
+                no_image += 1
+                continue  # can't post an imageless pin — keep it queued
             payload = [{"title": pin.get("title"), "description": pin.get("description"),
                         "link": pin.get("listing_url"), "alt_text": pin.get("title"),
-                        "image_path": pin.get("image_path")}]
+                        "image_path": image}]
             res = self.pinterest.publish_pins(payload)
             if res.get("posted"):
                 ref = (res.get("results") or [{}])[0].get("pin_id")
@@ -140,14 +176,60 @@ class TrafficEngine:
             else:
                 self.db.set_pin_status(pin["id"], "failed")
                 failed += 1
-        return {"date": day, "posted": posted, "failed": failed, "queued": 0}
+        return {"date": day, "posted": posted, "failed": failed,
+                "no_image": no_image, "queued": no_image}
+
+    # --- Import metrics (impressions / clicks / CTR, attributed) ----
+
+    def import_metrics(self, today: str | None = None) -> dict[str, Any]:
+        """Pull per-pin analytics from Pinterest, attribute impressions/clicks to
+        each product, and record the day's increments to the funnel + metric
+        history. Safe no-op until analytics is available."""
+        day = today or date.today().isoformat()
+        pins = self.db.posted_pins()
+        if not pins or not self.pinterest.can_read_analytics:
+            return {"date": day, "pins": len(pins), "impressions": 0, "clicks": 0,
+                    "detail": "no posted pins or analytics unavailable"}
+        per_product: dict[str, dict[str, Any]] = {}
+        for pin in pins:
+            stats = self.pinterest.pin_analytics(pin["pin_ref"])
+            new_imp, new_clk = int(stats["impressions"]), int(stats["clicks"])
+            d_imp = max(0, new_imp - int(pin.get("impressions", 0) or 0))
+            d_clk = max(0, new_clk - int(pin.get("clicks", 0) or 0))
+            self.db.record_pin_metrics(pin["id"], impressions=new_imp, clicks=new_clk)
+            if d_imp or d_clk:
+                bucket = per_product.setdefault(
+                    pin.get("product_key") or "unknown",
+                    {"impressions": 0, "clicks": 0, "listing_id": pin.get("listing_id")})
+                bucket["impressions"] += d_imp
+                bucket["clicks"] += d_clk
+
+        snaps: list[dict[str, Any]] = []
+        total_imp = total_clk = 0
+        for product_key, b in per_product.items():
+            total_imp += b["impressions"]
+            total_clk += b["clicks"]
+            # Attribute to the product in the funnel...
+            self.record_funnel(product_key=product_key, listing_id=b.get("listing_id"),
+                               impressions=b["impressions"], clicks=b["clicks"], today=day)
+            # ...and into the metric history the funnel snapshot / dashboard read.
+            for metric, value in (("impressions", b["impressions"]), ("clicks", b["clicks"])):
+                snaps.append({"platform": "pinterest", "product_id": product_key,
+                              "metric": metric, "value": value, "snapshot_date": day})
+        if snaps:
+            self.db.insert_metric_snapshots(snaps)
+        log.info("Traffic metrics: %d impression(s), %d click(s) across %d product(s).",
+                 total_imp, total_clk, len(per_product))
+        return {"date": day, "pins": len(pins), "impressions": total_imp,
+                "clicks": total_clk, "products": len(per_product)}
 
     def run(self, today: str | None = None,
             campaign_id: int | None = None) -> dict[str, Any]:
-        """Schedule then distribute in one call — the daily traffic push."""
+        """The daily traffic push: schedule, distribute due pins, import metrics."""
         sched = self.schedule(today, campaign_id)
         dist = self.distribute(today)
-        return {"schedule": sched, "distribute": dist}
+        metrics = self.import_metrics(today)
+        return {"schedule": sched, "distribute": dist, "metrics": metrics}
 
     # --- Funnel: Impressions -> Clicks -> Visits -> Sales -----------
 

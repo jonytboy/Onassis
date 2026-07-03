@@ -28,16 +28,41 @@ class PinterestConnector:
 
     name = "pinterest"
 
-    def __init__(self, config: Config, pin_client: Any | None = None) -> None:
+    def __init__(self, config: Config, pin_client: Any | None = None,
+                 analytics_client: Any | None = None) -> None:
         self.config = config
         self.cfg = config.pinterest or {}
         self.board_id = self.cfg.get("board_id")
         self.max_pins = int(self.cfg.get("max_pins_per_product", 3))
         self._pin_client = pin_client
+        self._analytics_client = analytics_client
 
     @property
     def is_configured(self) -> bool:
         return bool(self.cfg.get("access_token"))
+
+    @property
+    def can_read_analytics(self) -> bool:
+        return self._analytics_client is not None or bool(self.cfg.get("access_token"))
+
+    def _analytics(self) -> Any:
+        if self._analytics_client is None:
+            self._analytics_client = PinterestAnalyticsClient(
+                access_token=self.cfg.get("access_token"),
+                base_url=self.cfg.get("base_url", "https://api.pinterest.com/v5"))
+        return self._analytics_client
+
+    def pin_analytics(self, pin_id: str, *, start_date: str | None = None,
+                      end_date: str | None = None) -> dict[str, int]:
+        """Impressions + clicks for one pin (safe zeros if analytics unavailable)."""
+        if not self.can_read_analytics:
+            return {"impressions": 0, "clicks": 0}
+        try:
+            return self._analytics().get_pin_analytics(
+                pin_id, start_date=start_date, end_date=end_date)
+        except Exception as exc:
+            log.warning("Pinterest analytics failed for pin %s: %s", pin_id, exc)
+            return {"impressions": 0, "clicks": 0}
 
     @property
     def can_publish(self) -> bool:
@@ -130,3 +155,52 @@ class PinterestPinClient:
         if resp.status_code >= 400:
             raise RuntimeError(f"Pinterest createPin HTTP {resp.status_code}: {resp.text}")
         return resp.json()
+
+
+class PinterestAnalyticsClient:
+    """Minimal Pinterest v5 pin-analytics client (read). Injectable for tests."""
+
+    def __init__(self, access_token: str | None,
+                 base_url: str = "https://api.pinterest.com/v5",
+                 timeout: float = 30.0) -> None:
+        self.access_token = access_token
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+
+    def get_pin_analytics(self, pin_id: str, *, start_date: str | None = None,
+                          end_date: str | None = None) -> dict[str, int]:
+        import httpx
+
+        from datetime import date, timedelta
+
+        end = end_date or date.today().isoformat()
+        start = start_date or (date.today() - timedelta(days=30)).isoformat()
+        params = {"start_date": start, "end_date": end,
+                  "metric_types": "IMPRESSION,PIN_CLICK,OUTBOUND_CLICK"}
+        resp = httpx.get(f"{self.base_url}/pins/{pin_id}/analytics",
+                         headers={"Authorization": f"Bearer {self.access_token}"},
+                         params=params, timeout=self.timeout)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Pinterest pinAnalytics HTTP {resp.status_code}: {resp.text}")
+        return _parse_pin_analytics(resp.json())
+
+
+def _parse_pin_analytics(payload: dict[str, Any]) -> dict[str, int]:
+    """Reduce Pinterest's analytics response to {impressions, clicks}.
+
+    The v5 shape nests lifetime/summary metrics under ``all`` -> ``summary_metrics``
+    (or a daily series). We sum impressions and treat pin+outbound clicks as clicks,
+    tolerant of the exact nesting."""
+    def _summary(node: Any) -> dict[str, Any]:
+        if not isinstance(node, dict):
+            return {}
+        if "summary_metrics" in node and isinstance(node["summary_metrics"], dict):
+            return node["summary_metrics"]
+        return node
+
+    root = payload.get("all", payload) if isinstance(payload, dict) else {}
+    metrics = _summary(root) or _summary(payload)
+    impressions = int(metrics.get("IMPRESSION", metrics.get("impression", 0)) or 0)
+    clicks = int(metrics.get("PIN_CLICK", metrics.get("pin_click", 0)) or 0) + \
+        int(metrics.get("OUTBOUND_CLICK", metrics.get("outbound_click", 0)) or 0)
+    return {"impressions": impressions, "clicks": clicks}

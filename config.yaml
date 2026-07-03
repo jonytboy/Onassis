@@ -162,7 +162,8 @@ marketing:
 # where money comes from: Impressions -> Clicks -> Visits -> Sales.
 traffic:
   min_pins_per_day: 5            # aim to post at least this many pins/day...
-  max_pins_per_day: 10           # ...never more than this
+  max_pins_per_day: 10           # ...never more than this (per calendar day)
+  schedule_horizon_days: 7       # spread pins across a rolling N-day calendar
   boards: []                     # explicit board rotation; empty -> per-pin board
 
 # --- Daily report (Revenue / Profit / Best / Worst / Recommendation) -

@@ -560,15 +560,20 @@ class DailyCycle:
         cid = ctx.get("campaign_id")
         sched = self.traffic.schedule(campaign_id=cid)
         dist = self.traffic.distribute()
+        metrics = self.traffic.import_metrics()   # impressions/clicks -> attributed
         funnel = self.traffic.snapshot()
         posted = int(dist.get("posted", 0) or 0)
         scheduled = int(sched.get("scheduled", 0) or 0)
-        ctx["promotion"] = {"posted": posted, "scheduled": scheduled}
+        ctx["promotion"] = {"posted": posted, "scheduled": scheduled,
+                            "impressions": metrics.get("impressions", 0),
+                            "clicks": metrics.get("clicks", 0)}
         ctx["funnel"] = funnel
         return {"status": "ok" if (scheduled or posted) else "skipped",
                 "detail": {"pins_scheduled": scheduled, "pins_posted": posted,
                            "queued": int(dist.get("queued", 0) or 0),
-                           "season": sched.get("season"), "funnel": funnel}}
+                           "season": sched.get("season"),
+                           "impressions": metrics.get("impressions", 0),
+                           "clicks": metrics.get("clicks", 0), "funnel": funnel}}
 
     def _daily_report(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """Build the daily Revenue / Profit / Best / Worst / Recommendation report."""

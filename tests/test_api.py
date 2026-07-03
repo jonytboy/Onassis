@@ -732,6 +732,7 @@ def test_swagger_docs_available(app_and_client):
                  "/launch/pending", "/report/daily",
                  "/ceo/dashboard", "/learning/daily", "/portfolio/reviews",
                  "/portfolio/archived", "/traffic/schedule", "/traffic/funnel",
+                 "/traffic/run",
                  "/marketing/{product_key}",
                  "/fulfilment/status", "/fulfilment/run", "/etsy/changes",
                  "/etsy/intelligence", "/etsy/search-terms",

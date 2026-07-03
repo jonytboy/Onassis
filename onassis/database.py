@@ -491,10 +491,13 @@ CREATE TABLE IF NOT EXISTS pin_schedule (
     aspect_ratio   TEXT,
     title          TEXT,
     description    TEXT,
-    scheduled_date TEXT,                     -- YYYY-MM-DD
+    scheduled_date TEXT,                     -- YYYY-MM-DD (may be a FUTURE date)
     status         TEXT    NOT NULL DEFAULT 'scheduled',  -- scheduled | posted | failed
     pin_ref        TEXT,
-    posted_at      TEXT
+    posted_at      TEXT,
+    image_path     TEXT,                     -- the hero image attached to the pin
+    impressions    INTEGER NOT NULL DEFAULT 0,
+    clicks         INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_pin_schedule_date ON pin_schedule(scheduled_date);
 CREATE INDEX IF NOT EXISTS idx_pin_schedule_status ON pin_schedule(status);
@@ -617,7 +620,10 @@ class Database:
             # can't add columns to a pre-existing table).
             for table, column, decl in (("products", "product_key", "TEXT"),
                                         ("products", "launched_at", "TEXT"),
-                                        ("orders", "shipping_address", "TEXT")):
+                                        ("orders", "shipping_address", "TEXT"),
+                                        ("pin_schedule", "image_path", "TEXT"),
+                                        ("pin_schedule", "impressions", "INTEGER DEFAULT 0"),
+                                        ("pin_schedule", "clicks", "INTEGER DEFAULT 0")):
                 try:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
                 except sqlite3.OperationalError:
@@ -2355,8 +2361,8 @@ class Database:
                     INSERT INTO pin_schedule
                         (created_at, pin_key, campaign_id, product_key, listing_id,
                          listing_url, board, keyword, season, aspect_ratio, title,
-                         description, scheduled_date, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         description, scheduled_date, status, image_path)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         _utcnow(), pin.get("pin_key"), pin.get("campaign_id"),
@@ -2364,7 +2370,7 @@ class Database:
                         pin.get("listing_url"), pin.get("board"), pin.get("keyword"),
                         pin.get("season"), pin.get("aspect_ratio"), pin.get("title"),
                         pin.get("description"), pin.get("scheduled_date"),
-                        pin.get("status", "scheduled"),
+                        pin.get("status", "scheduled"), pin.get("image_path"),
                     ),
                 )
                 return int(cur.lastrowid)
@@ -2400,6 +2406,31 @@ class Database:
             return int(conn.execute(
                 "SELECT COUNT(*) FROM pin_schedule WHERE scheduled_date = ?",
                 (scheduled_date,)).fetchone()[0])
+
+    def due_pins(self, on_or_before: str) -> list[dict[str, Any]]:
+        """Scheduled pins whose date has arrived (<= today) — ready to post."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM pin_schedule WHERE status = 'scheduled' "
+                "AND scheduled_date <= ? ORDER BY scheduled_date, id",
+                (on_or_before,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def record_pin_metrics(self, pin_id: int, *, impressions: int, clicks: int) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE pin_schedule SET impressions = ?, clicks = ? WHERE id = ?",
+                (int(impressions), int(clicks), pin_id),
+            )
+            return cur.rowcount > 0
+
+    def posted_pins(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM pin_schedule WHERE status = 'posted' AND pin_ref IS NOT NULL "
+                "ORDER BY id").fetchall()
+        return [dict(r) for r in rows]
 
     def set_pin_status(self, pin_id: int, status: str, *, pin_ref: str | None = None,
                        posted_at: str | None = None) -> bool:
