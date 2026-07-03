@@ -458,6 +458,21 @@ CREATE TABLE IF NOT EXISTS thumbnails (
 );
 CREATE INDEX IF NOT EXISTS idx_thumbnails_variant ON thumbnails(variant);
 CREATE INDEX IF NOT EXISTS idx_thumbnails_product ON thumbnails(product_key);
+
+-- Marketing assets produced for a published product (one row per channel).
+-- Every asset carries the Etsy listing link it drives traffic back to.
+CREATE TABLE IF NOT EXISTS marketing_assets (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at   TEXT    NOT NULL,
+    campaign_id  INTEGER,
+    product_key  TEXT,
+    listing_id   TEXT,
+    listing_url  TEXT,
+    channel      TEXT    NOT NULL,          -- pinterest | instagram | facebook | blog | email
+    payload      TEXT    NOT NULL           -- JSON asset bundle for the channel
+);
+CREATE INDEX IF NOT EXISTS idx_marketing_product ON marketing_assets(product_key);
+CREATE INDEX IF NOT EXISTS idx_marketing_channel ON marketing_assets(channel);
 """
 
 
@@ -1984,6 +1999,61 @@ class Database:
                 (int(impressions), int(clicks), thumbnail_id),
             )
             return cur.rowcount > 0
+
+    # --- Marketing assets -------------------------------------------
+
+    def insert_marketing_asset(self, asset: dict[str, Any]) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO marketing_assets
+                    (created_at, campaign_id, product_key, listing_id, listing_url,
+                     channel, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utcnow(), asset.get("campaign_id"), asset.get("product_key"),
+                    asset.get("listing_id"), asset.get("listing_url"),
+                    asset["channel"], json.dumps(asset.get("payload", {})),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_marketing_assets(self, *, product_key: str | None = None,
+                              campaign_id: int | None = None,
+                              channel: str | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM marketing_assets"
+        clauses: list[str] = []
+        params: list[Any] = []
+        if product_key is not None:
+            clauses.append("product_key = ?")
+            params.append(product_key)
+        if campaign_id is not None:
+            clauses.append("campaign_id = ?")
+            params.append(campaign_id)
+        if channel is not None:
+            clauses.append("channel = ?")
+            params.append(channel)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY id DESC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        out = []
+        for r in rows:
+            data = dict(r)
+            data["payload"] = json.loads(data.get("payload") or "{}")
+            out.append(data)
+        return out
+
+    def count_marketing_assets(self, channel: str | None = None) -> int:
+        sql = "SELECT COUNT(*) FROM marketing_assets"
+        params: list[Any] = []
+        if channel is not None:
+            sql += " WHERE channel = ?"
+            params.append(channel)
+        with self._connect() as conn:
+            return int(conn.execute(sql, params).fetchone()[0])
 
     def learned_ctr_by_variant(self) -> dict[str, float]:
         """Average CTR per hero variant across all history with real impressions."""

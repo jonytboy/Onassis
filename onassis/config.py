@@ -80,6 +80,7 @@ class Config:
     portfolio: dict[str, Any] = field(default_factory=dict)
     pricing: dict[str, Any] = field(default_factory=dict)
     thumbnails: dict[str, Any] = field(default_factory=dict)
+    marketing: dict[str, Any] = field(default_factory=dict)
 
     # secrets / future integrations
     anthropic_api_key: str | None = None
@@ -143,6 +144,7 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
     portfolio = raw.get("portfolio", {})
     pricing = raw.get("pricing", {})
     thumbnails = raw.get("thumbnails", {})
+    marketing = raw.get("marketing", {})
     etsy = raw.get("etsy", {})
     pinterest = raw.get("pinterest", {})
     pinterest = {
@@ -207,5 +209,6 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         portfolio=portfolio,
         pricing=pricing,
         thumbnails=thumbnails,
+        marketing=marketing,
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
     )

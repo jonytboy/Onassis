@@ -137,6 +137,24 @@ thumbnails:
     lifestyle: 0.70
     close_crop: 0.65
 
+# --- Marketing Engine (a promotion kit for every published product) --
+# The moment a product goes live, ONASSIS produces its channel-native kit —
+# Pinterest / Instagram / Facebook / Blog / Email — and EVERY asset links back
+# to the Etsy listing. Copy is composed deterministically from the listing the
+# system already produced (title, description, tags, SEO keywords, price).
+marketing:
+  pinterest:
+    pins_per_product: 5            # 5 pins per product...
+    aspect_ratios: ["2:3", "1:1", "9:16"]   # ...across multiple aspect ratios
+    hashtags: ["#MediterraneanStyle", "#SlowLiving", "#CoastalHome", "#EtsyFinds"]
+  instagram:
+    carousel_slides: 5
+    reel_beats: 5
+  blog:
+    min_words: 300
+  email:
+    from_name: "Local Celebrity"
+
 # --- Daily report (Revenue / Profit / Best / Worst / Recommendation) -
 report:
   min_traffic_to_judge: 60       # views a product needs before it can be Killed
