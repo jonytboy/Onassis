@@ -68,6 +68,7 @@ from onassis.opportunities import OpportunityEngine
 from onassis.optimiser import ProductOptimiser
 from onassis.orchestrator import Orchestrator
 from onassis.portfolio import PortfolioManager
+from onassis.protection import FinancialProtectionEngine
 from onassis.profit import ProfitEngine
 from onassis.proposals import APPROVE, is_compliant
 from onassis.publishing import PublisherService
@@ -106,7 +107,10 @@ class DailyCycle:
         # Revenue-optimisation engines (learn, promote, distribute, report money).
         self.learning = LearningEngine(config, db)
         self.portfolio = PortfolioManager(config, db)
-        self.etsy_automation = EtsyAutomationEngine(config, db)
+        # Financial Protection sits above pricing: it decides whether a commercial
+        # action is safe, and has final authority to hold it.
+        self.protection = FinancialProtectionEngine(config, db)
+        self.etsy_automation = EtsyAutomationEngine(config, db, protection=self.protection)
         self.etsy_intelligence = EtsyIntelligence(config, db)
         self.marketing = MarketingEngine(config, db)
         self.traffic = TrafficEngine(config, db, pinterest=self.pinterest)
@@ -488,7 +492,22 @@ class DailyCycle:
                 published += 1
                 first_draft_at = first_draft_at or datetime.now(timezone.utc).isoformat()
 
-                if go_live:
+                # Financial Protection has final authority: never take a product
+                # LIVE below protected profitability. A rejected product stays a
+                # draft (not lost), the reason is audited, and the CEO is alerted.
+                price = float(pkg.get("listing", {}).get("price")
+                              or spec.get("retail_price") or 0)
+                shipping = float((self.config.pricing or {}).get("shipping_cost", 0) or 0)
+                verdict = self.protection.guard_launch(
+                    price, production_cost=spec.get("production_cost"),
+                    shipping_cost=shipping, product_key=key, listing_id=listing_id)
+                rec["protected_profit"] = verdict["protected_profit"]
+                if not verdict["approved"]:
+                    rec.update(status="held", protection="rejected",
+                               protection_reason=verdict["reason"])
+                    log.warning("[stream] Product %s HELD by Financial Protection: %s",
+                                name, verdict["reason"])
+                elif go_live:
                     gl = self.publisher.go_live(cid, [spec])
                     r0 = (gl.get("results") or [{}])[0]
                     rec["status"] = r0.get("status", rec["status"])  # live | held | failed

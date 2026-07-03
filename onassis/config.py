@@ -83,6 +83,7 @@ class Config:
     marketing: dict[str, Any] = field(default_factory=dict)
     traffic: dict[str, Any] = field(default_factory=dict)
     gelato: dict[str, Any] = field(default_factory=dict)
+    protection: dict[str, Any] = field(default_factory=dict)
 
     # secrets / future integrations
     anthropic_api_key: str | None = None
@@ -154,6 +155,27 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         "api_key": _env("GELATO_API_KEY", gelato.get("api_key")),
         "file_base_url": _env("GELATO_FILE_BASE_URL", gelato.get("file_base_url")),
     }
+    # Financial protection: only the CORE commercial controls come from the env;
+    # all fee/estimation/business logic stays in the YAML `protection` section.
+    protection = raw.get("protection", {})
+    protection = {
+        **protection,
+        "min_gross_margin_percent": float(_env(
+            "MIN_GROSS_MARGIN_PERCENT", protection.get("min_gross_margin_percent", 25))),
+        "min_contribution_margin_percent": float(_env(
+            "MIN_CONTRIBUTION_MARGIN_PERCENT",
+            protection.get("min_contribution_margin_percent", 18))),
+        "default_risk_reserve_percent": float(_env(
+            "DEFAULT_RISK_RESERVE_PERCENT",
+            protection.get("default_risk_reserve_percent", 8))),
+        "max_risk_reserve_percent": float(_env(
+            "MAX_RISK_RESERVE_PERCENT", protection.get("max_risk_reserve_percent", 15))),
+        "max_single_price_change_percent": float(_env(
+            "MAX_SINGLE_PRICE_CHANGE_PERCENT",
+            protection.get("max_single_price_change_percent", 15))),
+        "min_confidence_score": float(_env(
+            "MIN_CONFIDENCE_SCORE", protection.get("min_confidence_score", 0.85))),
+    }
     etsy = raw.get("etsy", {})
     pinterest = raw.get("pinterest", {})
     pinterest = {
@@ -221,5 +243,6 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         marketing=marketing,
         traffic=traffic,
         gelato=gelato,
+        protection=protection,
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
     )

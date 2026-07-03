@@ -98,6 +98,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     gelato = daily.gelato
     etsy_automation = daily.etsy_automation
     etsy_intelligence = daily.etsy_intelligence
+    protection = daily.protection
     experiments = ExperimentEngine(config, db)
     operations = OperationsManager(config, db, cycle=daily)
     readiness = ProductionReadiness(config, db)
@@ -139,6 +140,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.gelato = gelato
     app.state.etsy_automation = etsy_automation
     app.state.etsy_intelligence = etsy_intelligence
+    app.state.protection = protection
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""
@@ -398,6 +400,16 @@ def create_app(config: Config | None = None) -> FastAPI:
     def etsy_search_terms() -> list[dict[str, Any]]:
         """Aggregated search-term performance (impressions/clicks/orders/CTR)."""
         return etsy_intelligence.keyword_performance()
+
+    @app.get("/protection/audit", tags=["protection"])
+    def protection_audit(decision: str | None = None) -> list[dict[str, Any]]:
+        """The commercial audit trail — every protection decision, approve or reject."""
+        return protection.audit(decision)
+
+    @app.get("/protection/alerts", tags=["protection"])
+    def protection_alerts() -> list[dict[str, Any]]:
+        """Actions the Financial Protection Engine stopped (CEO alerts)."""
+        return protection.alerts()
 
     @app.get("/market/report", tags=["market"])
     def market_report(limit: int = 20) -> list[dict[str, Any]]:

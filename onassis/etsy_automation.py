@@ -38,11 +38,15 @@ _TAG_COUNT = 13
 class EtsyAutomationEngine:
     """Writes ONASSIS's decisions back to live Etsy listings, with an audit log."""
 
-    def __init__(self, config: Config, db: Database, client: Any | None = None) -> None:
+    def __init__(self, config: Config, db: Database, client: Any | None = None,
+                 protection: Any | None = None) -> None:
         self.config = config
         self.db = db
         self._client = client
         self.pricing = PricingEngine(config, db)
+        # Optional Financial Protection gate — when present, a reprice must clear
+        # it before it is written to Etsy.
+        self.protection = protection
 
     # --- Client / configuration -------------------------------------
 
@@ -192,6 +196,15 @@ class EtsyAutomationEngine:
         current = float((listing or {}).get("price") or 0) or None
         cost = float((product or {}).get("production_cost") or 0)
         opt = self.pricing.optimise(cost, current)
+        # Financial Protection has final authority over a price change.
+        if self.protection is not None:
+            verdict = self.protection.guard_price_change(
+                opt["price"], reference_price=current, production_cost=cost or None,
+                product_key=product_key, listing_id=str(listing_id))
+            if not verdict["approved"]:
+                return self._skip(listing_id, "price", current, opt["price"],
+                                  f"blocked by Financial Protection: {verdict['reason']}",
+                                  "learning", product_key=product_key)
         return self.update_price(listing_id, opt["price"], old=current,
                                  reason=f"{reason} -> {opt['rationale']}", source="learning")
 

@@ -90,6 +90,32 @@ policy:
 profit:
   ai_cost_per_campaign: 0.50     # estimated AI cost recorded per campaign run
 
+# --- Financial Protection (safeguard above the Pricing Engine) -------
+# A deterministic gate: every commercial action (launch / price change /
+# discount / advertising / portfolio optimisation) must clear it before
+# execution. The Pricing Engine RECOMMENDS; this DECIDES whether the
+# recommendation is commercially safe. The six CORE controls come from the env
+# (see .env.example): MIN_GROSS_MARGIN_PERCENT, MIN_CONTRIBUTION_MARGIN_PERCENT,
+# DEFAULT_RISK_RESERVE_PERCENT, MAX_RISK_RESERVE_PERCENT,
+# MAX_SINGLE_PRICE_CHANGE_PERCENT, MIN_CONFIDENCE_SCORE. Everything below is
+# business logic and stays in config/code, never the env.
+protection:
+  # A protected margin at/above this reads as full commercial confidence (the
+  # cushion above the thresholds that makes a decision "safe").
+  comfort_protected_margin_percent: 15
+  # Conservative default estimates used when a real cost is unknown (the action
+  # is NOT blocked for an unknown — the cost is estimated and the reserve rises).
+  default_production_cost: 12.0
+  default_shipping_cost: 4.0
+  default_ai_cost_per_unit: 0.05
+  # Each unknown cost adds this to the risk-reserve % (capped at the max).
+  unknown_cost_reserve_premium_percent: 3
+  # Dynamic safety buffer: a brand-new product (no sales history) starts here and
+  # earns its way to full data-confidence over `confidence_sales_target` sales,
+  # shrinking the reserve toward the default as confidence grows.
+  new_product_confidence: 0.5
+  confidence_sales_target: 20
+
 # --- Etsy fee model (the REAL unit economics) ------------------------
 # What Etsy actually charges. Offsite Ads is the silent margin killer: 12-15%
 # on attributed orders. These feed the forecast, imported orders, the go-live

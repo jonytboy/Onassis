@@ -581,6 +581,29 @@ CREATE TABLE IF NOT EXISTS etsy_search_terms (
 );
 CREATE INDEX IF NOT EXISTS idx_search_terms_term ON etsy_search_terms(term);
 CREATE INDEX IF NOT EXISTS idx_search_terms_date ON etsy_search_terms(snapshot_date);
+
+-- Financial Protection audit: every protection decision (approve/reject) with
+-- the full commercial reasoning — a complete audit trail of what was allowed and
+-- what was stopped, and why.
+CREATE TABLE IF NOT EXISTS protection_decisions (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at           TEXT    NOT NULL,
+    action               TEXT    NOT NULL,   -- launch|price_change|discount|advertising|portfolio_optimisation
+    product_key          TEXT,
+    listing_id           TEXT,
+    expected_revenue     REAL    NOT NULL DEFAULT 0,
+    expected_costs       REAL    NOT NULL DEFAULT 0,
+    estimated_costs      REAL    NOT NULL DEFAULT 0,   -- portion from conservative defaults
+    risk_reserve_percent REAL    NOT NULL DEFAULT 0,
+    risk_reserve_amount  REAL    NOT NULL DEFAULT 0,
+    protected_profit     REAL    NOT NULL DEFAULT 0,
+    gross_margin         REAL    NOT NULL DEFAULT 0,
+    contribution_margin  REAL    NOT NULL DEFAULT 0,
+    confidence           REAL    NOT NULL DEFAULT 0,
+    decision             TEXT    NOT NULL,   -- APPROVE | REJECT
+    reason               TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_protection_decision ON protection_decisions(decision);
 """
 
 
@@ -2114,6 +2137,46 @@ class Database:
         if listing_id is not None:
             sql += " WHERE listing_id = ?"
             params.append(str(listing_id))
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def insert_protection_decision(self, d: dict[str, Any]) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO protection_decisions
+                    (created_at, action, product_key, listing_id, expected_revenue,
+                     expected_costs, estimated_costs, risk_reserve_percent,
+                     risk_reserve_amount, protected_profit, gross_margin,
+                     contribution_margin, confidence, decision, reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utcnow(), d["action"], d.get("product_key"), d.get("listing_id"),
+                    float(d.get("expected_revenue", 0) or 0),
+                    float(d.get("expected_costs", 0) or 0),
+                    float(d.get("estimated_costs", 0) or 0),
+                    float(d.get("risk_reserve_percent", 0) or 0),
+                    float(d.get("risk_reserve_amount", 0) or 0),
+                    float(d.get("protected_profit", 0) or 0),
+                    float(d.get("gross_margin", 0) or 0),
+                    float(d.get("contribution_margin", 0) or 0),
+                    float(d.get("confidence", 0) or 0),
+                    d["decision"], d.get("reason"),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_protection_decisions(self, *, decision: str | None = None,
+                                  limit: int = 200) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM protection_decisions"
+        params: list[Any] = []
+        if decision is not None:
+            sql += " WHERE decision = ?"
+            params.append(decision)
         sql += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
         with self._connect() as conn:

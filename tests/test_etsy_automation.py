@@ -121,6 +121,25 @@ def test_apply_learning_actions_reprices_and_retires_on_etsy(config, db):
     assert any(c[0] == "price" and c[1] == "555" for c in client.calls)
 
 
+def test_reprice_is_blocked_by_financial_protection(config, db):
+    _live_product(db, sku="1-ceramic_mug", key="ceramic_mug", listing_id="555")
+
+    class DenyProtection:
+        def guard_price_change(self, *a, **k):
+            return {"approved": False, "reason": "protected profit below zero"}
+
+    client = FakeEtsyWrite()
+    eng = EtsyAutomationEngine(config, db, client=client, protection=DenyProtection())
+    digest = {"actions": {"retire": [], "adjust": [
+        {"sku": "1-ceramic_mug", "product_key": "ceramic_mug",
+         "improvements": ["reprice"], "why": "no conversion"}]}}
+    out = eng.apply_learning_actions(digest)
+    assert out["applied"] == 0 and out["skipped"] == 1
+    assert not any(c[0] == "price" for c in client.calls)      # nothing written to Etsy
+    audit = db.list_etsy_changes("555")
+    assert any("Financial Protection" in (r.get("reason") or "") for r in audit)
+
+
 def test_not_configured_is_a_safe_noop(config, db):
     config.etsy = {}                              # no api key
     out = EtsyAutomationEngine(config, db).apply_learning_actions(
