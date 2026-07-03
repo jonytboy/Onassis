@@ -121,6 +121,22 @@ pricing:
   target_margin: 0.60            # the cost-plus baseline compared against
   default_monthly_visitors: 500  # traffic estimate when market data is absent
 
+# --- Thumbnail optimiser (win the click) -----------------------------
+# Four hero shots are generated per product and scored; the strongest ships.
+# The appeal prior starts from sensible defaults and is replaced, variant by
+# variant, by the REAL click-through rate observed — so the winning STYLE of
+# hero is learned over time.
+thumbnails:
+  optimise: true                 # true -> generate & choose 4 heroes; false -> single hero
+  ctr_ceiling: 0.08              # CTR that maps a variant's appeal to 1.0
+  quality_weight: 0.4            # weight on the deterministic quality gate
+  appeal_weight: 0.6             # weight on learned CTR / appeal prior
+  priors:                        # appeal priors before any CTR is observed
+    white_background: 0.90
+    in_use: 0.75
+    lifestyle: 0.70
+    close_crop: 0.65
+
 # --- Daily report (Revenue / Profit / Best / Worst / Recommendation) -
 report:
   min_traffic_to_judge: 60       # views a product needs before it can be Killed

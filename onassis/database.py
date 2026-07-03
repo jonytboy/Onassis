@@ -437,6 +437,27 @@ CREATE TABLE IF NOT EXISTS portfolio_reviews (
     reason        TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_portfolio_reviews_sku ON portfolio_reviews(sku);
+
+-- Thumbnail (hero image) A/B candidates. Four heroes are generated per product,
+-- scored, and one is chosen; impressions/clicks accrue so the winning STYLE is
+-- learned over time (CTR feeds the next product's variant prior).
+CREATE TABLE IF NOT EXISTS thumbnails (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at    TEXT    NOT NULL,
+    campaign_id   INTEGER,
+    product_key   TEXT,
+    sku           TEXT,
+    variant       TEXT    NOT NULL,          -- white_background | lifestyle | close_crop | in_use
+    filename      TEXT,
+    quality_score REAL    NOT NULL DEFAULT 0,
+    prior         REAL    NOT NULL DEFAULT 0,
+    score         REAL    NOT NULL DEFAULT 0,
+    chosen        INTEGER NOT NULL DEFAULT 0,
+    impressions   INTEGER NOT NULL DEFAULT 0,
+    clicks        INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_thumbnails_variant ON thumbnails(variant);
+CREATE INDEX IF NOT EXISTS idx_thumbnails_product ON thumbnails(product_key);
 """
 
 
@@ -1910,6 +1931,73 @@ class Database:
             params.append(since)
         with self._connect() as conn:
             return int(conn.execute(sql, params).fetchone()[0])
+
+    # --- Thumbnail (hero) A/B candidates -----------------------------
+
+    def insert_thumbnail(self, thumb: dict[str, Any]) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO thumbnails
+                    (created_at, campaign_id, product_key, sku, variant, filename,
+                     quality_score, prior, score, chosen, impressions, clicks)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utcnow(), thumb.get("campaign_id"), thumb.get("product_key"),
+                    thumb.get("sku"), thumb["variant"], thumb.get("filename"),
+                    float(thumb.get("quality_score", 0) or 0),
+                    float(thumb.get("prior", 0) or 0),
+                    float(thumb.get("score", 0) or 0),
+                    1 if thumb.get("chosen") else 0,
+                    int(thumb.get("impressions", 0) or 0),
+                    int(thumb.get("clicks", 0) or 0),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_thumbnails(self, product_key: str | None = None,
+                        variant: str | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM thumbnails"
+        clauses: list[str] = []
+        params: list[Any] = []
+        if product_key is not None:
+            clauses.append("product_key = ?")
+            params.append(product_key)
+        if variant is not None:
+            clauses.append("variant = ?")
+            params.append(variant)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY id DESC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def record_thumbnail_metrics(self, thumbnail_id: int, *, impressions: int,
+                                 clicks: int) -> bool:
+        """Accrue impressions/clicks against a chosen thumbnail (CTR learning)."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE thumbnails SET impressions = impressions + ?, "
+                "clicks = clicks + ? WHERE id = ?",
+                (int(impressions), int(clicks), thumbnail_id),
+            )
+            return cur.rowcount > 0
+
+    def learned_ctr_by_variant(self) -> dict[str, float]:
+        """Average CTR per hero variant across all history with real impressions."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT variant, SUM(impressions) AS imp, SUM(clicks) AS clk "
+                "FROM thumbnails GROUP BY variant"
+            ).fetchall()
+        out: dict[str, float] = {}
+        for r in rows:
+            imp = int(r["imp"] or 0)
+            if imp > 0:
+                out[r["variant"]] = round(int(r["clk"] or 0) / imp, 4)
+        return out
 
 
 def _row_to_brief(row: sqlite3.Row) -> dict[str, Any]:

@@ -224,6 +224,21 @@ def test_expected_profit_pricing_when_enabled(factory, db):
     assert listing["price"] > 8            # above cost, chosen for max expected profit
 
 
+def test_thumbnail_optimiser_chooses_a_hero_when_enabled(factory, db, tmp_path):
+    factory.thumbnails_enabled = True
+    cid = _approved_campaign(db)
+    listing = factory.export(cid)["listing"]
+    assert listing["hero_variant"] in {"white_background", "lifestyle",
+                                       "close_crop", "in_use"}
+    assert len(listing["hero_candidates"]) == 4
+    assert sum(c["chosen"] for c in listing["hero_candidates"]) == 1
+    # The chosen hero backs the canonical hero.jpg the listing embeds.
+    hero = tmp_path / "exports" / str(cid) / "images" / "hero.jpg"
+    assert hero.exists() and hero.stat().st_size > 0
+    # And the four candidates were logged for CTR learning.
+    assert len(db.list_thumbnails()) == 4
+
+
 def test_pricing_is_deterministic(factory, db):
     cid = _approved_campaign(db)
     # Register a product with a known production cost.

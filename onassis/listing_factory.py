@@ -154,6 +154,12 @@ class ListingFactory:
 
         self.pricing = PricingEngine(config, db)
         self.pricing_enabled = bool((config.pricing or {}).get("optimise", True))
+        # Win the click: generate 4 hero candidates and ship the strongest (opt-in).
+        from onassis.thumbnails import ThumbnailOptimiser
+
+        self.thumbnails = ThumbnailOptimiser(config, db, studio=self.studio)
+        self.thumbnails_enabled = bool((getattr(config, "thumbnails", {}) or {})
+                                       .get("optimise", True))
         self._llm: LLMClient | None = None
 
     @property
@@ -555,6 +561,21 @@ copyrighted characters, no third-party logos.
         master = self.studio.generate_master(design_package, folder)
         gallery = self.studio.build_product_gallery(
             design_package, product, images_dir, alt_texts=alt_texts)
+
+        # Win the click: choose the strongest of 4 hero candidates. The winner
+        # overwrites hero.jpg (gallery image #1), so the manifest is unchanged.
+        if self.thumbnails_enabled:
+            try:
+                choice = self.thumbnails.choose(
+                    design_package, {**product, "sku": listing.get("sku")},
+                    images_dir, campaign_id=campaign_id)
+                listing["hero_variant"] = choice["chosen"]
+                listing["hero_candidates"] = [
+                    {"variant": c["variant"], "score": c["score"], "chosen": c["chosen"]}
+                    for c in choice["candidates"]]
+            except Exception as exc:  # never fail a listing over hero A/B selection
+                log.warning("Thumbnail optimisation skipped for %s: %s",
+                            product.get("product_key"), exc)
 
         images = [
             {"order": m["order"], "mockup_type": m["scene"], "filename": m["filename"],

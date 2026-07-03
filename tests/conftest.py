@@ -64,6 +64,9 @@ def config(tmp_path: Path):
     # Keep deterministic catalogue pricing in most tests; expected-profit pricing
     # is exercised in its own tests.
     cfg.pricing = {**(cfg.pricing or {}), "optimise": False}
+    # Single deterministic hero in most tests; the 4-way optimiser is exercised
+    # in its own tests (generating four heroes per product is slower).
+    cfg.thumbnails = {**(cfg.thumbnails or {}), "optimise": False}
     return cfg
 
 

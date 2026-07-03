@@ -350,6 +350,13 @@ class ArtworkStudio:
 
     # --- Generation with the quality gate ---------------------------
 
+    def produce(self, spec: ImageSpec) -> tuple[bytes, dict[str, Any]]:
+        """Public entry: generate one QC-passed, finalised image for a spec.
+
+        Used by the Thumbnail Optimiser to render competing hero candidates
+        through the same backend + quality gate the gallery uses."""
+        return self._produce(spec)
+
     def _produce(self, spec: ImageSpec) -> tuple[bytes, dict[str, Any]]:
         """Generate one image, regenerating only on genuine QC failure, then
         upscale the accepted image to the target print resolution.
