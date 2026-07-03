@@ -102,6 +102,11 @@ def _parse_args() -> argparse.Namespace:
         help="Build a Market Intelligence report (demand vs competition per keyword).",
     )
     parser.add_argument(
+        "--ceo", action="store_true",
+        help="CEO money scoreboard: Revenue/Profit yesterday, Visitors, Conversion, "
+             "Pinterest clicks, Best/Worst, Launched/Retired, Cash, AI cost, ROI.",
+    )
+    parser.add_argument(
         "--etsy-sync", action="store_true", help="Import orders/listings from Etsy (read-only)."
     )
     parser.add_argument(
@@ -455,6 +460,23 @@ def main() -> int:
         from onassis.reporting import DailyReport
 
         _show_report(DailyReport(config, db).build())
+        return 0
+
+    if args.ceo:
+        from onassis.dashboard import CEODashboard
+
+        board = CEODashboard(config, db).build()
+        print("\n=== CEO DASHBOARD (money, and nothing else) ===")
+        print(board["headline"])
+        for label, key in (("Revenue yesterday", "revenue_yesterday"),
+                           ("Profit yesterday", "profit_yesterday"),
+                           ("Visitors", "visitors"), ("Conversion", "conversion"),
+                           ("Pinterest clicks", "pinterest_clicks"),
+                           ("Cash generated", "cash_generated"),
+                           ("AI cost", "ai_cost"), ("ROI", "roi")):
+            print(f"  {label:20s}: {board[key]}")
+        print(f"  {'Products launched':20s}: {board['products_launched']['yesterday']}")
+        print(f"  {'Products retired':20s}: {board['products_retired']['yesterday']}\n")
         return 0
 
     if args.market:

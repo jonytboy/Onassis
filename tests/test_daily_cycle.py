@@ -24,11 +24,11 @@ _LISTING = {
 
 _EXPECTED_STAGES = [
     "Sync Etsy", "Sync Pinterest", "Import Revenue", "Import Analytics",
-    "Run Product Optimiser", "CEO Decision",
+    "Learn & Review Portfolio", "Run Product Optimiser", "CEO Decision",
     "Market Research", "Create Product Opportunity", "Build Design Package",
     "Generate Master Artwork", "Create Product Campaign", "Expand Products",
     "Publish Products", "Generate Marketing Content", "Promote on Pinterest",
-    "Daily Report", "Record Results",
+    "Daily Report", "CEO Dashboard", "Record Results",
 ]
 
 _OPPORTUNITY = {
@@ -61,15 +61,18 @@ def test_dry_run_executes_all_stages_without_side_effects(config, db):
 
     assert [s["stage"] for s in summary["stages"]] == _EXPECTED_STAGES
     assert summary["status"] == "completed"
-    # Product creation, marketing, and publishing are skipped in dry run.
+    # Product creation, learning/archiving, marketing, and publishing are
+    # skipped in dry run (observation + decision only, no writes).
     by_stage = {s["stage"]: s for s in summary["stages"]}
-    for stage in ("Market Research", "Create Product Opportunity",
-                  "Build Design Package", "Generate Master Artwork",
-                  "Create Product Campaign", "Expand Products", "Publish Products",
+    for stage in ("Learn & Review Portfolio", "Market Research",
+                  "Create Product Opportunity", "Build Design Package",
+                  "Generate Master Artwork", "Create Product Campaign",
+                  "Expand Products", "Publish Products",
                   "Generate Marketing Content", "Promote on Pinterest"):
         assert by_stage[stage]["status"] == "skipped"
-    # The daily report always runs — even a dry run reports the scoreboard.
+    # The daily report + CEO scoreboard always run — even a dry run reports money.
     assert by_stage["Daily Report"]["status"] == "ok"
+    assert by_stage["CEO Dashboard"]["status"] == "ok"
     # The run is recorded and retrievable.
     assert db.get_latest_daily_run()["mode"] == "dry_run"
 

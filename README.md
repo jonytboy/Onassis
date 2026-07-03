@@ -723,15 +723,21 @@ marketing is generated only **after** a commercially viable product exists. It
 runs, in order:
 
 1. Sync Etsy → 2. Sync Pinterest → 3. Import Revenue → 4. Import Analytics →
-5. Run Product Optimiser → 6. CEO Decision →
-**7. Create Product Opportunity** (CEO-approved) →
-**8. Build Design Package** (design brief + artwork prompt, compliance-gated) →
-**9. Generate Master Artwork** (real master + print files) →
-**10. Create Product Campaign** (campaign + product *from the opportunity*) →
-**11. Expand Products** (CEO launches the profitable set) →
-**12. Publish Products (streaming)** →
-**13. Generate Marketing Content** → 14. Promote on Pinterest →
-15. Daily Report → 16. Record Results
+**5. Learn & Review Portfolio** (what sold/didn't/why; 30-day KEEP/IMPROVE/RETIRE) →
+6. Run Product Optimiser → 7. CEO Decision →
+**8. Market Research** (build from the highest-opportunity keywords, not a vacuum) →
+**9. Create Product Opportunity** (CEO-approved) →
+**10. Build Design Package** (design brief + artwork prompt, compliance-gated) →
+**11. Generate Master Artwork** (real master + print files) →
+**12. Create Product Campaign** (campaign + product *from the opportunity*) →
+**13. Expand Products** (CEO launches the profitable set) →
+**14. Publish Products (streaming)** →
+**15. Generate Marketing Content** (campaign content + a full per-product kit:
+Pinterest/Instagram/Facebook/Blog/Email, all linking to the listing) →
+**16. Promote on Pinterest** (Traffic Engine: schedule 5-10 pins/day, distribute,
+log the funnel Impressions→Clicks→Visits→Sales) →
+17. Daily Report → **18. CEO Dashboard** (money, and nothing else) →
+19. Record Results
 
 **Revenue beats completeness — streaming publish.** Step 12 does *not* batch:
 each approved product runs its **whole tail independently** — build listing

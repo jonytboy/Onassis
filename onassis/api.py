@@ -91,6 +91,10 @@ def create_app(config: Config | None = None) -> FastAPI:
     expansion = daily.expansion
     report = daily.report
     market = daily.market
+    learning = daily.learning
+    portfolio = daily.portfolio
+    traffic = daily.traffic
+    ceo = daily.dashboard
     experiments = ExperimentEngine(config, db)
     operations = OperationsManager(config, db, cycle=daily)
     readiness = ProductionReadiness(config, db)
@@ -125,6 +129,10 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.market = market
     app.state.design_builder = design_builder
     app.state.expansion = expansion
+    app.state.learning = learning
+    app.state.portfolio = portfolio
+    app.state.traffic = traffic
+    app.state.ceo = ceo
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""
@@ -315,6 +323,44 @@ def create_app(config: Config | None = None) -> FastAPI:
         """The daily scoreboard — Revenue, Profit, Best/Worst seller, and a
         per-product Expand / Hold / Kill recommendation."""
         return report.build()
+
+    @app.get("/ceo/dashboard", tags=["reporting"])
+    def ceo_dashboard() -> dict[str, Any]:
+        """The CEO money scoreboard — Revenue/Profit yesterday, Visitors,
+        Conversion, Pinterest clicks, Best/Worst seller, Products launched/retired,
+        Cash generated, AI cost, ROI."""
+        return ceo.build()
+
+    @app.get("/learning/daily", tags=["reporting"])
+    def learning_daily() -> dict[str, Any]:
+        """The morning learning digest — what sold, what didn't, why — plus the
+        actions taken: increase winners, retire losers, adjust the rest."""
+        return learning.run()
+
+    @app.get("/portfolio/reviews", tags=["portfolio"])
+    def portfolio_reviews(sku: str | None = None) -> list[dict[str, Any]]:
+        """The 30-day lifecycle verdict history (KEEP / IMPROVE / RETIRE)."""
+        return portfolio.history(sku)
+
+    @app.get("/portfolio/archived", tags=["portfolio"])
+    def portfolio_archived() -> list[dict[str, Any]]:
+        """Products that have been retired (archived)."""
+        return portfolio.archived()
+
+    @app.get("/traffic/schedule", tags=["traffic"])
+    def traffic_schedule(date: str | None = None) -> list[dict[str, Any]]:
+        """The Pinterest posting schedule (optionally for one YYYY-MM-DD)."""
+        return db.list_pin_schedule(scheduled_date=date)
+
+    @app.get("/traffic/funnel", tags=["traffic"])
+    def traffic_funnel(date: str | None = None) -> dict[str, Any]:
+        """The traffic funnel — Impressions -> Clicks -> Visits -> Sales."""
+        return traffic.funnel(date)
+
+    @app.get("/marketing/{product_key}", tags=["marketing"])
+    def marketing_assets(product_key: str) -> list[dict[str, Any]]:
+        """The stored marketing kit (per channel) for a product."""
+        return db.list_marketing_assets(product_key=product_key)
 
     @app.get("/market/report", tags=["market"])
     def market_report(limit: int = 20) -> list[dict[str, Any]]:

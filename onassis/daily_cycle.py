@@ -10,21 +10,26 @@ the product, then promotes it.
 
 Order:
     1. Sync Etsy                 2. Sync Pinterest        3. Import Revenue
-    4. Import Analytics          5. Run Product Optimiser 6. CEO Decision
-    7. Market Research                (score keywords; build FROM the report, not a vacuum)
-    8. Create Product Opportunity     (the product idea, drawn from the market, CEO-approved)
-    9. Build Design Package           (design brief + artwork prompt, compliance-gated)
-   10. Generate Master Artwork        (the REAL master artwork + print file, QC-gated)
-   11. Create Product Campaign        (campaign + product from the opportunity)
-   12. Expand Products                (score the catalogue; CEO launches the profitable set)
-   13. Publish Products (streaming)   (per product: listing -> artwork -> compliance ->
+    4. Import Analytics
+    5. Learn & Review Portfolio       (what sold/didn't/why; 30-day KEEP/IMPROVE/RETIRE)
+    6. Run Product Optimiser     7. CEO Decision
+    8. Market Research                (score keywords; build FROM the report, not a vacuum)
+    9. Create Product Opportunity     (the product idea, drawn from the market, CEO-approved)
+   10. Build Design Package           (design brief + artwork prompt, compliance-gated)
+   11. Generate Master Artwork        (the REAL master artwork + print file, QC-gated)
+   12. Create Product Campaign        (campaign + product from the opportunity)
+   13. Expand Products                (score the catalogue; CEO launches the profitable set)
+   14. Publish Products (streaming)   (per product: listing -> artwork -> compliance ->
                                        draft -> upload images -> go live -> next; failures
                                        isolated, never rolls back a published product; a
                                        daily portfolio cap stops ONASSIS flooding Etsy)
-   14. Generate Marketing Content     (Pinterest/Instagram/Facebook — promotes the product)
-   15. Promote on Pinterest           (pins that link back to each live listing)
-   16. Daily Report                   (Revenue / Profit / Best / Worst / Recommendation)
-   17. Record Results
+   15. Generate Marketing Content     (campaign content + a full per-product marketing kit:
+                                       Pinterest/Instagram/Facebook/Blog/Email -> the listing)
+   16. Promote on Pinterest           (Traffic Engine: schedule 5-10 pins/day, distribute,
+                                       log the funnel Impressions->Clicks->Visits->Sales)
+   17. Daily Report                   (Revenue / Profit / Best / Worst / Recommendation)
+   18. CEO Dashboard                  (money, and nothing else — the morning scoreboard)
+   19. Record Results
 
 Revenue beats completeness: the first sellable product reaches Etsy as early as
 possible, and one product's failure never cancels the others.
@@ -46,20 +51,25 @@ from onassis.artwork import ArtworkStudio
 from onassis.config import Config
 from onassis.connectors.etsy import EtsyConnector
 from onassis.connectors.pinterest import PinterestConnector
+from onassis.dashboard import CEODashboard
 from onassis.database import Database
 from onassis.design_package import DesignPackageBuilder
 from onassis.expansion import RevenueExpansionEngine
+from onassis.learning import LearningEngine
 from onassis.listing_factory import ListingFactory
 from onassis.logger import get_logger
 from onassis.market_intelligence import MarketIntelligence
+from onassis.marketing import MarketingEngine
 from onassis.opportunities import OpportunityEngine
 from onassis.optimiser import ProductOptimiser
 from onassis.orchestrator import Orchestrator
+from onassis.portfolio import PortfolioManager
 from onassis.profit import ProfitEngine
 from onassis.proposals import APPROVE, is_compliant
 from onassis.publishing import PublisherService
 from onassis.reporting import DailyReport
 from onassis.revenue import RevenueEngine
+from onassis.traffic import TrafficEngine
 
 log = get_logger(__name__)
 
@@ -88,6 +98,12 @@ class DailyCycle:
         self.listing_factory = ListingFactory(config, db, studio=self.artwork)
         self.publisher = PublisherService(config, db)
         self.report = DailyReport(config, db)
+        # Revenue-optimisation engines (learn, promote, distribute, report money).
+        self.learning = LearningEngine(config, db)
+        self.portfolio = PortfolioManager(config, db)
+        self.marketing = MarketingEngine(config, db)
+        self.traffic = TrafficEngine(config, db, pinterest=self.pinterest)
+        self.dashboard = CEODashboard(config, db)
         # Campaign/Brain/Compliance are owned by the orchestrator — reuse them.
         self.campaigns = self.orchestrator.campaigns
         self.brain = self.orchestrator.brain
@@ -107,6 +123,7 @@ class DailyCycle:
         self._stage(stages, "Sync Pinterest", self._sync_pinterest, ctx)
         self._stage(stages, "Import Revenue", self._import_revenue, ctx)
         self._stage(stages, "Import Analytics", self._import_analytics, ctx)
+        self._stage(stages, "Learn & Review Portfolio", self._learn_and_review, ctx)
         self._stage(stages, "Run Product Optimiser", self._run_optimiser, ctx)
         self._stage(stages, "CEO Decision", self._ceo_decision, ctx)
         # --- Product first: research the market, then build FROM it. ---
@@ -122,6 +139,7 @@ class DailyCycle:
         self._stage(stages, "Generate Marketing Content", self._generate_content, ctx)
         self._stage(stages, "Promote on Pinterest", self._promote, ctx)
         self._stage(stages, "Daily Report", self._daily_report, ctx)
+        self._stage(stages, "CEO Dashboard", self._ceo_dashboard, ctx)
         # Final stage — Record Results — is the persistence below.
         stages.append({"stage": "Record Results", "status": "ok",
                        "duration_seconds": 0.0, "detail": None, "error": None})
@@ -150,6 +168,10 @@ class DailyCycle:
             "stream": ctx.get("stream", []),
             "first_draft_at": ctx.get("first_draft_at"),
             "report": ctx.get("report"),
+            # Revenue-optimisation outputs (learning, funnel, CEO scoreboard).
+            "learning": ctx.get("learning"),
+            "funnel": ctx.get("funnel"),
+            "dashboard": ctx.get("dashboard"),
         }
 
     @staticmethod
@@ -214,6 +236,23 @@ class DailyCycle:
         return {"status": "ok", "detail": {
             "product": rec["product"], "recommendation": rec["recommendation"],
             "expected_roi": rec["expected_roi"], "confidence": rec["confidence"]}}
+
+    def _learn_and_review(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """Every morning: what sold, what didn't, why — then act. Learn from
+        sales, run the 30-day portfolio lifecycle (KEEP/IMPROVE/RETIRE, archive),
+        and revive an archived type only if the market trend has turned."""
+        if ctx["dry"]:
+            return {"status": "skipped", "detail": "dry run (no archiving/writes)"}
+        digest = self.learning.run(
+            ctr_lookup=lambda sku: 0.0)  # CTR feeds in once the funnel has per-sku data
+        revived = self.portfolio.reconsider_archived()
+        ctx["learning"] = digest
+        return {"status": "ok", "detail": {
+            "headline": digest["headline"],
+            "scaled": len(digest["actions"]["increase"]),
+            "adjusted": len(digest["actions"]["adjust"]),
+            "retired": len(digest["actions"]["retire"]),
+            "revived": len(revived["reactivated"])}}
 
     def _ceo_decision(self, ctx: dict[str, Any]) -> dict[str, Any]:
         rec = ctx.get("recommendation")
@@ -443,7 +482,9 @@ class DailyCycle:
             "first_draft_at": first_draft_at, "timeline": stream}}
 
     def _generate_content(self, ctx: dict[str, Any]) -> dict[str, Any]:
-        """Generate marketing content LAST — only to promote the new product."""
+        """Generate marketing LAST — only to promote the new product. Produces the
+        campaign content AND a full per-product marketing kit (Pinterest /
+        Instagram / Facebook / Blog / Email), every asset linking to the listing."""
         if ctx["dry"]:
             return {"status": "skipped", "detail": "dry run"}
         brief = ctx.get("brief")
@@ -451,29 +492,40 @@ class DailyCycle:
             return {"status": "skipped", "detail": "no approved product campaign"}
         content = self.orchestrator.generate_marketing_content(brief)
         ctx["content_items"] = len(content["items"])
-        return {"status": "ok", "detail": {"items": len(content["items"])}}
+
+        # A complete promotion kit per LIVE product, all linking back to Etsy.
+        cid = ctx["campaign_id"]
+        kits = 0
+        for product_key, listing_id in self._live_products(ctx):
+            listing = self._listing_json(cid, product_key)
+            if not listing:
+                continue
+            self.marketing.build(listing, listing_id=str(listing_id), campaign_id=cid,
+                                 product_key=product_key)
+            kits += 1
+        ctx["marketing_kits"] = kits
+        return {"status": "ok", "detail": {"items": len(content["items"]),
+                                           "marketing_kits": kits}}
 
     def _promote(self, ctx: dict[str, Any]) -> dict[str, Any]:
-        """Promote each LIVE product on Pinterest — pins that link back to the
-        Etsy listing (free, high-intent traffic). Safe no-op until configured."""
+        """Distribute the marketing via the Traffic Engine — schedule 5-10 pins/day
+        across boards/keywords/seasons (each linking to the Etsy listing), post the
+        due ones (safe no-op until Pinterest is configured), and log the funnel
+        Impressions -> Clicks -> Visits -> Sales."""
         if ctx["dry"]:
             return {"status": "skipped", "detail": "dry run"}
-        if not self.pinterest.can_publish:
-            return {"status": "skipped", "detail": "Pinterest not configured for publishing"}
-        live = self._live_products(ctx)
-        if not live:
-            return {"status": "skipped", "detail": "no live listings to promote"}
-        cid = ctx["campaign_id"]
-        posted, per_product = 0, []
-        for product_key, listing_id in live:
-            pins = self._build_pins(cid, product_key, listing_id)
-            res = self.pinterest.publish_pins(pins)
-            posted += res["posted"]
-            per_product.append({"product_key": product_key, "posted": res["posted"]})
-        ctx["promotion"] = {"posted": posted, "products": len(live)}
-        return {"status": "ok" if posted else "skipped",
-                "detail": {"pins_posted": posted, "products_promoted": len(live),
-                           "per_product": per_product}}
+        cid = ctx.get("campaign_id")
+        sched = self.traffic.schedule(campaign_id=cid)
+        dist = self.traffic.distribute()
+        funnel = self.traffic.snapshot()
+        posted = int(dist.get("posted", 0) or 0)
+        scheduled = int(sched.get("scheduled", 0) or 0)
+        ctx["promotion"] = {"posted": posted, "scheduled": scheduled}
+        ctx["funnel"] = funnel
+        return {"status": "ok" if (scheduled or posted) else "skipped",
+                "detail": {"pins_scheduled": scheduled, "pins_posted": posted,
+                           "queued": int(dist.get("queued", 0) or 0),
+                           "season": sched.get("season"), "funnel": funnel}}
 
     def _daily_report(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """Build the daily Revenue / Profit / Best / Worst / Recommendation report."""
@@ -488,16 +540,25 @@ class DailyCycle:
             "worst_seller": report["worst_seller"],
             "recommendations": report["recommendations"]}}
 
+    def _ceo_dashboard(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """The CEO scoreboard — money, and nothing else. Read-only; runs always."""
+        board = self.dashboard.build()
+        ctx["dashboard"] = board
+        log.info("[daily] CEO — %s", board["headline"])
+        return {"status": "ok", "detail": {
+            "headline": board["headline"],
+            "revenue_yesterday": board["revenue_yesterday"],
+            "profit_yesterday": board["profit_yesterday"],
+            "visitors": board["visitors"], "conversion": board["conversion"],
+            "pinterest_clicks": board["pinterest_clicks"],
+            "products_launched": board["products_launched"]["yesterday"],
+            "products_retired": board["products_retired"]["yesterday"],
+            "ai_cost": board["ai_cost"], "roi": board["roi"]}}
+
     # --- Promotion helpers ------------------------------------------
 
-    def _live_products(self, ctx: dict[str, Any]) -> list[tuple[str, str]]:
-        go_live = self._go_live_result(ctx)
-        return [(r["product_key"], r["listing_id"])
-                for r in (go_live.get("results") or [])
-                if r.get("status") == "live" and r.get("listing_id")]
-
-    def _build_pins(self, campaign_id: int, product_key: str,
-                    listing_id: str) -> list[dict[str, Any]]:
+    def _listing_json(self, campaign_id: int, product_key: str) -> dict[str, Any] | None:
+        """Load a published product's listing.json (title/description/tags/etc)."""
         import json
         from pathlib import Path
 
@@ -506,22 +567,16 @@ class DailyCycle:
         base = Path((self.config.listing or {}).get("exports_dir", "exports"))
         if not base.is_absolute():
             base = ROOT_DIR / base
-        folder = base / str(campaign_id) / product_key
-        listing_path = folder / "listing.json"
-        if not listing_path.exists():
-            return []
-        listing = json.loads(listing_path.read_text(encoding="utf-8"))
-        url = f"https://www.etsy.com/listing/{listing_id}"
-        title = listing.get("title", "")
-        desc = (listing.get("description", "") or "")[:480]
-        pins: list[dict[str, Any]] = []
-        for img in listing.get("images", []):
-            pins.append({
-                "title": title, "description": desc, "link": url,
-                "image_path": str(folder / "images" / img["filename"]),
-                "alt_text": img.get("alt_text", title),
-            })
-        return pins
+        path = base / str(campaign_id) / product_key / "listing.json"
+        if not path.exists():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def _live_products(self, ctx: dict[str, Any]) -> list[tuple[str, str]]:
+        go_live = self._go_live_result(ctx)
+        return [(r["product_key"], r["listing_id"])
+                for r in (go_live.get("results") or [])
+                if r.get("status") == "live" and r.get("listing_id")]
 
     # --- Reads ------------------------------------------------------
 

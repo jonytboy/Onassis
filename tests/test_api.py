@@ -385,6 +385,32 @@ def test_daily_report_endpoint(app_and_client):
     assert set(body["recommendations"]) == {"expand", "hold", "kill"}
 
 
+def test_ceo_dashboard_endpoint(app_and_client):
+    _, client = app_and_client
+    r = client.get("/ceo/dashboard")
+    assert r.status_code == 200
+    body = r.json()
+    for key in ("revenue_yesterday", "profit_yesterday", "visitors", "conversion",
+                "pinterest_clicks", "products_launched", "products_retired",
+                "cash_generated", "ai_cost", "roi", "headline"):
+        assert key in body
+
+
+def test_learning_and_portfolio_and_traffic_endpoints(app_and_client):
+    _, client = app_and_client
+    learning = client.get("/learning/daily")
+    assert learning.status_code == 200
+    assert "actions" in learning.json()
+
+    assert client.get("/portfolio/reviews").status_code == 200
+    assert client.get("/portfolio/archived").status_code == 200
+
+    funnel = client.get("/traffic/funnel").json()
+    for key in ("impressions", "clicks", "visits", "sales"):
+        assert key in funnel
+    assert client.get("/traffic/schedule").status_code == 200
+
+
 def test_launch_endpoints_single_approval(app_and_client, tmp_path):
     import json as _json
     from pathlib import Path
@@ -510,7 +536,7 @@ def test_daily_run_and_status_history(app_and_client):
     assert r.status_code == 200
     body = r.json()
     assert body["mode"] == "dry_run"
-    assert len(body["stages"]) == 17
+    assert len(body["stages"]) == 19
 
     status = client.get("/daily/status").json()
     assert status["mode"] == "dry_run"
@@ -704,6 +730,9 @@ def test_swagger_docs_available(app_and_client):
                  "/publish/{campaign_id}", "/publishing/status",
                  "/launch/approve/{campaign_id}", "/launch/status/{campaign_id}",
                  "/launch/pending", "/report/daily",
+                 "/ceo/dashboard", "/learning/daily", "/portfolio/reviews",
+                 "/portfolio/archived", "/traffic/schedule", "/traffic/funnel",
+                 "/marketing/{product_key}",
                  "/market/report", "/market/research",
                  "/analytics", "/analytics/product/{product_id}",
                  "/analytics/campaign/{campaign_id}",
