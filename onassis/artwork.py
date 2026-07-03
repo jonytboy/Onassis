@@ -331,6 +331,10 @@ class ArtworkStudio:
         self.cfg = getattr(config, "image", None) or {}
         self._backend = backend or build_image_backend(config)
         self._fallback = LocalRenderBackend()
+        # A successful image is never silently replaced. The DEV local renderer is
+        # used ONLY when the production backend genuinely fails, and only if
+        # explicitly allowed — the exact exception is always surfaced.
+        self.fallback_to_local = bool(self.cfg.get("fallback_to_local", True))
         self.upscaler = build_upscaler(config)
         self.prompts = CommercialPromptBuilder()
         self.review = ArtworkReview(self.cfg.get("quality_gate"))
@@ -383,11 +387,22 @@ class ArtworkStudio:
             return data
 
     def _generate(self, spec: ImageSpec) -> bytes:
+        """Generate one image. A successful backend image is returned verbatim —
+        it is never replaced. Only a genuine backend failure (an exception) can
+        fall back, the exact exception is always surfaced, and substitution is
+        opt-out via ``image.fallback_to_local``."""
         try:
             return self._backend.generate(spec)
-        except Exception as exc:  # replaceable backend failed — never lose the file
-            log.warning("Image backend '%s' failed (%s); falling back to local renderer.",
-                        self._backend.name, exc)
+        except Exception as exc:
+            if self._backend.name == "local":
+                raise  # the dev renderer failing is a real bug — don't mask it
+            # Surface the EXACT exception (full traceback) — never silent.
+            log.error("Image backend '%s' FAILED for %s/%s: %s",
+                      self._backend.name, spec.kind, spec.scene, exc, exc_info=True)
+            if not self.fallback_to_local:
+                raise
+            log.error("Substituting the DEV local renderer for this image "
+                      "(image.fallback_to_local=true) — set it false to fail loudly.")
             return self._fallback.generate(spec)
 
     # --- Master design assets ---------------------------------------

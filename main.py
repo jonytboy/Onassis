@@ -815,9 +815,24 @@ def main() -> int:
         if result.get("opportunity_id"):
             print(f"  Product opportunity : {result['opportunity_id']}")
         if result.get("campaign_id"):
-            print(f"  Campaign            : #{result['campaign_id']} "
-                  f"(listing {'ready' if result['listing_ready'] else 'not built'}, "
-                  f"{result['assets_created']} marketing asset(s))")
+            print(f"  Campaign            : #{result['campaign_id']}")
+        # Revenue-first streaming: show each product's outcome as it was published.
+        stream = result.get("stream") or []
+        if stream:
+            print("\n  PRODUCTS (streamed — first sellable product live first)\n")
+            for i, p in enumerate(stream, start=1):
+                line = f"  {i}. {p['product_name'][:24]:<24} {p['status'].upper()}"
+                if p.get("listing_id"):
+                    line += (f"  listing {p['listing_id']}  "
+                             f"images {p.get('images_uploaded', 0)}/{p.get('images', 0)}")
+                    if p.get("published_at"):
+                        line += f"  {p['published_at'][11:19]}"
+                elif p["status"] == "failed":
+                    line += f"  (failed at {p.get('stage', '?')}: {p.get('reason', '')[:50]})"
+                print(line)
+            if result.get("first_draft_at"):
+                print(f"\n  First Etsy draft at : {result['first_draft_at'][11:19]}  "
+                      f"(live: {result.get('products_live', 0)})")
         print()
         return 0
 

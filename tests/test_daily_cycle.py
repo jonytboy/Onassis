@@ -24,8 +24,8 @@ _EXPECTED_STAGES = [
     "Sync Etsy", "Sync Pinterest", "Import Revenue", "Import Analytics",
     "Run Product Optimiser", "CEO Decision",
     "Create Product Opportunity", "Build Design Package", "Generate Master Artwork",
-    "Create Product Campaign", "Expand Products", "Build Etsy Listing Package",
-    "Generate Marketing Content", "Publish Live", "Promote on Pinterest",
+    "Create Product Campaign", "Expand Products", "Publish Products",
+    "Generate Marketing Content", "Promote on Pinterest",
     "Daily Report", "Record Results",
 ]
 
@@ -63,9 +63,8 @@ def test_dry_run_executes_all_stages_without_side_effects(config, db):
     by_stage = {s["stage"]: s for s in summary["stages"]}
     for stage in ("Create Product Opportunity", "Build Design Package",
                   "Generate Master Artwork", "Create Product Campaign",
-                  "Expand Products", "Build Etsy Listing Package",
-                  "Generate Marketing Content", "Publish Live",
-                  "Promote on Pinterest"):
+                  "Expand Products", "Publish Products",
+                  "Generate Marketing Content", "Promote on Pinterest"):
         assert by_stage[stage]["status"] == "skipped"
     # The daily report always runs — even a dry run reports the scoreboard.
     assert by_stage["Daily Report"]["status"] == "ok"
@@ -172,20 +171,22 @@ def test_production_runs_full_pipeline_and_publishes(production_cycle, db):
     assert by_stage["Create Product Campaign"]["status"] == "ok"
     assert by_stage["Expand Products"]["status"] == "ok"
     assert by_stage["Expand Products"]["detail"]["products_launched"] >= 1
-    assert by_stage["Build Etsy Listing Package"]["status"] == "ok"
-    # One listing package per approved product (the expansion launched >= 1).
-    assert by_stage["Build Etsy Listing Package"]["detail"]["products_built"] >= 1
-    # Every product got a full 8-10 image commercial gallery (real files).
-    assert by_stage["Build Etsy Listing Package"]["detail"]["images_generated"] >= 8
+    # Streaming publish: each product built + drafted + taken LIVE independently.
+    pub = by_stage["Publish Products"]
+    assert pub["status"] == "ok"
+    assert pub["detail"]["published"] >= 1
+    assert pub["detail"]["live"] >= 1
+    assert pub["detail"]["first_draft_at"]                 # the KPI is recorded
+    # The per-product timeline is visible (product-by-product, not a global blob).
+    timeline = pub["detail"]["timeline"]
+    assert len(timeline) >= 1
+    first = timeline[0]
+    assert first["status"] == "live" and first["listing_id"]
+    assert first["images_uploaded"] >= 1 and first["published_at"]
     assert by_stage["Generate Marketing Content"]["status"] == "ok"
-    # Publish Live: draft every approved product, then automatically activate LIVE.
-    assert by_stage["Publish Live"]["status"] == "ok"
-    assert by_stage["Publish Live"]["detail"]["published"] >= 1
-    assert by_stage["Publish Live"]["detail"]["products_live"] >= 1
-    # Automatic launch policy approved and took the design live in one cycle.
-    assert by_stage["Publish Live"]["detail"]["launch_status"] == "launched"
     assert summary["launch_status"] == "launched"
     assert summary["products_live"] >= 1
+    assert summary["first_draft_at"]
     assert summary["status"] == "completed"
 
     # A product is actually LIVE on Etsy (activated), not just drafted.
@@ -197,9 +198,49 @@ def test_production_runs_full_pipeline_and_publishes(production_cycle, db):
     assert set(report["recommendations"]) == {"expand", "hold", "kill"}
     assert "revenue" in report and "profit" in report
 
-    # Marketing was generated only AFTER the product (listing) existed.
+    # Revenue-first: products are published BEFORE marketing content is generated.
     stage_order = [s["stage"] for s in summary["stages"]]
-    assert stage_order.index("Build Etsy Listing Package") < stage_order.index("Generate Marketing Content")
+    assert stage_order.index("Publish Products") < stage_order.index("Generate Marketing Content")
+
+
+def test_streaming_isolates_a_failed_product(production_cycle):
+    """If one product fails, the others still publish — never rolled back."""
+    original = production_cycle.listing_factory.export_product
+    calls = {"n": 0}
+
+    def flaky(campaign_id, spec, **kw):
+        calls["n"] += 1
+        if calls["n"] == 2:                       # the 2nd product blows up
+            raise RuntimeError("boom on product 2")
+        return original(campaign_id, spec, **kw)
+
+    production_cycle.listing_factory.export_product = flaky
+    summary = production_cycle.run(mode="production")
+    pub = {s["stage"]: s for s in summary["stages"]}["Publish Products"]["detail"]
+
+    timeline = pub["timeline"]
+    assert len(timeline) >= 3
+    assert timeline[1]["status"] == "failed"       # product 2 isolated
+    assert timeline[1]["stage"] == "exception"
+    assert pub["failed"] == 1
+    # Products 1 and 3 still shipped and went live — no rollback, no cancellation.
+    assert pub["published"] >= 2 and pub["live"] >= 2
+    assert summary["products_live"] >= 2
+    assert summary["status"] == "completed"        # the cycle itself did not fail
+
+
+def test_streaming_publishes_first_product_before_finishing_the_rest(production_cycle):
+    """The first product reaches a draft with a recorded listing id + images —
+    the KPI (time to first draft) is captured product-by-product."""
+    summary = production_cycle.run(mode="production")
+    pub = {s["stage"]: s for s in summary["stages"]}["Publish Products"]["detail"]
+    timeline = pub["timeline"]
+    # Each product carries its own outcome (id, images, timestamp) — not a blob.
+    for rec in timeline:
+        if rec["status"] in ("live", "draft"):
+            assert rec["listing_id"] and rec["published_at"]
+            assert rec["images_uploaded"] >= 1
+    assert pub["first_draft_at"] == summary["first_draft_at"]
 
 
 def test_production_promotes_live_products_on_pinterest(production_cycle):

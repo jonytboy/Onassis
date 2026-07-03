@@ -194,27 +194,8 @@ class ListingFactory:
             return {"status": "blocked", "campaign_id": campaign_id,
                     "reason": "No CEO-approved products for this design."}
 
-        packages: list[dict[str, Any]] = []
-        for spec in launched:
-            # Autonomous compliance per product: amend the copy and re-review
-            # until approved, or block this product after a bounded attempt limit.
-            outcome = self.compliance.resolve(
-                lambda corr, spec=spec: self._build_listing(
-                    campaign, product=spec, design_package=design_package, corrections=corr),
-                lambda listing: self._review_listing(listing, campaign_id))
-            if outcome["status"] != "approved":
-                packages.append({"product_key": spec["product_key"], "status": "blocked",
-                                 "reason": ("Listing REJECTED by compliance."
-                                            if outcome["status"] == "rejected" else
-                                            f"Still needed changes after "
-                                            f"{outcome['attempts']} attempt(s)."),
-                                 "missing": outcome["missing"]})
-                continue
-            pkg = self._write_package(campaign_id, outcome["artifact"], outcome["report"],
-                                      subdir=spec["product_key"])
-            pkg["compliance_attempts"] = outcome["attempts"]
-            packages.append({"product_key": spec["product_key"], **pkg})
-
+        packages = [self.export_product(campaign_id, spec, design_package=design_package,
+                                        campaign=campaign) for spec in launched]
         ready = [p for p in packages if p.get("status") == "ready"]
         log.info("Built %d/%d approved product listing(s) for campaign #%s",
                  len(ready), len(launched), campaign_id)
@@ -224,6 +205,36 @@ class ListingFactory:
             "count": len(ready),
             "products": packages,
         }
+
+    def export_product(
+        self, campaign_id: int, spec: dict[str, Any],
+        design_package: dict[str, Any] | None = None,
+        campaign: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Build ONE approved product's listing package (real artwork + gallery +
+        autonomous compliance). This is the streaming unit — the daily cycle
+        publishes each product the instant its package is ready, rather than
+        waiting for the whole batch.
+        """
+        campaign = campaign or self.db.get_campaign(campaign_id)
+        if campaign is None:
+            raise ListingError(f"No campaign with id {campaign_id}")
+        # Autonomous compliance: amend the copy and re-review until approved, or
+        # block this product after a bounded attempt limit.
+        outcome = self.compliance.resolve(
+            lambda corr: self._build_listing(
+                campaign, product=spec, design_package=design_package, corrections=corr),
+            lambda listing: self._review_listing(listing, campaign_id))
+        if outcome["status"] != "approved":
+            return {"product_key": spec["product_key"], "status": "blocked",
+                    "reason": ("Listing REJECTED by compliance."
+                               if outcome["status"] == "rejected" else
+                               f"Still needed changes after {outcome['attempts']} attempt(s)."),
+                    "missing": outcome["missing"]}
+        pkg = self._write_package(campaign_id, outcome["artifact"], outcome["report"],
+                                  subdir=spec["product_key"])
+        pkg["compliance_attempts"] = outcome["attempts"]
+        return {"product_key": spec["product_key"], **pkg}
 
     # --- Build ------------------------------------------------------
 

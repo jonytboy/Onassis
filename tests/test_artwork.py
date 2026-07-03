@@ -410,6 +410,69 @@ def test_openai_backend_opaque_photo_payload(monkeypatch):
     assert cap.payload["size"] == "1536x1024"               # landscape mapping
 
 
+def test_openai_valid_200_image_is_never_replaced(monkeypatch):
+    # A 200 carrying a valid image must be returned verbatim — the studio must
+    # never silently substitute the local renderer for a good OpenAI image.
+    import httpx
+
+    b64, raw = _png_b64()
+    monkeypatch.setattr(httpx, "post", _Capture(b64))
+    out = OpenAIImageBackend("sk-x").generate(
+        ImageSpec(kind=MASTER, width=1024, height=1024))
+    assert out == raw
+
+
+def test_openai_200_without_image_raises_with_response_keys(monkeypatch):
+    # A 200 that carries no decodable image must surface the ACTUAL response
+    # shape (not a generic error that hides a silent fallback).
+    import httpx
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"created": 1, "data": [{"revised_prompt": "x"}]}
+
+    monkeypatch.setattr(httpx, "post", lambda *a, **k: _Resp())
+    with pytest.raises(RuntimeError, match="no decodable image"):
+        OpenAIImageBackend("sk-x").generate(ImageSpec(kind=MASTER, width=1024, height=1024))
+
+
+def test_studio_never_falls_back_when_backend_succeeds():
+    # A successful backend image is used verbatim; the local fallback is untouched.
+    studio = _small_studio()
+
+    class _Good(ImageBackend):
+        name = "good"
+
+        def generate(self, spec):
+            return LocalRenderBackend().generate(ImageSpec(
+                kind=spec.kind, width=64, height=64, palette=spec.palette,
+                title=spec.title, transparent=spec.transparent))
+
+    used = {"fallback": 0}
+
+    class _CountingFallback(LocalRenderBackend):
+        def generate(self, spec):
+            used["fallback"] += 1
+            return super().generate(spec)
+
+    studio._backend = _Good()
+    studio._fallback = _CountingFallback()
+    _, verdict = studio._produce(ImageSpec(
+        kind=MASTER, width=96, height=96, palette=["ecru", "terracotta"], title="Amalfi"))
+    assert verdict["accepted"] and used["fallback"] == 0    # fallback never invoked
+
+
+def test_studio_fails_loudly_when_fallback_disabled(tmp_path):
+    # With fallback_to_local off, a genuine backend failure propagates — it does
+    # NOT quietly ship dev-renderer art.
+    studio = _small_studio(fallback_to_local=False)
+    studio._backend = _BoomBackend()
+    with pytest.raises(RuntimeError, match="provider down"):
+        studio.generate_master(_brief(), tmp_path)
+
+
 def test_openai_backend_raises_on_http_error(monkeypatch):
     import httpx
 

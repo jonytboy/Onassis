@@ -699,16 +699,25 @@ runs, in order:
 5. Run Product Optimiser → 6. CEO Decision →
 **7. Create Product Opportunity** (CEO-approved) →
 **8. Build Design Package** (design brief + artwork prompt, compliance-gated) →
-**9. Create Product Campaign** (campaign + product *from the opportunity*) →
-**10. Build Etsy Listing Package** (the upload-ready Etsy product) →
-**11. Generate Marketing Content** (Pinterest/Instagram/Facebook — promotes the product) →
-12. Publish Draft → 13. Record Results
+**9. Generate Master Artwork** (real master + print files) →
+**10. Create Product Campaign** (campaign + product *from the opportunity*) →
+**11. Expand Products** (CEO launches the profitable set) →
+**12. Publish Products (streaming)** →
+**13. Generate Marketing Content** → 14. Promote on Pinterest →
+15. Daily Report → 16. Record Results
+
+**Revenue beats completeness — streaming publish.** Step 12 does *not* batch:
+each approved product runs its **whole tail independently** — build listing
+(real artwork + 8-10 gallery + autonomous compliance) → create the Etsy draft →
+upload its images → (per policy) go **live** → record → **next product**. The
+first sellable product reaches Etsy as early as possible, and a product that
+fails is **isolated** (logged, skipped, never rolled back) while the rest keep
+going. The KPI — *time from opportunity to the first live draft* — and a
+per-product timeline are in the run summary.
 
 **Marketing is driven by products, not the other way round:** the campaign — and
 all the content generated from it — is created from the approved product
-opportunity, and content generation is the *last* creative step. The output of a
-completed production cycle is at least one upload-ready Etsy product (published
-as a draft where Etsy is authorised) — i.e. every cycle can produce a sale.
+opportunity, and content generation runs *after* the products are published.
 
 Every stage logs start/finish, records its duration, captures failures, and the
 cycle **continues safely** past a failed stage. Two modes: **dry_run**

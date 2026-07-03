@@ -16,12 +16,16 @@ Order:
     9. Generate Master Artwork        (the REAL master artwork + print file, QC-gated)
    10. Create Product Campaign        (campaign + product from the opportunity)
    11. Expand Products                (score the catalogue; CEO launches the profitable set)
-   12. Build Etsy Listing Package     (real artwork, mockups & 8-10 image gallery per product)
+   12. Publish Products (streaming)   (per product: listing -> artwork -> compliance ->
+                                       draft -> upload images -> go live -> next; failures
+                                       isolated, never rolls back a published product)
    13. Generate Marketing Content     (Pinterest/Instagram/Facebook — promotes the product)
-   14. Publish Live                   (draft + activate LIVE on Etsy, margin-guarded)
-   15. Promote on Pinterest           (pins that link back to each live listing)
-   16. Daily Report                   (Revenue / Profit / Best / Worst / Recommendation)
-   17. Record Results
+   14. Promote on Pinterest           (pins that link back to each live listing)
+   15. Daily Report                   (Revenue / Profit / Best / Worst / Recommendation)
+   16. Record Results
+
+Revenue beats completeness: the first sellable product reaches Etsy as early as
+possible, and one product's failure never cancels the others.
 
 Every stage logs start/finish, records its duration, captures failures, and the
 cycle continues safely past a failed stage. Two modes are supported: ``dry_run``
@@ -107,9 +111,10 @@ class DailyCycle:
         self._stage(stages, "Generate Master Artwork", self._generate_master_artwork, ctx)
         self._stage(stages, "Create Product Campaign", self._create_campaign, ctx)
         self._stage(stages, "Expand Products", self._expand_products, ctx)
-        self._stage(stages, "Build Etsy Listing Package", self._build_listing, ctx)
+        # Revenue-first: stream each product to a live Etsy draft independently —
+        # Product 1 is published while Product 2 is still generating.
+        self._stage(stages, "Publish Products", self._stream_products, ctx)
         self._stage(stages, "Generate Marketing Content", self._generate_content, ctx)
-        self._stage(stages, "Publish Live", self._publish, ctx)
         self._stage(stages, "Promote on Pinterest", self._promote, ctx)
         self._stage(stages, "Daily Report", self._daily_report, ctx)
         # Final stage — Record Results — is the persistence below.
@@ -135,13 +140,16 @@ class DailyCycle:
             "launch_status": (ctx.get("launch") or {}).get("status"),
             "products_live": self._go_live_result(ctx).get("live", 0),
             "pins_posted": (ctx.get("promotion") or {}).get("posted", 0),
+            # Revenue-first streaming: per-product timeline + the primary KPI
+            # (time from opportunity to the FIRST live Etsy draft).
+            "stream": ctx.get("stream", []),
+            "first_draft_at": ctx.get("first_draft_at"),
             "report": ctx.get("report"),
         }
 
     @staticmethod
     def _go_live_result(ctx: dict[str, Any]) -> dict[str, Any]:
-        """The go-live outcome, whether returned inline or nested under the
-        automatic-policy approval."""
+        """The go-live outcome from the streaming publish stage."""
         launch = ctx.get("launch") or {}
         return (launch.get("go_live")
                 or (launch.get("launch") or {}).get("go_live") or {})
@@ -303,22 +311,95 @@ class DailyCycle:
             "products_scored": plan["products_scored"],
             "launched": [s["product_key"] for s in plan["launched"]]}}
 
-    def _build_listing(self, ctx: dict[str, Any]) -> dict[str, Any]:
-        """Build one Etsy listing package per CEO-approved product."""
+    def _stream_products(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """Stream each approved product to a live Etsy draft, independently.
+
+        Revenue beats completeness: for every product we run the *whole* tail —
+        build listing (real artwork + gallery + autonomous compliance) → create
+        the Etsy draft → upload its images → (per policy) activate LIVE → record —
+        and only THEN move to the next product. The first sellable product reaches
+        Etsy as early as possible. A product that fails is isolated: it is logged
+        and skipped, never rolled back, and the remaining products still run.
+        """
         if ctx["dry"]:
             return {"status": "skipped", "detail": "dry run"}
         cid = ctx.get("campaign_id")
         if not cid or not ctx.get("campaign_approved"):
             return {"status": "skipped", "detail": "no approved campaign"}
-        pkg = self.listing_factory.export_products(
-            cid, design_package=ctx.get("design_package"))
-        if pkg.get("status") != "ready":
-            return {"status": "blocked", "detail": pkg.get("reason")}
-        ctx["listing_ready"] = True
-        images = sum(len(p.get("listing", {}).get("images", []))
-                     for p in pkg["products"] if p.get("status") == "ready")
-        return {"status": "ok", "detail": {"products_built": pkg["count"],
-                                           "images_generated": images}}
+        specs = (ctx.get("expansion") or {}).get("launched", [])
+        if not specs:
+            return {"status": "skipped", "detail": "no approved products to publish"}
+
+        design_package = ctx.get("design_package")
+        go_live = self.publisher.auto_go_live
+        stream: list[dict[str, Any]] = []
+        live_results: list[dict[str, Any]] = []
+        published = live = 0
+        first_draft_at: str | None = None
+
+        for i, spec in enumerate(specs, start=1):
+            key = spec["product_key"]
+            name = spec.get("product_name") or key
+            rec: dict[str, Any] = {"product_key": key, "product_name": name,
+                                   "status": "generating"}
+            log.info("[stream] Product %d/%d (%s): generating…", i, len(specs), name)
+            try:
+                pkg = self.listing_factory.export_product(cid, spec, design_package=design_package)
+                if pkg.get("status") != "ready":
+                    rec.update(status="failed", stage="listing", reason=pkg.get("reason"))
+                    log.warning("[stream] Product %s FAILED at listing: %s", name, pkg.get("reason"))
+                    stream.append(rec)
+                    continue
+                rec["images"] = len(pkg.get("listing", {}).get("images", []))
+
+                pub = self.publisher.publish(cid, product_key=key)
+                if pub.get("status") != "draft":
+                    rec.update(status="failed", stage="publish",
+                               reason=pub.get("reason", pub.get("status")))
+                    log.warning("[stream] Product %s FAILED at publish: %s", name, rec["reason"])
+                    stream.append(rec)
+                    continue
+                publication = pub.get("publication", {})
+                listing_id = publication.get("listing_id")
+                rec.update(status="draft", listing_id=listing_id,
+                           images_uploaded=publication.get("images_uploaded", 0))
+                published += 1
+                first_draft_at = first_draft_at or datetime.now(timezone.utc).isoformat()
+
+                if go_live:
+                    gl = self.publisher.go_live(cid, [spec])
+                    r0 = (gl.get("results") or [{}])[0]
+                    rec["status"] = r0.get("status", rec["status"])  # live | held | failed
+                    if r0.get("status") == "live":
+                        live += 1
+                        live_results.append({"product_key": key, "listing_id": listing_id,
+                                             "status": "live"})
+                rec["published_at"] = datetime.now(timezone.utc).isoformat()
+                log.info("[stream] Product %s: %s (listing %s, images %s/%s) at %s",
+                         name, rec["status"].upper(), listing_id,
+                         rec.get("images_uploaded", 0), rec.get("images", 0),
+                         rec["published_at"][11:19])
+            except Exception as exc:  # isolate the failure — the others still run
+                rec.update(status="failed", stage="exception", reason=str(exc))
+                log.exception("[stream] Product %s crashed — isolated, continuing.", name)
+            stream.append(rec)
+
+        # Record the launch (so /launch/status + promotion see the live set).
+        self.db.upsert_launch({"campaign_id": cid, "policy": self.publisher.launch_policy,
+                               "status": "launched" if (go_live and live) else "launch_ready",
+                               "products": published})
+        ctx["listing_ready"] = published > 0
+        ctx["stream"] = stream
+        ctx["first_draft_at"] = first_draft_at
+        ctx["launch"] = {"status": "launched" if (go_live and live) else "launch_ready",
+                         "policy": self.publisher.launch_policy,
+                         "go_live": {"live": live, "results": live_results}}
+
+        failed = [r for r in stream if r["status"] == "failed"]
+        status = "ok" if published else ("failed" if failed else "skipped")
+        return {"status": status, "detail": {
+            "products": len(specs), "published": published, "live": live,
+            "failed": len(failed), "first_draft_at": first_draft_at, "timeline": stream}}
 
     def _generate_content(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """Generate marketing content LAST — only to promote the new product."""
@@ -330,33 +411,6 @@ class DailyCycle:
         content = self.orchestrator.generate_marketing_content(brief)
         ctx["content_items"] = len(content["items"])
         return {"status": "ok", "detail": {"items": len(content["items"])}}
-
-    def _publish(self, ctx: dict[str, Any]) -> dict[str, Any]:
-        """Draft each approved product, then (per launch policy) take the approved
-        set LIVE on Etsy so the products are actually buyable."""
-        if ctx["dry"]:
-            return {"status": "skipped", "detail": "dry run"}
-        cid = ctx.get("campaign_id")
-        if not cid:
-            return {"status": "skipped", "detail": "no campaign to publish"}
-        result = self.publisher.launch(cid, mode="draft")
-        if result.get("status") == "blocked":
-            return {"status": "skipped", "detail": result.get("reason")}
-        ctx["launch"] = result
-        drafts = result.get("drafts", {})
-        statuses = [r["status"] for r in drafts.get("results", [])]
-        if any(s in ("draft", "dry_run") for s in statuses):
-            mapped = "ok"
-        elif any(s == "failed" for s in statuses):
-            mapped = "failed"
-        else:
-            mapped = "skipped"
-        go_live = (result.get("launch") or {}).get("go_live") or result.get("go_live") or {}
-        return {"status": mapped, "detail": {
-            "launch_status": result["status"], "policy": result.get("policy"),
-            "published": drafts.get("published", 0),
-            "products_live": go_live.get("live", 0),
-            "results": drafts.get("results", [])}}
 
     def _promote(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """Promote each LIVE product on Pinterest — pins that link back to the

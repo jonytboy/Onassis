@@ -82,7 +82,7 @@ def test_dry_run_produces_report(ops, db):
     result = ops.run("dry_run")
     assert result["aborted"] is False
     assert result["mode"] == "dry_run"
-    assert len(result["stages"]) == 17
+    assert len(result["stages"]) == 16
 
     report = result["operations_report"]
     assert set(report) >= {"system", "business", "recommendations", "preflight"}

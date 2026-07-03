@@ -376,6 +376,10 @@ image:
   quality: high                # gpt-image-1: low | medium | high | auto
   moderation: auto             # gpt-image-1 content moderation: auto | low
   timeout: 180                 # seconds per image (generation can be slow)
+  # A successful GPT image is NEVER replaced. On a genuine backend failure the
+  # exact exception is always logged; this only decides whether the dev renderer
+  # is then substituted (true) or the image fails loudly (false).
+  fallback_to_local: true
   # api_key is read from IMAGE_API_KEY / OPENAI_API_KEY (never hard-code it).
   gallery_count: 9             # Etsy gallery images per product (8-10)
   max_attempts: 3              # QC regenerations for GENUINE quality failures only

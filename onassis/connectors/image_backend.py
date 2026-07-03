@@ -402,14 +402,23 @@ class OpenAIImageBackend(ImageBackend):
                 detail = resp.text
             raise RuntimeError(
                 f"OpenAI image generation HTTP {resp.status_code}: {detail}")
-        data = (resp.json().get("data") or [{}])[0]
-        if data.get("b64_json"):
-            return base64.b64decode(data["b64_json"])
-        if data.get("url"):  # some compatible servers return a URL
-            img = httpx.get(data["url"], timeout=self.timeout)
+        # A 200 with a valid image must NEVER be lost. Extract robustly from any
+        # of the shapes the API/compatible servers return, and if none is present
+        # raise with the actual response keys so the true cause is visible (not a
+        # generic "no image data" that hides a silent local-renderer substitution).
+        body = resp.json()
+        item = (body.get("data") or [{}])[0]
+        b64 = item.get("b64_json") or item.get("b64") or body.get("b64_json")
+        if b64:
+            return base64.b64decode(b64)
+        url = item.get("url") or body.get("url")
+        if url:  # some compatible servers return a URL
+            img = httpx.get(url, timeout=self.timeout)
             img.raise_for_status()
             return img.content
-        raise RuntimeError("OpenAI image backend returned no image data.")
+        raise RuntimeError(
+            "OpenAI returned HTTP 200 but no decodable image "
+            f"(response keys={sorted(body)}, data[0] keys={sorted(item)}).")
 
     @classmethod
     def _size(cls, w: int, h: int) -> str:
