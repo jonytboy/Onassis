@@ -742,19 +742,23 @@ No agent acts on its own. Each submits a structured **proposal**
 (`onassis/proposals.py`: action, estimated cost, expected benefit,
 confidence, risks, reasoning) and the governance layer decides:
 
-1. **Compliance Director** (`onassis/compliance.py`) — a permanent executive
-   with **veto power over everyone, including the CEO**. It scores trademark,
-   copyright, and platform risk plus brand consistency (LLM-reasoned), then
-   applies deterministic thresholds. Because the autonomous pipeline has **no
-   human** to answer a request for more information, it speaks only three
-   verdicts: **APPROVE**, **APPROVE_WITH_CHANGES** (approved once the stated
-   amendments are applied), and **REJECT**. `resolve()` drives a design/listing
-   to a terminal decision — it auto-applies the required amendments, regenerates,
-   and re-reviews, stopping only on approval, a rejection, or a **bounded** number
-   of failed attempts (`compliance.max_remediation_attempts`), so the pipeline
-   never stalls. It stores every report and feeds past flagged decisions back
-   into its prompt so it learns from precedent. *Company Law: ONASSIS never
-   knowingly infringes IP or platform policy in pursuit of profit.*
+1. **Compliance Director** (`onassis/compliance.py`) — a **commercial
+   gatekeeper**, not a cautious legal consultant. It exists to maximise *safe
+   revenue*: get original, policy-compliant products to market. It separates
+   **blocking issues** from **advisories** and only ever blocks for a concrete
+   violation in five categories — **copyright**, **trademark (with concrete
+   evidence)**, **prohibited claims**, **Etsy policy**, **illegal content**.
+   Everything else (a recommended trademark search, "confirm the font licence",
+   "keep source files", off-brand tone) is an **advisory** that is *logged but
+   never prevents publishing*. The report reads `PASS` + advisories → *proceed to
+   publish*. Verdicts are still autonomous (no human): **REJECT** for a
+   non-fixable violation, **APPROVE_WITH_CHANGES** for a *fixable* blocking issue
+   (e.g. a prohibited claim — `resolve()` amends the copy and re-reviews, bounded
+   by `compliance.max_remediation_attempts`), else **APPROVE**. Crucially,
+   *advisories never trigger regeneration*, so cycles no longer stall chasing
+   impossible "fixes". It stores every report (advisories included) and learns
+   from precedent. *Company Law: ONASSIS never knowingly infringes IP or platform
+   policy in pursuit of profit.*
 2. **CEO** (`onassis/ceo.py`) — the single business decision authority. A
    deterministic engine that checks each proposal against company policy
    (min profit margin, cash reserve, max AI spend, max experiment budget,

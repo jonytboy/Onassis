@@ -351,6 +351,10 @@ class DailyCycle:
                     stream.append(rec)
                     continue
                 rec["images"] = len(pkg.get("listing", {}).get("images", []))
+                rec["advisories"] = pkg.get("advisories", [])   # logged, not blocking
+                if rec["advisories"]:
+                    log.info("[stream] Product %s advisories: %s",
+                             name, "; ".join(rec["advisories"]))
 
                 pub = self.publisher.publish(cid, product_key=key)
                 if pub.get("status") != "draft":

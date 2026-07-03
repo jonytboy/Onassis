@@ -82,16 +82,41 @@ def sample_brief() -> dict[str, Any]:
 def make_compliance_response(
     *, trademark=10, copyright=10, platform=10, brand=90,
     reasoning="Original, on-brand, low risk.", corrections=None,
+    blocking_issues=None, advisories=None,
 ) -> dict[str, Any]:
-    """Build a fake Compliance LLM response (risk scores 0-100)."""
+    """Build a fake Compliance LLM response.
+
+    ``corrections`` (legacy) are treated as FIXABLE prohibited-claim blocking
+    issues — amendments that must be applied (they drive the remediation loop).
+    Pass ``advisories`` for non-blocking notes, or ``blocking_issues`` explicitly.
+    """
+    corr = corrections or []
+    if blocking_issues is None:
+        blocking_issues = [{"category": "prohibited_claim", "detail": c, "fixable": True}
+                           for c in corr]
     return {
         "trademark_risk": trademark,
         "copyright_risk": copyright,
         "platform_risk": platform,
         "brand_consistency_score": brand,
         "reasoning": reasoning,
-        "corrections": corrections or [],
+        "corrections": corr,
+        "blocking_issues": blocking_issues,
+        "advisories": advisories or [],
     }
+
+
+def compliance_advisory(*advisories, **scores) -> dict[str, Any]:
+    """A PASS response carrying only advisories (no blocking issues)."""
+    return make_compliance_response(advisories=list(advisories), **scores)
+
+
+def compliance_block(category="copyright", detail="Copies a protected work.",
+                     fixable=False, **scores) -> dict[str, Any]:
+    """A response with one concrete blocking issue."""
+    return make_compliance_response(
+        blocking_issues=[{"category": category, "detail": detail, "fixable": fixable}],
+        **scores)
 
 
 def make_content_response(n_pin: int, n_ig: int, n_fb: int, n_img: int) -> dict[str, Any]:

@@ -175,6 +175,23 @@ def test_compliance_amendments_are_applied_then_approved(config, db, tmp_path):
     assert (Path(tmp_path) / "opportunities" / oid / "design_brief.json").exists()
 
 
+def test_advisories_pass_without_any_regeneration(config, db, tmp_path):
+    # Commercial compliance: advisories are logged, not blocking — the design is
+    # built in ONE pass with no wasted regeneration (the 11-minute-cycle fix).
+    config.design = {**config.design, "exports_dir": str(tmp_path)}
+    oid = _seed_opportunity(config, db)
+    builder = _builder(config, db, compliance=make_compliance_response(
+        platform=50, advisories=["Trademark search recommended",
+                                 "Keep artwork source files", "Confirm font licence"]))
+    result = builder.build(oid)
+
+    assert result["status"] == "ready"
+    assert result["compliance_attempts"] == 1        # generated ONCE, no loop
+    assert len(builder._llm.calls) == 1              # design not regenerated
+    assert result["compliance_report"]["advisories"]  # advisories are logged
+    assert result["compliance_report"]["outcome"] == "pass"
+
+
 def test_compliance_regeneration_is_bounded_then_blocks(config, db, tmp_path):
     config.design = {**config.design, "exports_dir": str(tmp_path)}
     config.compliance = {**(config.compliance or {}), "max_remediation_attempts": 2}

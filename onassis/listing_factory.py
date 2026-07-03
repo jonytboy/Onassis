@@ -234,6 +234,8 @@ class ListingFactory:
         pkg = self._write_package(campaign_id, outcome["artifact"], outcome["report"],
                                   subdir=spec["product_key"])
         pkg["compliance_attempts"] = outcome["attempts"]
+        # Advisories are logged with the product, never a gate.
+        pkg["advisories"] = outcome["report"].get("advisories", [])
         return {"product_key": spec["product_key"], **pkg}
 
     # --- Build ------------------------------------------------------

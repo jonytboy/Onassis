@@ -1819,4 +1819,12 @@ def _row_to_decision(row: sqlite3.Row) -> dict[str, Any]:
 def _row_to_compliance(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
     data["corrections"] = json.loads(data.get("corrections") or "[]")
+    # advisories / blocking_issues / outcome live in the stored payload — restore
+    # them so callers see the full commercial report, not just the columns.
+    payload = json.loads(data.get("payload") or "{}")
+    for key in ("advisories", "blocking_issues", "outcome"):
+        if key in payload:
+            data[key] = payload[key]
+    data.setdefault("advisories", [])
+    data.setdefault("blocking_issues", [])
     return data

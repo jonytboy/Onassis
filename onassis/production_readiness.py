@@ -200,7 +200,9 @@ class ProductionReadiness:
             # --- Governance + finance (deterministic) ---
             self._module("onassis/compliance.py", "Compliance Director",
                          READY if ai else PARTIAL,
-                         "Reviews proposals/campaigns; veto authority." if ai
+                         "Commercial gatekeeper: blocks only concrete legal violations "
+                         "(copyright/trademark/prohibited-claim/Etsy-policy/illegal); "
+                         "everything else is a logged advisory that never blocks." if ai
                          else "Rule checks work; LLM-assisted review needs the AI provider.",
                          list(ai_b)),
             self._module("onassis/ceo.py", "CEO Agent", READY,

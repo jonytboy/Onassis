@@ -406,10 +406,15 @@ publishing:
 # --- Compliance thresholds -------------------------------------------
 # The Compliance Director's veto rules (Sprint 7). Risk scores are 0-100.
 compliance:
-  high_risk_threshold: 70        # any risk at/above this -> hard REJECT (veto)
-  medium_risk_threshold: 40      # any risk at/above this -> APPROVE_WITH_CHANGES
-  brand_consistency_min: 70      # min brand-consistency score to approve
-  # The autonomous pipeline has no human to answer "more info". A design/listing
-  # flagged APPROVE_WITH_CHANGES is auto-amended and re-reviewed up to this many
-  # times; still not clean -> the product is blocked (bounded, never hangs).
+  # Commercial gatekeeper: it BLOCKS only concrete violations in five legal
+  # categories (copyright / trademark-with-evidence / prohibited-claim /
+  # etsy-policy / illegal). Everything else is a logged ADVISORY that never
+  # blocks publishing. The scores below only drive the fallback for pure
+  # risk-score responses: HIGH risk -> a block, medium risk -> an advisory.
+  high_risk_threshold: 70        # score at/above this (concrete) -> a blocking issue
+  medium_risk_threshold: 40      # score in [medium, high) -> an advisory, not a block
+  brand_consistency_min: 70      # below this -> an advisory (governance), never a block
+  # A FIXABLE blocking issue (e.g. a prohibited claim) is auto-amended and
+  # re-reviewed up to this many times; still not clean -> blocked (bounded).
+  # Advisories never trigger regeneration.
   max_remediation_attempts: 3

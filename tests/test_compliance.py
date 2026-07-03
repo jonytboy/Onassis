@@ -48,17 +48,67 @@ def test_rejects_high_copyright_risk(director):
     assert report["verdict"] == REJECT
 
 
-def test_rejects_low_brand_consistency(director):
+def test_low_brand_consistency_is_advisory_not_a_block(director):
+    # Off-brand is a governance concern, not a legal violation — it must NOT block.
     director._llm = FakeLLM(make_compliance_response(brand=40))
     report = director.review_proposal(_proposal(), proposal_id=1)
-    assert report["verdict"] == REJECT
+    assert report["verdict"] == APPROVE
+    assert report["outcome"] == "pass"
+    assert any("brand consistency" in a.lower() for a in report["advisories"])
+    assert report["blocking_issues"] == []
 
 
-def test_medium_risk_is_approve_with_changes(director):
-    # No human to answer "more info" — medium risk becomes APPROVE_WITH_CHANGES.
+def test_medium_risk_is_an_advisory_pass(director):
+    # Medium risk (a caution, not a concrete violation) PASSES with an advisory —
+    # it no longer triggers a regeneration loop. This is the 11-minute-cycle fix.
     director._llm = FakeLLM(make_compliance_response(platform=55))
     report = director.review_proposal(_proposal(), proposal_id=1)
+    assert report["verdict"] == APPROVE
+    assert report["outcome"] == "pass"
+    assert report["advisories"] and report["blocking_issues"] == []
+    assert report["corrections"] == []          # nothing to regenerate for
+
+
+def test_concrete_violation_blocks(director):
+    from tests.conftest import compliance_block
+
+    director._llm = FakeLLM(compliance_block(category="copyright",
+                                             detail="Reproduces a Disney character."))
+    report = director.review_proposal(_proposal(), proposal_id=1)
+    assert report["verdict"] == REJECT
+    assert report["outcome"] == "blocked"
+    assert report["blocking_issues"][0]["category"] == "copyright"
+
+
+def test_fixable_violation_is_approve_with_changes(director):
+    from tests.conftest import compliance_block
+
+    director._llm = FakeLLM(compliance_block(category="prohibited_claim",
+                                             detail="Remove 'hand-blocked' — it is printed.",
+                                             fixable=True))
+    report = director.review_proposal(_proposal(), proposal_id=1)
     assert report["verdict"] == APPROVE_WITH_CHANGES
+    assert report["corrections"] == ["Remove 'hand-blocked' — it is printed."]
+
+
+def test_non_legal_blocking_category_is_downgraded_to_advisory(director):
+    # A model that wrongly flags a non-legal concern as blocking must not block.
+    director._llm = FakeLLM(make_compliance_response(blocking_issues=[
+        {"category": "brand_fit", "detail": "Could be more premium.", "fixable": True}]))
+    report = director.review_proposal(_proposal(), proposal_id=1)
+    assert report["verdict"] == APPROVE
+    assert "Could be more premium." in report["advisories"]
+
+
+def test_format_report_reads_pass_with_advisories(director):
+    from onassis.compliance import format_compliance
+
+    director._llm = FakeLLM(make_compliance_response(
+        advisories=["Trademark search recommended", "Confirm font licence"]))
+    text = format_compliance(director.review_proposal(_proposal(), proposal_id=1))
+    assert text.startswith("PASS")
+    assert "Advisories" in text and "Confirm font licence" in text
+    assert "Proceed to publish." in text
 
 
 def test_never_emits_request_more_info(director):

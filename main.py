@@ -289,13 +289,16 @@ def _list_compliance(db: Database) -> None:
     for r in rows:
         scope = f"campaign #{r['campaign_id']}" if r.get("campaign_id") else (
             f"proposal #{r['proposal_id']}" if r.get("proposal_id") else "—")
-        print(f"#{r['id']}  {scope}  {r['verdict']}  score {r['compliance_score']}  "
+        outcome = (r.get("outcome") or r["verdict"]).upper()
+        print(f"#{r['id']}  {scope}  {outcome}  score {r['compliance_score']}  "
               f"(TM {r['trademark_risk']} / CR {r['copyright_risk']} / "
               f"PL {r['platform_risk']} / brand {r['brand_consistency_score']})")
         print(f"  subject: {r['subject']}")
         print(f"  {r['reasoning']}")
-        if r.get("corrections"):
-            print(f"  corrections: {'; '.join(r['corrections'])}")
+        for b in r.get("blocking_issues", []):
+            print(f"  BLOCK [{b.get('category')}]: {b.get('detail')}")
+        for a in r.get("advisories", []):
+            print(f"  • advisory: {a}")
         print("-" * 72)
     print()
 
@@ -830,6 +833,8 @@ def main() -> int:
                 elif p["status"] == "failed":
                     line += f"  (failed at {p.get('stage', '?')}: {p.get('reason', '')[:50]})"
                 print(line)
+                for advisory in p.get("advisories", []):
+                    print(f"       • advisory: {advisory}")
             if result.get("first_draft_at"):
                 print(f"\n  First Etsy draft at : {result['first_draft_at'][11:19]}  "
                       f"(live: {result.get('products_live', 0)})")

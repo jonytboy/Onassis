@@ -72,11 +72,12 @@ def test_ceo_rejects_even_when_compliance_clears(config, db):
 
 
 def test_medium_risk_clears_to_the_ceo_not_a_veto(config, db):
-    # Medium risk is APPROVE_WITH_CHANGES now — it does NOT veto; it clears the
+    # Medium risk is an advisory PASS now — it does NOT veto; it clears the
     # subject through to the CEO's capital decision (the pipeline never stalls).
     gov = _gov(config, db, make_compliance_response(platform=55))  # medium risk
     result = gov.submit(_sound_proposal())
-    assert result["compliance"]["verdict"] == APPROVE_WITH_CHANGES
+    assert result["compliance"]["verdict"] == APPROVE
+    assert result["compliance"]["advisories"]           # logged, not blocking
     assert result["final_authority"] == "CEO"
     assert result["final_verdict"] == APPROVE
     assert db.get_proposal(result["proposal_id"])["status"] == "approved"
