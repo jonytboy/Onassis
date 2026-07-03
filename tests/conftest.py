@@ -59,7 +59,43 @@ def config(tmp_path: Path):
     # Tests use short placeholder copy — disable the length floor by default so
     # only genuine truncation (markers/mid-sentence) is exercised, not brevity.
     cfg.listing = {**(cfg.listing or {}), "min_description_chars": 0}
+    # Don't cap listings in most tests (cap is exercised in a dedicated test).
+    cfg.portfolio = {**(cfg.portfolio or {}), "max_new_listings_per_day": 50}
     return cfg
+
+
+_MARKET_SIGNALS = [
+    {"keyword": "Greek Island Tote", "product_type": "tote", "theme": "aegean",
+     "search_demand": 78, "bestseller_frequency": 60, "seasonal_trend": 72,
+     "pinterest_trend": 70, "google_trend": 66, "competition": 38, "saturation": 30,
+     "keyword_difficulty": 34, "review_velocity": 45, "avg_selling_price": 26,
+     "est_monthly_sales": 40, "competitor_count": 300, "review_count": 600,
+     "rationale": "clear demand gap"},
+    {"keyword": "Slow Living Kitchen Print", "product_type": "print",
+     "theme": "slow living", "search_demand": 70, "bestseller_frequency": 55,
+     "seasonal_trend": 60, "pinterest_trend": 75, "google_trend": 64, "competition": 26,
+     "saturation": 20, "keyword_difficulty": 22, "review_velocity": 40,
+     "avg_selling_price": 18, "est_monthly_sales": 35, "competitor_count": 180,
+     "review_count": 300, "rationale": "wide open"},
+    {"keyword": "Lemon Tote", "product_type": "tote", "theme": "citrus",
+     "search_demand": 95, "bestseller_frequency": 90, "seasonal_trend": 70,
+     "pinterest_trend": 88, "google_trend": 80, "competition": 88, "saturation": 90,
+     "keyword_difficulty": 85, "review_velocity": 80, "avg_selling_price": 22,
+     "est_monthly_sales": 60, "competitor_count": 1400, "review_count": 4200,
+     "rationale": "crowded / saturated"},
+]
+
+
+class FakeSignals:
+    """Deterministic market-signals provider for offline tests."""
+
+    name = "fake"
+
+    def __init__(self, rows=None):
+        self.rows = rows if rows is not None else _MARKET_SIGNALS
+
+    def estimate(self, keywords, brand):
+        return self.rows
 
 
 @pytest.fixture

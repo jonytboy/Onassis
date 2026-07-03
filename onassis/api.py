@@ -90,6 +90,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     design_builder = daily.design
     expansion = daily.expansion
     report = daily.report
+    market = daily.market
     experiments = ExperimentEngine(config, db)
     operations = OperationsManager(config, db, cycle=daily)
     readiness = ProductionReadiness(config, db)
@@ -121,6 +122,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.readiness = readiness
     app.state.opportunities = opportunities
     app.state.report = report
+    app.state.market = market
     app.state.design_builder = design_builder
     app.state.expansion = expansion
 
@@ -313,6 +315,17 @@ def create_app(config: Config | None = None) -> FastAPI:
         """The daily scoreboard — Revenue, Profit, Best/Worst seller, and a
         per-product Expand / Hold / Kill recommendation."""
         return report.build()
+
+    @app.get("/market/report", tags=["market"])
+    def market_report(limit: int = 20) -> list[dict[str, Any]]:
+        """The latest Market Intelligence report — keywords scored by demand vs
+        competition, best opportunity first."""
+        return market.latest(limit=limit)
+
+    @app.post("/market/research", tags=["market"])
+    def market_research() -> dict[str, Any]:
+        """Run market research and return the scored keyword report."""
+        return market.research()
 
     @app.get("/publishing/status", tags=["publishing"])
     def publishing_status() -> dict[str, Any]:

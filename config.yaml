@@ -109,6 +109,22 @@ report:
   min_traffic_to_judge: 60       # views a product needs before it can be Killed
   kill_margin: 0.0               # net margin at/below this (with traffic) -> Kill
 
+# --- Market Intelligence (research before invention) -----------------
+# Scores candidate keywords/niches on demand vs competition so the CEO chooses
+# what to build from DATA, never at random. Signals are estimated by a
+# replaceable provider (LLM by default; a real Etsy/Google-Trends provider can be
+# plugged in later); the scoring + opportunity banding are deterministic.
+market:
+  default_count: 8               # keywords per research report
+  competitor_ceiling: 1500       # competitor count that maps to 100 'crowdedness'
+  review_ceiling: 5000           # review count that maps to 100 'crowdedness'
+  min_opportunity_band: HIGH     # opportunities are drawn from >= this band
+  seed_keywords: []              # optional fixed candidates; empty -> provider proposes
+
+# --- Product portfolio (never flood Etsy) ----------------------------
+portfolio:
+  max_new_listings_per_day: 2    # hard cap on NEW live/draft listings per day
+
 # --- Etsy connector (read-only, observation only) --------------------
 # Credentials come from the environment (never commit them):
 #   ETSY_API_KEY, ETSY_ACCESS_TOKEN, ETSY_SHOP_ID

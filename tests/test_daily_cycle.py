@@ -6,7 +6,9 @@ import pytest
 
 from onassis.daily_cycle import DailyCycle
 from onassis.revenue import RevenueEngine
-from tests.conftest import FakeLLM, make_compliance_response, make_content_response
+from tests.conftest import (
+    FakeLLM, FakeSignals, make_compliance_response, make_content_response,
+)
 
 _PREDICTION = {
     "hypothesis": "h", "variables": ["a"], "predicted_outcome": "o",
@@ -23,9 +25,9 @@ _LISTING = {
 _EXPECTED_STAGES = [
     "Sync Etsy", "Sync Pinterest", "Import Revenue", "Import Analytics",
     "Run Product Optimiser", "CEO Decision",
-    "Create Product Opportunity", "Build Design Package", "Generate Master Artwork",
-    "Create Product Campaign", "Expand Products", "Publish Products",
-    "Generate Marketing Content", "Promote on Pinterest",
+    "Market Research", "Create Product Opportunity", "Build Design Package",
+    "Generate Master Artwork", "Create Product Campaign", "Expand Products",
+    "Publish Products", "Generate Marketing Content", "Promote on Pinterest",
     "Daily Report", "Record Results",
 ]
 
@@ -61,9 +63,9 @@ def test_dry_run_executes_all_stages_without_side_effects(config, db):
     assert summary["status"] == "completed"
     # Product creation, marketing, and publishing are skipped in dry run.
     by_stage = {s["stage"]: s for s in summary["stages"]}
-    for stage in ("Create Product Opportunity", "Build Design Package",
-                  "Generate Master Artwork", "Create Product Campaign",
-                  "Expand Products", "Publish Products",
+    for stage in ("Market Research", "Create Product Opportunity",
+                  "Build Design Package", "Generate Master Artwork",
+                  "Create Product Campaign", "Expand Products", "Publish Products",
                   "Generate Marketing Content", "Promote on Pinterest"):
         assert by_stage[stage]["status"] == "skipped"
     # The daily report always runs — even a dry run reports the scoreboard.
@@ -131,7 +133,8 @@ def production_cycle(config, db, tmp_path):
     cycle.orchestrator.compliance._llm = FakeLLM(make_compliance_response())
     cycle.listing_factory._llm = FakeLLM(_LISTING)
     cycle.listing_factory.compliance._llm = FakeLLM(make_compliance_response())
-    # Product-first stages: opportunity discovery + design package generation.
+    # Product-first stages: market research feeds opportunity discovery.
+    cycle.market.provider = FakeSignals()
     cycle.opportunities._llm = FakeLLM({"opportunities": [_OPPORTUNITY]})
     cycle.design._llm = FakeLLM(_DESIGN)
     cycle.design.compliance._llm = FakeLLM(make_compliance_response())
@@ -266,6 +269,28 @@ def test_streaming_fixes_truncated_copy_before_the_draft(production_cycle, tmp_p
         .read_text())
     assert listing["description"].rstrip().endswith("feel.")     # complete
     assert not listing["description"].rstrip().endswith("and")   # not the truncated copy
+
+
+def test_portfolio_cap_limits_new_listings_per_day(production_cycle):
+    """Never flood Etsy — no more than max_new_listings_per_day go live per day."""
+    production_cycle.config.portfolio = {"max_new_listings_per_day": 1}
+    summary = production_cycle.run(mode="production")
+    pub = {s["stage"]: s for s in summary["stages"]}["Publish Products"]["detail"]
+    assert pub["published"] == 1                 # capped, even though >1 launched
+    assert pub["deferred_by_cap"] >= 1           # the rest are deferred, not lost
+    assert production_cycle.db.count_new_listings_today() == 1
+
+
+def test_production_researches_market_before_inventing(production_cycle):
+    summary = production_cycle.run(mode="production")
+    by_stage = {s["stage"]: s for s in summary["stages"]}
+    research = by_stage["Market Research"]
+    assert research["status"] == "ok"
+    assert research["detail"]["keywords_scored"] >= 1
+    assert research["detail"]["top"]             # top keywords surfaced to the CEO
+    # Market Research runs BEFORE the opportunity is created.
+    order = [s["stage"] for s in summary["stages"]]
+    assert order.index("Market Research") < order.index("Create Product Opportunity")
 
 
 def test_production_promotes_live_products_on_pinterest(production_cycle):

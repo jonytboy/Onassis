@@ -395,6 +395,27 @@ CREATE TABLE IF NOT EXISTS product_performance (
     net_profit    REAL    NOT NULL DEFAULT 0,
     updated_at    TEXT    NOT NULL
 );
+
+-- Market Intelligence: scored keyword/niche signals (research before invention).
+CREATE TABLE IF NOT EXISTS market_signals (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at        TEXT    NOT NULL,
+    run_at            TEXT    NOT NULL,        -- groups one research report
+    brand             TEXT,
+    keyword           TEXT    NOT NULL,
+    product_type      TEXT,
+    theme             TEXT,
+    demand            INTEGER NOT NULL DEFAULT 0,
+    competition       INTEGER NOT NULL DEFAULT 0,
+    opportunity_score INTEGER NOT NULL DEFAULT 0,
+    opportunity       TEXT,                    -- VERY HIGH | HIGH | MEDIUM | LOW
+    avg_selling_price REAL    NOT NULL DEFAULT 0,
+    est_monthly_sales INTEGER NOT NULL DEFAULT 0,
+    competitor_count  INTEGER NOT NULL DEFAULT 0,
+    review_count      INTEGER NOT NULL DEFAULT 0,
+    payload           TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_market_run ON market_signals(run_at);
 """
 
 
@@ -1267,6 +1288,17 @@ class Database:
                 conn.execute("UPDATE publications SET status = ? WHERE id = ?",
                              (status, publication_id))
 
+    def count_new_listings_today(self) -> int:
+        """New real listings (draft/published/live) created today — for the daily
+        portfolio cap that stops ONASSIS flooding Etsy."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM publications "
+                "WHERE status IN ('draft', 'published', 'live') "
+                "AND date(created_at) = date('now')"
+            ).fetchone()
+        return int(row["n"]) if row else 0
+
     def list_publications(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute("SELECT * FROM publications ORDER BY id DESC").fetchall()
@@ -1663,6 +1695,48 @@ class Database:
             rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
+    # --- Market intelligence ----------------------------------------
+
+    def insert_market_signal(self, row: dict[str, Any]) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO market_signals
+                    (created_at, run_at, brand, keyword, product_type, theme,
+                     demand, competition, opportunity_score, opportunity,
+                     avg_selling_price, est_monthly_sales, competitor_count,
+                     review_count, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utcnow(), row.get("run_at") or _utcnow(), row.get("brand"),
+                    row["keyword"], row.get("product_type"), row.get("theme"),
+                    int(row.get("demand", 0)), int(row.get("competition", 0)),
+                    int(row.get("opportunity_score", 0)), row.get("opportunity"),
+                    float(row.get("avg_selling_price", 0) or 0),
+                    int(row.get("est_monthly_sales", 0) or 0),
+                    int(row.get("competitor_count", 0) or 0),
+                    int(row.get("review_count", 0) or 0),
+                    json.dumps(row.get("payload", {})),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def top_market_signals(self, limit: int = 20) -> list[dict[str, Any]]:
+        """The latest research report's keywords, best opportunity first."""
+        with self._connect() as conn:
+            latest = conn.execute(
+                "SELECT MAX(run_at) AS run_at FROM market_signals").fetchone()
+            run_at = latest["run_at"] if latest else None
+            if not run_at:
+                return []
+            rows = conn.execute(
+                "SELECT * FROM market_signals WHERE run_at = ? "
+                "ORDER BY opportunity_score DESC, demand DESC LIMIT ?",
+                (run_at, limit),
+            ).fetchall()
+        return [_row_to_market(r) for r in rows]
+
     def upsert_product_performance(self, perf: dict[str, Any]) -> None:
         with self._connect() as conn:
             conn.execute(
@@ -1814,6 +1888,13 @@ def _row_to_decision(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
     data["policy_checks"] = json.loads(data.get("policy_checks") or "[]")
     return data
+
+
+def _row_to_market(row: sqlite3.Row) -> dict[str, Any]:
+    data = dict(row)
+    payload = json.loads(data.get("payload") or "{}")
+    # Surface the full scored signal set (payload holds the raw sub-signals).
+    return {**payload, **data, "payload": payload}
 
 
 def _row_to_compliance(row: sqlite3.Row) -> dict[str, Any]:

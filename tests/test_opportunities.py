@@ -10,9 +10,10 @@ from typing import Any
 
 import pytest
 
+from onassis.market_intelligence import MarketIntelligence
 from onassis.opportunities import OpportunityEngine, dedupe_key
 from onassis.proposals import APPROVE
-from tests.conftest import FakeLLM
+from tests.conftest import FakeLLM, FakeSignals
 
 
 def _item(**overrides: Any) -> dict[str, Any]:
@@ -45,7 +46,30 @@ def _item(**overrides: Any) -> dict[str, Any]:
 def _engine(config, db, items: list[dict[str, Any]]) -> OpportunityEngine:
     eng = OpportunityEngine(config, db)
     eng._llm = FakeLLM({"opportunities": items})
+    eng.market.provider = FakeSignals()
     return eng
+
+
+def test_opportunities_are_drawn_from_the_market_report(config, db):
+    # Research the market first; the opportunity prompt must be seeded with the
+    # highest-opportunity keywords — never a blank-slate vacuum.
+    MarketIntelligence(config, db, signals_provider=FakeSignals()).research()
+    eng = _engine(config, db, [_item()])
+    eng.generate(3)
+    prompt = eng._llm.last_prompt
+    assert "MARKET INTELLIGENCE" in prompt
+    assert "Greek Island Tote" in prompt        # a HIGH-opportunity keyword
+    assert "Slow Living Kitchen Print" in prompt
+    assert "Lemon Tote" not in prompt           # LOW opportunity — excluded
+
+
+def test_generation_without_a_report_still_works(config, db):
+    # No market report yet -> the prompt simply omits the market block (the daily
+    # cycle's Market Research stage supplies it in production).
+    eng = _engine(config, db, [_item()])
+    result = eng.generate(1)
+    assert result["generated"] == 1
+    assert "MARKET INTELLIGENCE" not in eng._llm.last_prompt
 
 
 # --- Generation + storage -------------------------------------------

@@ -11,18 +11,20 @@ the product, then promotes it.
 Order:
     1. Sync Etsy                 2. Sync Pinterest        3. Import Revenue
     4. Import Analytics          5. Run Product Optimiser 6. CEO Decision
-    7. Create Product Opportunity     (the product idea, CEO-approved)
-    8. Build Design Package           (design brief + artwork prompt, compliance-gated)
-    9. Generate Master Artwork        (the REAL master artwork + print file, QC-gated)
-   10. Create Product Campaign        (campaign + product from the opportunity)
-   11. Expand Products                (score the catalogue; CEO launches the profitable set)
-   12. Publish Products (streaming)   (per product: listing -> artwork -> compliance ->
+    7. Market Research                (score keywords; build FROM the report, not a vacuum)
+    8. Create Product Opportunity     (the product idea, drawn from the market, CEO-approved)
+    9. Build Design Package           (design brief + artwork prompt, compliance-gated)
+   10. Generate Master Artwork        (the REAL master artwork + print file, QC-gated)
+   11. Create Product Campaign        (campaign + product from the opportunity)
+   12. Expand Products                (score the catalogue; CEO launches the profitable set)
+   13. Publish Products (streaming)   (per product: listing -> artwork -> compliance ->
                                        draft -> upload images -> go live -> next; failures
-                                       isolated, never rolls back a published product)
-   13. Generate Marketing Content     (Pinterest/Instagram/Facebook — promotes the product)
-   14. Promote on Pinterest           (pins that link back to each live listing)
-   15. Daily Report                   (Revenue / Profit / Best / Worst / Recommendation)
-   16. Record Results
+                                       isolated, never rolls back a published product; a
+                                       daily portfolio cap stops ONASSIS flooding Etsy)
+   14. Generate Marketing Content     (Pinterest/Instagram/Facebook — promotes the product)
+   15. Promote on Pinterest           (pins that link back to each live listing)
+   16. Daily Report                   (Revenue / Profit / Best / Worst / Recommendation)
+   17. Record Results
 
 Revenue beats completeness: the first sellable product reaches Etsy as early as
 possible, and one product's failure never cancels the others.
@@ -49,6 +51,7 @@ from onassis.design_package import DesignPackageBuilder
 from onassis.expansion import RevenueExpansionEngine
 from onassis.listing_factory import ListingFactory
 from onassis.logger import get_logger
+from onassis.market_intelligence import MarketIntelligence
 from onassis.opportunities import OpportunityEngine
 from onassis.optimiser import ProductOptimiser
 from onassis.orchestrator import Orchestrator
@@ -74,6 +77,7 @@ class DailyCycle:
         self.profit = ProfitEngine(config, db)
         self.analytics = AnalyticsEngine(config, db)
         self.optimiser = ProductOptimiser(config, db)
+        self.market = MarketIntelligence(config, db)
         self.opportunities = OpportunityEngine(config, db)
         self.design = DesignPackageBuilder(config, db)
         self.expansion = RevenueExpansionEngine(config, db)
@@ -105,7 +109,8 @@ class DailyCycle:
         self._stage(stages, "Import Analytics", self._import_analytics, ctx)
         self._stage(stages, "Run Product Optimiser", self._run_optimiser, ctx)
         self._stage(stages, "CEO Decision", self._ceo_decision, ctx)
-        # --- Product first: create the product, then promote it. ---
+        # --- Product first: research the market, then build FROM it. ---
+        self._stage(stages, "Market Research", self._market_research, ctx)
         self._stage(stages, "Create Product Opportunity", self._create_opportunity, ctx)
         self._stage(stages, "Build Design Package", self._build_design_package, ctx)
         self._stage(stages, "Generate Master Artwork", self._generate_master_artwork, ctx)
@@ -219,12 +224,29 @@ class DailyCycle:
         ctx["approved"] = verdict == "APPROVE"
         return {"status": "ok", "detail": {"verdict": verdict, "approved": ctx["approved"]}}
 
+    def _market_research(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """Research the market BEFORE inventing anything — the CEO builds from the
+        highest-opportunity keywords, never at random."""
+        if ctx["dry"]:
+            return {"status": "skipped", "detail": "dry run"}
+        # Only research when we need fresh ideas (the backlog is empty).
+        if self.opportunities.top(limit=1):
+            return {"status": "skipped", "detail": "backlog not empty — using it"}
+        report = self.market.research()
+        ctx["market"] = report
+        top = self.market.top(5, min_band=self.opportunities.min_opportunity_band)
+        return {"status": "ok", "detail": {
+            "keywords_scored": report["count"],
+            "top": [{"keyword": k["keyword"], "demand": k["demand"],
+                     "competition": k["competition"], "opportunity": k["opportunity"]}
+                    for k in top]}}
+
     def _create_opportunity(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """Pick (or generate) a CEO-approved product opportunity to build."""
         if ctx["dry"]:
             return {"status": "skipped", "detail": "dry run"}
         if not self.opportunities.top(limit=1):
-            self.opportunities.generate()  # backlog empty — discover ideas
+            self.opportunities.generate()  # backlog empty — discover ideas from the market
         choice = self.opportunities.select_next(agent_name="DailyCycle")
         if choice is None:
             return {"status": "skipped", "detail": "no product opportunity available"}
@@ -330,6 +352,20 @@ class DailyCycle:
         if not specs:
             return {"status": "skipped", "detail": "no approved products to publish"}
 
+        # Portfolio guard — never flood Etsy. Cap NEW live/draft listings per day.
+        cap = int((self.config.portfolio or {}).get("max_new_listings_per_day", 2))
+        already = self.db.count_new_listings_today()
+        remaining = max(0, cap - already)
+        capped = 0
+        if len(specs) > remaining:
+            capped = len(specs) - remaining
+            log.info("[stream] Portfolio cap: %d/%d listing(s) already today; "
+                     "publishing %d, deferring %d.", already, cap, remaining, capped)
+            specs = specs[:remaining]
+        if not specs:
+            return {"status": "skipped",
+                    "detail": f"daily listing cap reached ({already}/{cap})"}
+
         design_package = ctx.get("design_package")
         go_live = self.publisher.auto_go_live
         stream: list[dict[str, Any]] = []
@@ -403,7 +439,8 @@ class DailyCycle:
         status = "ok" if published else ("failed" if failed else "skipped")
         return {"status": status, "detail": {
             "products": len(specs), "published": published, "live": live,
-            "failed": len(failed), "first_draft_at": first_draft_at, "timeline": stream}}
+            "failed": len(failed), "deferred_by_cap": capped,
+            "first_draft_at": first_draft_at, "timeline": stream}}
 
     def _generate_content(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """Generate marketing content LAST — only to promote the new product."""

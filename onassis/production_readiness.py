@@ -223,10 +223,20 @@ class ProductionReadiness:
                          "Scores the product catalogue per design; CEO launches the "
                          "profitable set; learns from sales. Deterministic."),
             self._module(
+                "onassis/market_intelligence.py", "Market Intelligence Engine",
+                READY if ai else PARTIAL,
+                "Scores candidate keywords on demand vs competition (opportunity "
+                "banding) so products are drawn from DATA, not invented at random; "
+                "scoring/banding deterministic, signals from a replaceable provider "
+                "(LLM by default; real Etsy/Google-Trends pluggable)." if ai
+                else "Scoring/banding/persistence work; signal estimation needs the "
+                     "AI provider (or a real market-data provider).",
+                list(ai_b)),
+            self._module(
                 "onassis/opportunities.py", "Product Opportunity Engine",
                 READY if ai else PARTIAL,
-                "Discovers ranked product opportunities (the dev backlog); "
-                "ranking/dedup/CEO selection are deterministic." if ai
+                "Discovers ranked product opportunities DRAWN FROM the Market "
+                "Intelligence report; ranking/dedup/CEO selection are deterministic." if ai
                 else "Backlog, ranking, dedup and CEO selection work; idea "
                      "generation needs the AI provider.",
                 list(ai_b)),

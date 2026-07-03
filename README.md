@@ -306,6 +306,33 @@ python main.py --optimise      # the single highest-value product action
 `GET /optimiser` returns the product analysed, recommendation, expected ROI,
 reasoning, confidence (and the CEO's verdict).
 
+## Market Intelligence Engine — research before invention
+
+The Market Intelligence Engine (`onassis/market_intelligence.py`) makes ONASSIS
+**stop inventing products in a vacuum**. Before any opportunity is created it
+builds a **Market Intelligence Report**: it scores candidate keywords/niches on
+the signals a seller actually cares about — Etsy search demand, bestseller
+frequency, review counts + velocity, seasonal / Pinterest / Google-Trends
+momentum, competition, saturation, competitor count, keyword difficulty, average
+price and estimated monthly sales — then derives, **deterministically**,
+`demand`, `competition`, and an `opportunity` band:
+
+```
+"Lemon Tote"                 Demand 83  Competition 88  Opportunity: LOW
+"Greek Island Tote"          Demand 64  Competition 31  Opportunity: HIGH
+"Slow Living Kitchen Print"  Demand 59  Competition 20  Opportunity: HIGH
+```
+
+Opportunity = `demand − competition`, banded VERY HIGH / HIGH / MEDIUM / LOW. The
+raw signals come from a **replaceable `SignalsProvider`** (the LLM by default; a
+real Etsy / Google-Trends provider can be registered later with no engine
+change); the scoring, banding and ranking are pure deterministic functions, so
+the report is explainable and auditable. Every row is stored. The **Opportunity
+Engine draws products FROM the highest-opportunity keywords** (`≥ HIGH` by
+default) — the CEO chooses from data, never at random. In the daily cycle a
+**Market Research** stage runs first; also `python main.py --market` and
+`GET /market/report`.
+
 ## Product Opportunity Engine — discover ideas before any design work
 
 The Opportunity Engine (`onassis/opportunities.py`) decides **what is worth

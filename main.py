@@ -98,6 +98,10 @@ def _parse_args() -> argparse.Namespace:
         help="Daily scoreboard: Revenue / Profit / Best / Worst / Recommendation.",
     )
     parser.add_argument(
+        "--market", action="store_true",
+        help="Build a Market Intelligence report (demand vs competition per keyword).",
+    )
+    parser.add_argument(
         "--etsy-sync", action="store_true", help="Import orders/listings from Etsy (read-only)."
     )
     parser.add_argument(
@@ -451,6 +455,15 @@ def main() -> int:
         from onassis.reporting import DailyReport
 
         _show_report(DailyReport(config, db).build())
+        return 0
+
+    if args.market:
+        from onassis.market_intelligence import MarketIntelligence
+
+        mi = MarketIntelligence(config, db)
+        mi.research()
+        print("\n" + mi.format_report() + "\n"
+              "The CEO builds opportunities from the highest-opportunity keywords.\n")
         return 0
 
     if args.etsy_login:

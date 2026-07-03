@@ -8,7 +8,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from onassis.api import create_app
-from tests.conftest import FakeLLM, make_compliance_response, make_content_response
+from tests.conftest import (
+    FakeLLM, FakeSignals, make_compliance_response, make_content_response,
+)
 
 _PREDICTION = {
     "hypothesis": "Authentic slow-living content outperforms aspirational yacht content.",
@@ -86,6 +88,7 @@ def app_and_client(config, sample_brief, tmp_path):
     orch.brain._llm = FakeLLM(_PREDICTION)
     orch.compliance._llm = FakeLLM(make_compliance_response())
     # Product-first stages: opportunity, design package, Etsy listing.
+    app.state.daily.market.provider = FakeSignals()   # offline market research
     app.state.opportunities._llm = FakeLLM(_OPPORTUNITIES)
     app.state.opportunities.generate()  # seed the backlog
     app.state.design_builder._llm = FakeLLM(_DESIGN)
@@ -361,6 +364,16 @@ def test_publish_unapproved_blocked(app_and_client):
     assert client.post(f"/publish/{cid}").json()["status"] == "blocked"
 
 
+def test_market_endpoints(app_and_client):
+    app, client = app_and_client
+    app.state.market.provider = FakeSignals()
+    research = client.post("/market/research").json()
+    assert research["count"] == 3
+    report = client.get("/market/report").json()
+    assert report and report[0]["opportunity_score"] >= report[-1]["opportunity_score"]
+    assert {"keyword", "demand", "competition", "opportunity"} <= set(report[0])
+
+
 def test_daily_report_endpoint(app_and_client):
     _, client = app_and_client
     r = client.get("/report/daily")
@@ -497,7 +510,7 @@ def test_daily_run_and_status_history(app_and_client):
     assert r.status_code == 200
     body = r.json()
     assert body["mode"] == "dry_run"
-    assert len(body["stages"]) == 16
+    assert len(body["stages"]) == 17
 
     status = client.get("/daily/status").json()
     assert status["mode"] == "dry_run"
@@ -691,6 +704,7 @@ def test_swagger_docs_available(app_and_client):
                  "/publish/{campaign_id}", "/publishing/status",
                  "/launch/approve/{campaign_id}", "/launch/status/{campaign_id}",
                  "/launch/pending", "/report/daily",
+                 "/market/report", "/market/research",
                  "/analytics", "/analytics/product/{product_id}",
                  "/analytics/campaign/{campaign_id}",
                  "/experiments", "/experiments/{experiment_id}", "/experiments/active",

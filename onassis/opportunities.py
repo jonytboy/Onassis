@@ -39,6 +39,7 @@ from onassis.config import Config
 from onassis.database import Database
 from onassis.llm import LLMClient
 from onassis.logger import get_logger
+from onassis.market_intelligence import MarketIntelligence
 from onassis.proposals import Proposal
 
 log = get_logger(__name__)
@@ -134,6 +135,11 @@ class OpportunityEngine:
         self.dev_cost = float(self.cfg.get("development_cost", 12.0))
         self.revenue_potential = float(self.cfg.get("revenue_potential", 250.0))
         self.ceo = CEOAgent(config, db)
+        # Products are drawn from the Market Intelligence report — never invented
+        # in a vacuum. The CEO then chooses from the highest-opportunity keywords.
+        self.market = MarketIntelligence(config, db)
+        self.min_opportunity_band = str(
+            (config.market or {}).get("min_opportunity_band", "HIGH"))
         self._llm: LLMClient | None = None
 
     @property
@@ -180,9 +186,15 @@ class OpportunityEngine:
         count = int(count or self.default_count)
         brand = brand or (self.config.brand or {}).get("name", "ONASSIS")
 
+        # Opportunities are drawn FROM the Market Intelligence report — the daily
+        # cycle's Market Research stage (or --generate-opportunities) builds it
+        # first, so the CEO never chooses from randomly invented niches.
+        market = (self.market.top(count, min_band=self.min_opportunity_band)
+                  or self.market.top(count))
+
         gen = self.llm.generate_json(
             system=_SYSTEM,
-            prompt=self._prompt(count, brand, season, focus),
+            prompt=self._prompt(count, brand, season, focus, market),
             schema=_SCHEMA,
         )
         raw = gen.get("opportunities", []) or []
@@ -333,7 +345,8 @@ class OpportunityEngine:
 
     # --- Prompt -----------------------------------------------------
 
-    def _prompt(self, count: int, brand: str, season: str | None, focus: str | None) -> str:
+    def _prompt(self, count: int, brand: str, season: str | None, focus: str | None,
+                market: list[dict[str, Any]] | None = None) -> str:
         brand_cfg = self.config.brand or {}
         existing = self.db.list_opportunities()
         # Tell the model what already exists so it doesn't repeat concepts.
@@ -341,6 +354,19 @@ class OpportunityEngine:
             f"{o['product_type']} / {o['theme']} / {o['emotional_angle']}"
             for o in existing[:40]
         ) or "none yet"
+        market_block = ""
+        if market:
+            lines = "\n".join(
+                f'- "{m["keyword"]}" (demand {m["demand"]}, competition {m["competition"]}, '
+                f'{m["opportunity"]}, ~£{m.get("avg_selling_price", 0):.0f})'
+                for m in market
+            )
+            market_block = (
+                "\nMARKET INTELLIGENCE — build opportunities FROM these researched "
+                "high-opportunity keywords (do NOT invent unrelated niches). Base each "
+                "opportunity on one of these keywords and set its `search_intent` to that "
+                f"keyword:\n{lines}\n"
+            )
         return f"""Generate {count} distinct, commercially viable product opportunities.
 
 BRAND
@@ -349,7 +375,7 @@ BRAND
 - Pillars: {", ".join(brand_cfg.get('content_pillars', [])) or 'coastal living, slow luxury, design'}
 {f"- Season to weight toward: {season}" if season else ""}
 {f"- Focus area: {focus}" if focus else ""}
-
+{market_block}
 ALREADY IN THE BACKLOG — do NOT repeat these concepts:
 {avoid}
 
