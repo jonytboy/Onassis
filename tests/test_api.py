@@ -536,7 +536,7 @@ def test_daily_run_and_status_history(app_and_client):
     assert r.status_code == 200
     body = r.json()
     assert body["mode"] == "dry_run"
-    assert len(body["stages"]) == 19
+    assert len(body["stages"]) == 20
 
     status = client.get("/daily/status").json()
     assert status["mode"] == "dry_run"
@@ -733,6 +733,7 @@ def test_swagger_docs_available(app_and_client):
                  "/ceo/dashboard", "/learning/daily", "/portfolio/reviews",
                  "/portfolio/archived", "/traffic/schedule", "/traffic/funnel",
                  "/marketing/{product_key}",
+                 "/fulfilment/status", "/fulfilment/run",
                  "/market/report", "/market/research",
                  "/analytics", "/analytics/product/{product_id}",
                  "/analytics/campaign/{campaign_id}",

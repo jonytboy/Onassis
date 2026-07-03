@@ -195,6 +195,21 @@ portfolio:
   max_improve_cycles: 1          # IMPROVE windows before a stagnant listing is retired
   reconsider_band: "VERY HIGH"   # only revive an archived type at/above this market band
 
+# --- Gelato fulfilment (remove the human from fulfilment) ------------
+# When an Etsy sale is paid, ONASSIS submits it to Gelato for production and
+# shipping, tracks it, and records the ACTUAL production cost (booking the
+# true-vs-estimate difference to the ledger). Credentials come from the env:
+#   GELATO_API_KEY, GELATO_FILE_BASE_URL (a public base URL Gelato can fetch the
+#   print files from — e.g. a CDN or the API server serving the exports dir).
+gelato:
+  base_url: "https://order.gelatoapis.com/v4"
+  currency: GBP
+  customer_reference_id: "onassis"     # your Gelato customer reference
+  max_retries: 3                       # bounded retries on a transient API error
+  retry_backoff_seconds: 0             # linear backoff between retries (0 in tests)
+  # api_key + file_base_url are read from GELATO_API_KEY / GELATO_FILE_BASE_URL.
+  file_base_url: null                  # public https base that serves exports/<cid>/<key>/print_file.png
+
 # --- Etsy connector (read-only, observation only) --------------------
 # Credentials come from the environment (never commit them):
 #   ETSY_API_KEY, ETSY_ACCESS_TOKEN, ETSY_SHOP_ID

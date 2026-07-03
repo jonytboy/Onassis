@@ -193,7 +193,8 @@ CREATE TABLE IF NOT EXISTS orders (
     gross_profit     REAL    NOT NULL DEFAULT 0,
     net_profit       REAL    NOT NULL DEFAULT 0,
     profit_margin    REAL    NOT NULL DEFAULT 0,
-    roi              REAL    NOT NULL DEFAULT 0
+    roi              REAL    NOT NULL DEFAULT 0,
+    shipping_address TEXT                          -- JSON recipient (for fulfilment)
 );
 
 CREATE INDEX IF NOT EXISTS idx_orders_sale_date ON orders(sale_date);
@@ -513,6 +514,34 @@ CREATE TABLE IF NOT EXISTS traffic_funnel (
 );
 CREATE INDEX IF NOT EXISTS idx_funnel_date ON traffic_funnel(funnel_date);
 CREATE INDEX IF NOT EXISTS idx_funnel_product ON traffic_funnel(product_key);
+
+-- Gelato fulfilment: one row per paid Etsy order sent to production. Tracks the
+-- Gelato order id, production status, tracking, and the ACTUAL production cost
+-- (which replaces the estimate in the ledger). order_ref is UNIQUE so an order
+-- is never fulfilled twice.
+CREATE TABLE IF NOT EXISTS fulfilments (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at       TEXT    NOT NULL,
+    updated_at       TEXT,
+    order_ref        TEXT    UNIQUE,      -- canonical order ref (dedupe key)
+    order_id         INTEGER,            -- orders.id
+    product_id       TEXT,               -- sku ("<campaign>-<product_key>")
+    product_key      TEXT,
+    gelato_uid       TEXT,
+    gelato_order_id  TEXT,
+    status           TEXT    NOT NULL DEFAULT 'pending',  -- pending|created|failed|in_production|shipped|delivered|canceled
+    tracking_number  TEXT,
+    tracking_url     TEXT,
+    carrier          TEXT,
+    estimated_cost   REAL    NOT NULL DEFAULT 0,
+    actual_cost      REAL,               -- NULL until Gelato reports it
+    cost_booked      INTEGER NOT NULL DEFAULT 0,  -- 1 once the ledger adjustment is made
+    currency         TEXT,
+    attempts         INTEGER NOT NULL DEFAULT 0,
+    last_error       TEXT,
+    shipped_at       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_fulfilments_status ON fulfilments(status);
 """
 
 
@@ -551,7 +580,8 @@ class Database:
             # Idempotent additive column migrations (CREATE TABLE IF NOT EXISTS
             # can't add columns to a pre-existing table).
             for table, column, decl in (("products", "product_key", "TEXT"),
-                                        ("products", "launched_at", "TEXT")):
+                                        ("products", "launched_at", "TEXT"),
+                                        ("orders", "shipping_address", "TEXT")):
                 try:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
                 except sqlite3.OperationalError:
@@ -1140,8 +1170,8 @@ class Database:
                      campaign_id, platform, sale_price, currency, quantity,
                      ai_cost, advertising_cost, production_cost, marketplace_fees,
                      payment_fees, other_costs, gross_revenue, total_cost,
-                     gross_profit, net_profit, profit_margin, roi)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     gross_profit, net_profit, profit_margin, roi, shipping_address)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     _utcnow(),
@@ -1166,6 +1196,9 @@ class Database:
                     float(order["net_profit"]),
                     float(order["profit_margin"]),
                     float(order["roi"]),
+                    (json.dumps(order["shipping_address"])
+                     if isinstance(order.get("shipping_address"), (dict, list))
+                     else order.get("shipping_address")),
                 ),
             )
             order_id = int(cur.lastrowid)
@@ -1929,6 +1962,92 @@ class Database:
         with self._connect() as conn:
             rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
+
+    # --- Fulfilment (Gelato) ----------------------------------------
+
+    def insert_fulfilment(self, f: dict[str, Any]) -> int | None:
+        """Create a fulfilment record. Returns None if the order_ref already has one."""
+        with self._connect() as conn:
+            try:
+                cur = conn.execute(
+                    """
+                    INSERT INTO fulfilments
+                        (created_at, updated_at, order_ref, order_id, product_id,
+                         product_key, gelato_uid, gelato_order_id, status,
+                         tracking_number, tracking_url, carrier, estimated_cost,
+                         actual_cost, cost_booked, currency, attempts, last_error,
+                         shipped_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        _utcnow(), _utcnow(), f.get("order_ref"), f.get("order_id"),
+                        f.get("product_id"), f.get("product_key"), f.get("gelato_uid"),
+                        f.get("gelato_order_id"), f.get("status", "pending"),
+                        f.get("tracking_number"), f.get("tracking_url"), f.get("carrier"),
+                        float(f.get("estimated_cost", 0) or 0),
+                        f.get("actual_cost"), 1 if f.get("cost_booked") else 0,
+                        f.get("currency"), int(f.get("attempts", 0) or 0),
+                        f.get("last_error"), f.get("shipped_at"),
+                    ),
+                )
+                return int(cur.lastrowid)
+            except sqlite3.IntegrityError:
+                return None
+
+    def update_fulfilment(self, fulfilment_id: int, fields: dict[str, Any]) -> bool:
+        allowed = {"status", "gelato_order_id", "tracking_number", "tracking_url",
+                   "carrier", "actual_cost", "cost_booked", "attempts", "last_error",
+                   "shipped_at", "estimated_cost", "currency"}
+        sets = {k: v for k, v in fields.items() if k in allowed}
+        if not sets:
+            return False
+        sets["updated_at"] = _utcnow()
+        assignments = ", ".join(f"{k} = ?" for k in sets)
+        with self._connect() as conn:
+            cur = conn.execute(
+                f"UPDATE fulfilments SET {assignments} WHERE id = ?",
+                (*sets.values(), fulfilment_id),
+            )
+            return cur.rowcount > 0
+
+    def get_fulfilment(self, order_ref: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM fulfilments WHERE order_ref = ?", (order_ref,)).fetchone()
+        return dict(row) if row else None
+
+    def get_fulfilment_by_id(self, fulfilment_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM fulfilments WHERE id = ?", (fulfilment_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_fulfilments(self, status: str | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM fulfilments"
+        params: list[Any] = []
+        if status is not None:
+            sql += " WHERE status = ?"
+            params.append(status)
+        sql += " ORDER BY id DESC"
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def fulfilled_order_refs(self) -> set[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT order_ref FROM fulfilments WHERE order_ref IS NOT NULL").fetchall()
+        return {r["order_ref"] for r in rows}
+
+    def get_publication_by_listing_id(self, listing_id: str) -> dict[str, Any] | None:
+        """The publication that owns an Etsy listing id (links listing -> product)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM publications WHERE listing_id = ? "
+                "AND status IN ('draft','published','live') ORDER BY id DESC LIMIT 1",
+                (str(listing_id),),
+            ).fetchone()
+        return dict(row) if row else None
 
     # --- Portfolio lifecycle reviews --------------------------------
 

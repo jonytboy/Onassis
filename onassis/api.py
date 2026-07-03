@@ -95,6 +95,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     portfolio = daily.portfolio
     traffic = daily.traffic
     ceo = daily.dashboard
+    gelato = daily.gelato
     experiments = ExperimentEngine(config, db)
     operations = OperationsManager(config, db, cycle=daily)
     readiness = ProductionReadiness(config, db)
@@ -133,6 +134,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.portfolio = portfolio
     app.state.traffic = traffic
     app.state.ceo = ceo
+    app.state.gelato = gelato
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""
@@ -361,6 +363,16 @@ def create_app(config: Config | None = None) -> FastAPI:
     def marketing_assets(product_key: str) -> list[dict[str, Any]]:
         """The stored marketing kit (per channel) for a product."""
         return db.list_marketing_assets(product_key=product_key)
+
+    @app.get("/fulfilment/status", tags=["fulfilment"])
+    def fulfilment_status() -> dict[str, Any]:
+        """Gelato fulfilment summary — counts by status + recent orders."""
+        return gelato.status()
+
+    @app.post("/fulfilment/run", tags=["fulfilment"])
+    def fulfilment_run() -> dict[str, Any]:
+        """Submit new paid orders to Gelato and poll production status/tracking."""
+        return {"submit": gelato.fulfil_new_orders(), "sync": gelato.sync_status()}
 
     @app.get("/market/report", tags=["market"])
     def market_report(limit: int = 20) -> list[dict[str, Any]]:

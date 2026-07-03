@@ -23,7 +23,8 @@ _LISTING = {
 }
 
 _EXPECTED_STAGES = [
-    "Sync Etsy", "Sync Pinterest", "Import Revenue", "Import Analytics",
+    "Sync Etsy", "Sync Pinterest", "Import Revenue", "Fulfil Orders",
+    "Import Analytics",
     "Learn & Review Portfolio", "Run Product Optimiser", "CEO Decision",
     "Market Research", "Create Product Opportunity", "Build Design Package",
     "Generate Master Artwork", "Create Product Campaign", "Expand Products",

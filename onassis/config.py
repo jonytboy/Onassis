@@ -82,6 +82,7 @@ class Config:
     thumbnails: dict[str, Any] = field(default_factory=dict)
     marketing: dict[str, Any] = field(default_factory=dict)
     traffic: dict[str, Any] = field(default_factory=dict)
+    gelato: dict[str, Any] = field(default_factory=dict)
 
     # secrets / future integrations
     anthropic_api_key: str | None = None
@@ -147,6 +148,12 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
     thumbnails = raw.get("thumbnails", {})
     marketing = raw.get("marketing", {})
     traffic = raw.get("traffic", {})
+    gelato = raw.get("gelato", {})
+    gelato = {
+        **gelato,
+        "api_key": _env("GELATO_API_KEY", gelato.get("api_key")),
+        "file_base_url": _env("GELATO_FILE_BASE_URL", gelato.get("file_base_url")),
+    }
     etsy = raw.get("etsy", {})
     pinterest = raw.get("pinterest", {})
     pinterest = {
@@ -213,5 +220,6 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         thumbnails=thumbnails,
         marketing=marketing,
         traffic=traffic,
+        gelato=gelato,
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
     )

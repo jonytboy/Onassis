@@ -227,6 +227,24 @@ class EtsyConnector(RevenueConnector):
             "ai_cost": 0.0,
             "advertising_cost": 0.0,
             "other_costs": 0.0,
+            # The recipient — carried so the Gelato Fulfilment Engine can ship it.
+            "shipping_address": self._recipient(receipt),
+        }
+
+    @staticmethod
+    def _recipient(receipt: dict[str, Any]) -> dict[str, Any]:
+        """Map an Etsy receipt's shipping fields to a normalised recipient."""
+        r = receipt or {}
+        return {
+            "name": r.get("name"),
+            "first_line": r.get("first_line"),
+            "second_line": r.get("second_line"),
+            "city": r.get("city"),
+            "state": r.get("state"),
+            "zip": r.get("zip"),
+            "country_iso": r.get("country_iso"),
+            "email": r.get("buyer_email") or r.get("email"),
+            "formatted_address": r.get("formatted_address"),
         }
 
     @staticmethod

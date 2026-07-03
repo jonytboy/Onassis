@@ -10,26 +10,27 @@ the product, then promotes it.
 
 Order:
     1. Sync Etsy                 2. Sync Pinterest        3. Import Revenue
-    4. Import Analytics
-    5. Learn & Review Portfolio       (what sold/didn't/why; 30-day KEEP/IMPROVE/RETIRE)
-    6. Run Product Optimiser     7. CEO Decision
-    8. Market Research                (score keywords; build FROM the report, not a vacuum)
-    9. Create Product Opportunity     (the product idea, drawn from the market, CEO-approved)
-   10. Build Design Package           (design brief + artwork prompt, compliance-gated)
-   11. Generate Master Artwork        (the REAL master artwork + print file, QC-gated)
-   12. Create Product Campaign        (campaign + product from the opportunity)
-   13. Expand Products                (score the catalogue; CEO launches the profitable set)
-   14. Publish Products (streaming)   (per product: listing -> artwork -> compliance ->
+    4. Fulfil Orders                  (paid Etsy orders -> Gelato production, true cost)
+    5. Import Analytics
+    6. Learn & Review Portfolio       (what sold/didn't/why; 30-day KEEP/IMPROVE/RETIRE)
+    7. Run Product Optimiser     8. CEO Decision
+    9. Market Research                (score keywords; build FROM the report, not a vacuum)
+   10. Create Product Opportunity     (the product idea, drawn from the market, CEO-approved)
+   11. Build Design Package           (design brief + artwork prompt, compliance-gated)
+   12. Generate Master Artwork        (the REAL master artwork + print file, QC-gated)
+   13. Create Product Campaign        (campaign + product from the opportunity)
+   14. Expand Products                (score the catalogue; CEO launches the profitable set)
+   15. Publish Products (streaming)   (per product: listing -> artwork -> compliance ->
                                        draft -> upload images -> go live -> next; failures
                                        isolated, never rolls back a published product; a
                                        daily portfolio cap stops ONASSIS flooding Etsy)
-   15. Generate Marketing Content     (campaign content + a full per-product marketing kit:
+   16. Generate Marketing Content     (campaign content + a full per-product marketing kit:
                                        Pinterest/Instagram/Facebook/Blog/Email -> the listing)
-   16. Promote on Pinterest           (Traffic Engine: schedule 5-10 pins/day, distribute,
+   17. Promote on Pinterest           (Traffic Engine: schedule 5-10 pins/day, distribute,
                                        log the funnel Impressions->Clicks->Visits->Sales)
-   17. Daily Report                   (Revenue / Profit / Best / Worst / Recommendation)
-   18. CEO Dashboard                  (money, and nothing else — the morning scoreboard)
-   19. Record Results
+   18. Daily Report                   (Revenue / Profit / Best / Worst / Recommendation)
+   19. CEO Dashboard                  (money, and nothing else — the morning scoreboard)
+   20. Record Results
 
 Revenue beats completeness: the first sellable product reaches Etsy as early as
 possible, and one product's failure never cancels the others.
@@ -50,6 +51,7 @@ from onassis.analytics import AnalyticsEngine
 from onassis.artwork import ArtworkStudio
 from onassis.config import Config
 from onassis.connectors.etsy import EtsyConnector
+from onassis.connectors.gelato import GelatoConnector
 from onassis.connectors.pinterest import PinterestConnector
 from onassis.dashboard import CEODashboard
 from onassis.database import Database
@@ -82,6 +84,7 @@ class DailyCycle:
         self.db = db
         # Reuse the existing, independent modules — coordinate, don't replace.
         self.etsy = EtsyConnector(config, db)
+        self.gelato = GelatoConnector(config, db)
         self.pinterest = PinterestConnector(config)
         self.revenue = RevenueEngine(config, db)
         self.profit = ProfitEngine(config, db)
@@ -122,6 +125,7 @@ class DailyCycle:
         self._stage(stages, "Sync Etsy", self._sync_etsy, ctx)
         self._stage(stages, "Sync Pinterest", self._sync_pinterest, ctx)
         self._stage(stages, "Import Revenue", self._import_revenue, ctx)
+        self._stage(stages, "Fulfil Orders", self._fulfil_orders, ctx)
         self._stage(stages, "Import Analytics", self._import_analytics, ctx)
         self._stage(stages, "Learn & Review Portfolio", self._learn_and_review, ctx)
         self._stage(stages, "Run Product Optimiser", self._run_optimiser, ctx)
@@ -172,6 +176,7 @@ class DailyCycle:
             "learning": ctx.get("learning"),
             "funnel": ctx.get("funnel"),
             "dashboard": ctx.get("dashboard"),
+            "fulfilment": ctx.get("fulfilment"),
         }
 
     @staticmethod
@@ -224,6 +229,22 @@ class DailyCycle:
         profit = self.revenue.company_profit()
         ctx["revenue"] = profit
         return {"status": "ok", "detail": profit}
+
+    def _fulfil_orders(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """Turn paid Etsy orders into Gelato production orders, then poll status +
+        tracking and record the ACTUAL production cost. Safe no-op until Gelato is
+        configured. Runs in both modes — fulfilment is a real customer obligation."""
+        if not self.gelato.can_fulfil:
+            return {"status": "skipped", "detail": "Gelato not configured for fulfilment"}
+        submit = self.gelato.fulfil_new_orders()
+        sync = self.gelato.sync_status()
+        ctx["fulfilment"] = {"submitted": submit.get("submitted", 0),
+                             "failed": submit.get("failed", 0),
+                             "status_updated": sync.get("updated", 0)}
+        status = "ok" if (submit.get("submitted") or sync.get("updated")) else "skipped"
+        if submit.get("failed"):
+            status = "ok"  # failures are recorded per-order, not a stage failure
+        return {"status": status, "detail": ctx["fulfilment"]}
 
     def _import_analytics(self, ctx: dict[str, Any]) -> dict[str, Any]:
         return {"status": "ok", "detail": self.analytics.collect()}
