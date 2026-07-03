@@ -91,6 +91,27 @@ def test_fixable_violation_is_approve_with_changes(director):
     assert report["corrections"] == ["Remove 'hand-blocked' — it is printed."]
 
 
+def test_truncation_advisory_is_promoted_to_a_fixable_block(director):
+    # If the model flags unfinished/truncated copy as an "advisory", it must be
+    # promoted to a fixable block — an incomplete listing must never ship.
+    director._llm = FakeLLM(make_compliance_response(
+        advisories=["The description appears truncated mid-sentence."]))
+    report = director.review_proposal(_proposal(), proposal_id=1)
+    assert report["verdict"] == APPROVE_WITH_CHANGES
+    assert report["blocking_issues"][0]["category"] == "incomplete_copy"
+    assert report["advisories"] == []                       # moved out of advisories
+
+
+def test_genuine_advisories_are_not_promoted(director):
+    # Trademark-search / source-file / font-licence notes stay advisory (PASS).
+    director._llm = FakeLLM(make_compliance_response(advisories=[
+        "A trademark search is recommended", "Keep the artwork source files",
+        "Confirm the font licence"]))
+    report = director.review_proposal(_proposal(), proposal_id=1)
+    assert report["verdict"] == APPROVE
+    assert len(report["advisories"]) == 3 and report["blocking_issues"] == []
+
+
 def test_non_legal_blocking_category_is_downgraded_to_advisory(director):
     # A model that wrongly flags a non-legal concern as blocking must not block.
     director._llm = FakeLLM(make_compliance_response(blocking_issues=[

@@ -41,6 +41,46 @@ log = get_logger(__name__)
 
 _TAG_COUNT = 13
 
+# Markers that a piece of customer-facing copy is unfinished / truncated.
+_TRUNCATION_MARKERS = ("…", "...")
+# A finished sentence ends with one of these; anything else reads as cut off.
+_SENTENCE_END = tuple(".!?") + ('"', "'", "”", "’", ")", "]")
+# Trailing words that mean the sentence stops mid-thought.
+_MID_THOUGHT = {
+    "and", "or", "but", "the", "a", "an", "with", "to", "of", "for", "in", "on",
+    "at", "by", "from", "as", "is", "are", "your", "our", "this", "that", "&",
+}
+
+
+def _safe_title(raw: str, limit: int = 140) -> str:
+    """Trim a title to ``limit`` chars WITHOUT cutting a word in half."""
+    t = " ".join((raw or "").split())
+    if len(t) <= limit:
+        return t
+    cut = t[:limit].rstrip()
+    if " " in cut:                      # back off to the last whole word
+        cut = cut[:cut.rfind(" ")]
+    return cut.strip().rstrip(",-;:")
+
+
+def _looks_truncated(text: str) -> bool:
+    """True if a description reads as unfinished (cut off mid-sentence/word)."""
+    t = (text or "").strip()
+    if not t:
+        return True
+    if t.endswith(_TRUNCATION_MARKERS) or t.endswith(("-", ",", ";", ":")):
+        return True
+    last = t.split()[-1].strip(".,;:!?\"'()[]").lower()
+    if last in _MID_THOUGHT:
+        return True
+    return not t.endswith(_SENTENCE_END)   # prose should end with terminal punctuation
+
+
+def _token_truncated(token: str) -> bool:
+    """True if a short token (tag/material) looks cut off or empty."""
+    s = str(token).strip()
+    return (not s) or s.endswith(_TRUNCATION_MARKERS) or s.endswith("-")
+
 _SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -108,6 +148,7 @@ class ListingFactory:
         self.compliance = ComplianceDirector(config, db)
         # The Artwork Studio produces the REAL commercial images (no placeholders).
         self.studio = studio or ArtworkStudio(config, db)
+        self.min_description_chars = int(self.cfg.get("min_description_chars", 120))
         self._llm: LLMClient | None = None
 
     @property
@@ -276,7 +317,7 @@ class ListingFactory:
             [f"{campaign['name']} image" for _ in range(self.gallery_count)], "image",
         )
         pricing = self._pricing(production_cost, retail_price)
-        title = gen["title"].strip()[:140]
+        title = _safe_title(gen["title"], 140)
 
         # The commercial brief the Artwork Studio renders from. The approved
         # master design (customer, emotion, palette, artwork intent, rationale)
@@ -416,7 +457,50 @@ copyrighted characters, no third-party logos.
 
     # --- Compliance -------------------------------------------------
 
+    def _copy_quality_issues(self, listing: dict[str, Any]) -> list[str]:
+        """Deterministic launch-quality checks on the customer-facing copy.
+
+        Truncated / unfinished title, description, materials or tags make a
+        listing look broken — a commercial launch-blocker (not a legal one). Each
+        issue returned becomes a FIXABLE blocking issue so the copy is regenerated
+        before the Etsy draft is ever created.
+        """
+        issues: list[str] = []
+        title = (listing.get("title") or "").strip()
+        desc = (listing.get("description") or "").strip()
+        tags = listing.get("tags") or []
+        materials = listing.get("materials") or []
+
+        if not title:
+            issues.append("Title is empty — regenerate a complete title.")
+        elif title.endswith(_TRUNCATION_MARKERS) or _token_truncated(title):
+            issues.append(f"Title looks truncated/cut off ('…{title[-24:]}') — "
+                          f"regenerate a complete title.")
+
+        if len(desc) < self.min_description_chars:
+            issues.append(f"Description is too short/incomplete ({len(desc)} chars, "
+                          f"min {self.min_description_chars}) — regenerate a full description.")
+        elif _looks_truncated(desc):
+            issues.append("Description appears truncated — it does not end as a complete "
+                          "sentence. Regenerate a full, finished description.")
+
+        if len(tags) < _TAG_COUNT:
+            issues.append(f"Only {len(tags)}/{_TAG_COUNT} tags — regenerate a full tag set.")
+        if any(_token_truncated(t) for t in tags):
+            issues.append("One or more tags look truncated — regenerate clean tags.")
+
+        if not materials:
+            issues.append("Materials are missing — regenerate a realistic materials list.")
+        elif any(_token_truncated(m) for m in materials):
+            issues.append("One or more materials look truncated — regenerate clean materials.")
+        return issues
+
     def _review_listing(self, listing: dict[str, Any], campaign_id: int) -> dict[str, Any]:
+        # Launch-quality gate: unfinished/truncated copy is a fixable BLOCK so it
+        # is regenerated before the Etsy draft is created (not just an advisory).
+        quality = self._copy_quality_issues(listing)
+        extra_blocking = [{"category": "incomplete_copy", "detail": q, "fixable": True}
+                          for q in quality]
         proposal = Proposal(
             agent_name="ListingFactory",
             requested_action=f"Prepare Etsy listing '{listing['title']}'",
@@ -425,7 +509,8 @@ copyrighted characters, no third-party logos.
             ),
             campaign_id=campaign_id,
         )
-        return self.compliance.review_proposal(proposal, proposal_id=None)
+        return self.compliance.review_proposal(
+            proposal, proposal_id=None, extra_blocking=extra_blocking)
 
     # --- Write & validate -------------------------------------------
 

@@ -751,7 +751,11 @@ confidence, risks, reasoning) and the governance layer decides:
    Everything else (a recommended trademark search, "confirm the font licence",
    "keep source files", off-brand tone) is an **advisory** that is *logged but
    never prevents publishing*. The report reads `PASS` + advisories → *proceed to
-   publish*. Verdicts are still autonomous (no human): **REJECT** for a
+   publish*. One commercial **quality** block is added: **truncated / unfinished
+   customer-facing copy** (title, description, materials, tags) is a *fixable*
+   block — a deterministic gate in the Listing Factory catches it (and any
+   truncation the model flags as an advisory is promoted), so the copy is
+   **regenerated before the Etsy draft is created**, never shipped looking broken. Verdicts are still autonomous (no human): **REJECT** for a
    non-fixable violation, **APPROVE_WITH_CHANGES** for a *fixable* blocking issue
    (e.g. a prohibited claim — `resolve()` amends the copy and re-reviews, bounded
    by `compliance.max_remediation_attempts`), else **APPROVE**. Crucially,

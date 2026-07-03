@@ -346,6 +346,10 @@ listing:
   quantity: 50
   target_margin: 0.60           # recommended price = production_cost / (1 - margin)
   default_production_cost: 12.0 # used when no product cost is known
+  # Launch-quality gate: a description shorter than this (or any truncated title/
+  # description/materials/tags) is a fixable BLOCK — the copy is regenerated
+  # before the Etsy draft is created, never shipped unfinished.
+  min_description_chars: 120
   # Etsy upload defaults (set once at the account level; not per-listing editing):
   who_made: i_did               # i_did | someone_else | collective
   when_made: made_to_order

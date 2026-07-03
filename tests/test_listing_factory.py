@@ -6,12 +6,14 @@ import json
 
 import pytest
 
-from onassis.listing_factory import ListingError, ListingFactory
+from onassis.listing_factory import (
+    ListingError, ListingFactory, _looks_truncated, _safe_title,
+)
 from tests.conftest import FakeLLM, make_compliance_response
 
 _LISTING_GEN = {
     "title": "Linen Throw — Slow Mediterranean Mornings, Stonewashed Coastal Blanket",
-    "description": "A stonewashed linen throw made for unhurried coastal mornings...",
+    "description": "A stonewashed linen throw made for unhurried coastal mornings.",
     "tags": [f"tag{i}" for i in range(11)],  # only 11 — factory must coerce to 13
     "materials": ["European linen", "cotton thread"],
     "primary_colour": "Ecru",
@@ -31,6 +33,7 @@ def factory(config, db, tmp_path):
         "currency": "GBP", "quantity": 50, "target_margin": 0.60,
         "default_production_cost": 12.0, "who_made": "i_did",
         "when_made": "made_to_order", "taxonomy_id": 1,
+        "min_description_chars": 0,   # exercise truncation, not brevity, in tests
         "mockups": ["primary", "lifestyle_1", "lifestyle_2", "scale", "detail"],
     }
     f = ListingFactory(config, db)
@@ -105,6 +108,54 @@ def test_campaign_without_compliance_is_blocked(factory, db):
     brief_id = db.insert_brief({"brief_date": "2026-06-26", "theme": "T", "keywords": []})
     cid = db.insert_campaign({"name": "C", "brief_id": brief_id})  # no compliance report
     assert factory.export(cid)["status"] == "blocked"
+
+
+# --- Launch-quality gate: truncated / unfinished copy blocks -------
+
+def test_looks_truncated_detects_unfinished_copy():
+    assert _looks_truncated("A calm mug for slow mornings and")      # mid-thought
+    assert _looks_truncated("A calm mug for slow mornings...")       # ellipsis
+    assert _looks_truncated("A calm mug for slow mornings,")         # trailing comma
+    assert _looks_truncated("")                                      # empty
+    assert not _looks_truncated("A calm mug for slow mornings.")     # complete
+    assert not _looks_truncated('She called it "home."')            # closing quote
+
+
+def test_safe_title_never_cuts_a_word_in_half():
+    long = "Amalfi Morning Ceramic Mug for Slow Mediterranean Coffee Rituals and " \
+           "Unhurried Sunlit Breakfasts on the Terrace Overlooking the Sea Every Day"
+    out = _safe_title(long, 60)
+    assert len(out) <= 60
+    assert not long[len(out):len(out) + 1].isalpha() or out.endswith(long.split()[len(out.split()) - 1])
+    assert " " not in out[-1]           # doesn't end on a partial
+
+
+def test_copy_quality_issues_flags_each_field(factory):
+    issues = factory._copy_quality_issues({
+        "title": "Amalfi Mug…", "description": "A calm ceramic mug made for mornings and",
+        "tags": ["a", "b"], "materials": []})
+    joined = " ".join(issues).lower()
+    assert "title" in joined and "truncat" in joined
+    assert "description" in joined
+    assert "tags" in joined and "materials" in joined
+
+
+def test_truncated_description_blocks_and_is_regenerated_before_publish(factory, db):
+    cid = _approved_campaign(db)
+    truncated = {**_LISTING_GEN,
+                 "description": "A stonewashed linen throw made for coastal mornings and"}
+    complete = {**_LISTING_GEN,
+                "description": "A stonewashed linen throw made for unhurried coastal "
+                "mornings, woven from European linen and finished by hand for a soft feel."}
+    factory._llm = FakeLLM([truncated, complete])          # first cut off, then complete
+    factory.compliance._llm = FakeLLM(make_compliance_response())   # no LEGAL issue
+
+    result = factory.export(cid)
+    assert result["status"] == "ready"                     # published, not blocked
+    assert result["compliance_attempts"] == 2              # regenerated exactly once
+    # The exported listing has the COMPLETE description, never the truncated one.
+    assert result["listing"]["description"].endswith("feel.")
+    assert not result["listing"]["description"].rstrip().endswith("and")
 
 
 def test_listing_failing_compliance_is_not_exported(factory, db, tmp_path):

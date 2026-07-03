@@ -55,10 +55,21 @@ _DEFAULTS = {
 
 # Compliance exists to maximise SAFE REVENUE, not to minimise theoretical legal
 # risk. Only a concrete violation in one of these categories blocks a listing.
-_BLOCKING_CATEGORIES = {"copyright", "trademark", "prohibited_claim", "etsy_policy", "illegal"}
+# ``incomplete_copy`` is a commercial QUALITY block: truncated / unfinished
+# customer-facing copy makes a listing look broken, so it blocks and is fixed by
+# regenerating (never a hard reject).
+_BLOCKING_CATEGORIES = {"copyright", "trademark", "prohibited_claim", "etsy_policy",
+                        "illegal", "incomplete_copy"}
 # Blocks that a fresh, amended design/copy cannot fix — regenerating won't help,
 # so these are a hard REJECT rather than an auto-remediation.
 _HARD_CATEGORIES = {"copyright", "trademark", "illegal"}
+# Phrases marking a copy-completeness problem the LLM raised as an "advisory":
+# promoted to a fixable blocking issue (unfinished copy must not ship).
+_INCOMPLETE_HINTS = (
+    "truncat", "incomplete", "cut off", "cut-off", "unfinished", "mid-sentence",
+    "mid sentence", "mid-word", "mid word", "placeholder", "lorem ipsum",
+    "appears to end", "abruptly",
+)
 
 _OUTCOME = {APPROVE: "pass", APPROVE_WITH_CHANGES: "pass_with_changes", REJECT: "blocked"}
 
@@ -174,14 +185,19 @@ class ComplianceDirector:
     # --- Public review entry points ---------------------------------
 
     def review_proposal(
-        self, proposal: Proposal | dict[str, Any], proposal_id: int | None = None
+        self, proposal: Proposal | dict[str, Any], proposal_id: int | None = None,
+        *, extra_blocking: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        """Review a proposal. ``extra_blocking`` are deterministic blocking issues
+        the caller detected (e.g. truncated/incomplete copy) — merged before the
+        verdict so they drive regeneration just like an LLM-found violation."""
         p = proposal if isinstance(proposal, Proposal) else Proposal.from_dict(proposal)
         subject = (
             f"Proposed action by {p.agent_name}: {p.requested_action}. "
             f"Rationale: {p.reasoning}"
         )
-        return self._review(subject, label=p.requested_action, proposal_id=proposal_id)
+        return self._review(subject, label=p.requested_action, proposal_id=proposal_id,
+                            extra_blocking=extra_blocking)
 
     def review_campaign(
         self, campaign: dict[str, Any], content: list[dict[str, Any]] | None = None
@@ -221,6 +237,7 @@ class ComplianceDirector:
         label: str,
         proposal_id: int | None = None,
         campaign_id: int | None = None,
+        extra_blocking: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         prompt = self._build_prompt(subject)
         log.info("Compliance reviewing: %s", label)
@@ -231,6 +248,12 @@ class ComplianceDirector:
         pl = _clamp(generated.get("platform_risk", 0))
         brand = _clamp(generated.get("brand_consistency_score", 100))
         blocking, advisories = self._classify(generated, tm, cr, pl, brand)
+        # Deterministic blocking issues the caller found (e.g. truncated copy).
+        for it in (extra_blocking or []):
+            cat = str(it.get("category", "incomplete_copy")).strip().lower()
+            fixable = False if cat in _HARD_CATEGORIES else bool(it.get("fixable", True))
+            blocking.append({"category": cat, "detail": str(it.get("detail", "")).strip(),
+                             "fixable": fixable})
         verdict = self._verdict(blocking)
         score = round(((100 - tm) + (100 - cr) + (100 - pl) + brand) / 4)
         # Only FIXABLE blocking issues drive regeneration; advisories never do.
@@ -307,7 +330,16 @@ class ComplianceDirector:
                     f"design to the brand (advisory, not blocking).")
             advisories += [str(c).strip() for c in (generated.get("corrections") or [])
                            if str(c).strip()]
-        return blocking, advisories
+
+        # Promote any advisory that flags unfinished/truncated copy to a FIXABLE
+        # blocking issue — an incomplete listing must never ship.
+        kept: list[str] = []
+        for a in advisories:
+            if any(h in a.lower() for h in _INCOMPLETE_HINTS):
+                blocking.append({"category": "incomplete_copy", "detail": a, "fixable": True})
+            else:
+                kept.append(a)
+        return blocking, kept
 
     def _verdict(self, blocking_issues: list[dict[str, Any]]) -> str:
         """Commercial gatekeeper verdict — never REQUEST_MORE_INFO.

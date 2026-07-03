@@ -243,6 +243,31 @@ def test_streaming_publishes_first_product_before_finishing_the_rest(production_
     assert pub["first_draft_at"] == summary["first_draft_at"]
 
 
+def test_streaming_fixes_truncated_copy_before_the_draft(production_cycle, tmp_path):
+    """A truncated description is regenerated to complete copy BEFORE the Etsy
+    draft is created — it is never published unfinished."""
+    import json
+    from pathlib import Path
+
+    lf = production_cycle.listing_factory
+    truncated = {**_LISTING, "description": "A calm coastal piece for slow mornings and"}
+    complete = {**_LISTING, "description": "A calm coastal piece for slow mornings, "
+                "finished by hand with genuine care and a soft, lived-in feel."}
+    lf._llm = FakeLLM([truncated, complete])   # first cut off, then complete (sticks)
+
+    summary = production_cycle.run(mode="production")
+    pub = {s["stage"]: s for s in summary["stages"]}["Publish Products"]["detail"]
+    assert pub["published"] >= 1               # fixed and shipped, not blocked
+
+    cid = summary["campaign_id"]
+    shipped = next(r for r in pub["timeline"] if r["status"] in ("live", "draft"))
+    listing = json.loads(
+        (Path(tmp_path) / "exports" / str(cid) / shipped["product_key"] / "listing.json")
+        .read_text())
+    assert listing["description"].rstrip().endswith("feel.")     # complete
+    assert not listing["description"].rstrip().endswith("and")   # not the truncated copy
+
+
 def test_production_promotes_live_products_on_pinterest(production_cycle):
     """Every live product is auto-promoted with pins that link to its listing."""
     class _StubPin:

@@ -56,6 +56,9 @@ def config(tmp_path: Path):
     cfg.image = {**(cfg.image or {}), "backend": "local", "master_px": 96,
                  "print_px": 96, "gallery_px": 96, "gallery_count": 9,
                  "max_attempts": 2}
+    # Tests use short placeholder copy — disable the length floor by default so
+    # only genuine truncation (markers/mid-sentence) is exercised, not brevity.
+    cfg.listing = {**(cfg.listing or {}), "min_description_chars": 0}
     return cfg
 
 
