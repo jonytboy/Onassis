@@ -90,6 +90,19 @@ policy:
 profit:
   ai_cost_per_campaign: 0.50     # estimated AI cost recorded per campaign run
 
+# --- Production security (deployment hardening, no business logic) ----
+# Auth + per-IP rate limiting + security headers + access logging. Auto-enabled
+# in production (ONASSIS_ENV=production) and OFF in development so local work and
+# tests are frictionless. Set `enabled` to force it either way. The API key comes
+# from ONASSIS_API_KEY in the env. Public routes (no key): / , /health , /exports/*
+# (so Gelato can fetch print files and load balancers can probe).
+security:
+  # enabled: true                 # uncomment to force security on/off explicitly
+  api_key_header: "X-API-Key"     # header carrying the key (Authorization: Bearer also accepted)
+  rate_limit_requests: 120        # max requests per IP per window (protected routes)
+  rate_limit_window_seconds: 60
+  # api_key is read from ONASSIS_API_KEY (never hard-code it here).
+
 # --- Financial Protection (safeguard above the Pricing Engine) -------
 # A deterministic gate: every commercial action (launch / price change /
 # discount / advertising / portfolio optimisation) must clear it before

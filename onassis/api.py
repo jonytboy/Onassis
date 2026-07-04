@@ -11,8 +11,13 @@ Run it::
     python main.py --serve            # or: uvicorn onassis.api:app
 
 Interactive docs (Swagger) are served at ``/docs``; the OpenAPI schema at
-``/openapi.json``. All responses are JSON. No authentication yet (Sprint 5
-scope), and no publishing.
+``/openapi.json``. All responses are JSON.
+
+In **production** (``ONASSIS_ENV=production``) the security middleware
+(:mod:`onassis.security`) protects every route except the public ones
+(``/``, ``/health``, ``/exports/*``) with an API key, applies per-IP rate
+limiting and security headers, and locks Swagger behind the key. In development
+it is inert, so this module still owns no business logic.
 """
 
 from __future__ import annotations
@@ -118,6 +123,12 @@ def create_app(config: Config | None = None) -> FastAPI:
     from onassis.exports_static import mount_exports
 
     mount_exports(app, config)
+
+    # Production security (auth + rate limiting + headers + access logging).
+    # Inert in development; auto-enabled in production. No business logic.
+    from onassis.security import install_security
+
+    install_security(app, config)
 
     # Expose services for tests / introspection.
     app.state.config = config

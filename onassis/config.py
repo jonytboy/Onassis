@@ -84,6 +84,7 @@ class Config:
     traffic: dict[str, Any] = field(default_factory=dict)
     gelato: dict[str, Any] = field(default_factory=dict)
     protection: dict[str, Any] = field(default_factory=dict)
+    security: dict[str, Any] = field(default_factory=dict)
 
     # secrets / future integrations
     anthropic_api_key: str | None = None
@@ -157,6 +158,12 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
     }
     # Financial protection: only the CORE commercial controls come from the env;
     # all fee/estimation/business logic stays in the YAML `protection` section.
+    security = raw.get("security", {})
+    security = {
+        **security,
+        # The API key comes from the env; everything else stays in config.yaml.
+        "api_key": _env("ONASSIS_API_KEY", security.get("api_key")),
+    }
     protection = raw.get("protection", {})
     protection = {
         **protection,
@@ -244,5 +251,6 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         traffic=traffic,
         gelato=gelato,
         protection=protection,
+        security=security,
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
     )
