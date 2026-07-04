@@ -111,6 +111,14 @@ def create_app(config: Config | None = None) -> FastAPI:
             "Generate campaigns and read everything they produce. JSON only."
         ),
     )
+    # Serve the generated artwork over HTTPS so Gelato can fetch print files
+    # directly (GELATO_FILE_BASE_URL = https://<server>/exports). Image files
+    # only — internal JSON manifests are never exposed. Replaceable by an object
+    # store later with no change to the Gelato connector.
+    from onassis.exports_static import mount_exports
+
+    mount_exports(app, config)
+
     # Expose services for tests / introspection.
     app.state.config = config
     app.state.orchestrator = orchestrator

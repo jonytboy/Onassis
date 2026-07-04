@@ -258,19 +258,27 @@ def test_backend_failure_falls_back_to_local(tmp_path):
 
 # --- Backend selection ----------------------------------------------
 
-def test_build_backend_defaults_to_local():
+@pytest.fixture
+def no_image_env(monkeypatch):
+    """Isolate backend-selection tests from any ambient image key (a real
+    OPENAI_API_KEY/IMAGE_API_KEY in the local .env must not flip the choice)."""
+    monkeypatch.delenv("IMAGE_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+
+def test_build_backend_defaults_to_local(no_image_env):
     cfg = SimpleNamespace(image={})
     assert isinstance(build_image_backend(cfg), LocalRenderBackend)
 
 
-def test_build_backend_remote_requires_a_key():
+def test_build_backend_remote_requires_a_key(no_image_env):
     with_key = SimpleNamespace(image={"backend": "remote", "api_key": "sk-test"})
     assert isinstance(build_image_backend(with_key), RemoteImageBackend)
     no_key = SimpleNamespace(image={"backend": "remote", "api_key": None})
     assert isinstance(build_image_backend(no_key), LocalRenderBackend)  # safe fallback
 
 
-def test_auto_backend_uses_remote_only_with_key():
+def test_auto_backend_uses_remote_only_with_key(no_image_env):
     auto_key = SimpleNamespace(image={"backend": "auto", "api_key": "sk-test"})
     assert isinstance(build_image_backend(auto_key), RemoteImageBackend)
     auto_nokey = SimpleNamespace(image={"backend": "auto"})
