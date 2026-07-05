@@ -4,10 +4,11 @@ Turns **one CEO-approved product opportunity** into a complete, print-ready
 **design package** — the clean, structured hand-off a future artwork generator
 needs to produce the actual PNG/SVG with zero manual interpretation.
 
-It does **not** publish, create Etsy listings, or create mock-ups. The
-``mockup_prompt.txt`` it writes is a *prompt* for a future mock-up generator,
-not a mock-up; the ``listing_seed.json`` is *seed material* for a future
-listing, not a listing.
+It does **not** publish, create Etsy listings, or create mock-ups. Gallery and
+mock-up image prompts are owned solely by the Artwork Studio's
+:class:`~onassis.artwork.CommercialPromptBuilder` — the single source of truth
+for every marketing/gallery image prompt. The ``listing_seed.json`` here is
+*seed material* for a future listing, not a listing.
 
 Two gates protect every export:
 
@@ -22,7 +23,6 @@ Output (``exports/opportunities/<opportunity_id>/``):
     design_brief.json       every field a designer/generator needs
     print_spec.json         the deterministic print/production spec
     artwork_prompt.txt      prompt for the artwork generator (the PNG/SVG)
-    mockup_prompt.txt       prompt for a future mock-up generator (not a mock-up)
     listing_seed.json       seed material for a future listing (not a listing)
     compliance_report.json  the pre-export compliance review
 
@@ -58,7 +58,6 @@ _SCHEMA: dict[str, Any] = {
         "print_placement": {"type": "string"},
         "print_size_guidance": {"type": "string"},
         "artwork_description": {"type": "string"},
-        "mockup_scene": {"type": "string"},
         "design_rationale": {"type": "string"},
         "listing_title_seed": {"type": "string"},
         "listing_tags_seed": {"type": "array", "items": {"type": "string"}},
@@ -67,7 +66,7 @@ _SCHEMA: dict[str, Any] = {
     "required": [
         "shirt_colour", "print_colour", "typography_direction", "layout_direction",
         "print_placement", "print_size_guidance", "artwork_description",
-        "mockup_scene", "design_rationale", "listing_title_seed",
+        "design_rationale", "listing_title_seed",
         "listing_tags_seed", "listing_description_seed",
     ],
     "additionalProperties": False,
@@ -176,7 +175,6 @@ class DesignPackageBuilder:
             "listing_seed": self._read_json(folder / "listing_seed.json"),
             "compliance_report": self._read_json(folder / "compliance_report.json"),
             "artwork_prompt": (folder / "artwork_prompt.txt").read_text(encoding="utf-8"),
-            "mockup_prompt": (folder / "mockup_prompt.txt").read_text(encoding="utf-8"),
         }
 
     # --- Generation -------------------------------------------------
@@ -285,18 +283,6 @@ class DesignPackageBuilder:
             f"Original work only — no trademarks, no copyrighted characters."
         )
 
-    def _mockup_prompt(self, opp: dict[str, Any], brief: dict[str, Any], scene: str) -> str:
-        return (
-            f"PROMPT FOR A FUTURE MOCK-UP GENERATOR (this builder does not create "
-            f"mock-ups).\n\n"
-            f"Show '{brief['product_name']}' as a {brief['shirt_colour']} "
-            f"{opp.get('product_type')} with the approved artwork at "
-            f"{brief['print_placement']} ({brief['print_size_guidance']}).\n"
-            f"Scene: {scene}\n"
-            f"Style: editorial, natural light, premium Mediterranean lifestyle; "
-            f"the product is the hero."
-        )
-
     def _prompt(self, opp: dict[str, Any], corrections: list[str] | None = None) -> str:
         palette = ", ".join(opp.get("colour_palette", []))
         amend = ""
@@ -330,7 +316,6 @@ Decide and return:
 - `print_placement`: e.g. "centre chest", "left chest", "full front".
 - `print_size_guidance`: approximate width and position within the print area.
 - `artwork_description`: exactly what the artwork depicts (for the generator).
-- `mockup_scene`: a scene for a future mock-up (NOT created here).
 - `design_rationale`: why these choices fit the customer and emotional angle.
 - `listing_title_seed`, `listing_tags_seed` (8-13), `listing_description_seed`:
   seed material only — NOT a finished listing.
@@ -369,18 +354,16 @@ Original, on-brand, Gelato DTG-friendly. No trademarks or copyrighted material."
         print_spec = self._print_spec(brief)
         listing_seed = self._listing_seed(opp, design)
         artwork_prompt = self._artwork_prompt(opp, brief)
-        mockup_prompt = self._mockup_prompt(opp, brief, design["mockup_scene"])
 
         self._write_json(folder / "design_brief.json", brief)
         self._write_json(folder / "print_spec.json", print_spec)
         self._write_json(folder / "listing_seed.json", listing_seed)
         self._write_json(folder / "compliance_report.json", review)
         (folder / "artwork_prompt.txt").write_text(artwork_prompt, encoding="utf-8")
-        (folder / "mockup_prompt.txt").write_text(mockup_prompt, encoding="utf-8")
 
         files = [
             "design_brief.json", "print_spec.json", "artwork_prompt.txt",
-            "mockup_prompt.txt", "listing_seed.json", "compliance_report.json",
+            "listing_seed.json", "compliance_report.json",
         ]
         return {
             "status": "ready",
@@ -391,7 +374,6 @@ Original, on-brand, Gelato DTG-friendly. No trademarks or copyrighted material."
             "print_spec": print_spec,
             "listing_seed": listing_seed,
             "artwork_prompt": artwork_prompt,
-            "mockup_prompt": mockup_prompt,
             "compliance_report": review,
         }
 

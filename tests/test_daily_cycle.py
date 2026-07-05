@@ -48,7 +48,7 @@ _DESIGN = {
     "shirt_colour": "ecru", "print_colour": "terracotta",
     "typography_direction": "serif lowercase", "layout_direction": "centred",
     "print_placement": "centre chest", "print_size_guidance": "25cm wide",
-    "artwork_description": "A line-drawn lemon branch.", "mockup_scene": "tee on linen",
+    "artwork_description": "A line-drawn lemon branch.",
     "design_rationale": "On theme.", "listing_title_seed": "Amalfi Tee",
     "listing_tags_seed": ["lemon", "coastal"], "listing_description_seed": "A calm tee.",
 }

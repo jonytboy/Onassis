@@ -36,7 +36,6 @@ _DESIGN = {
     "layout_direction": "centred stacked lockup with a fine line motif",
     "print_placement": "centre chest", "print_size_guidance": "approx 25cm wide, centred",
     "artwork_description": "A minimal line-drawn lemon branch over a calm horizon.",
-    "mockup_scene": "folded tee on sunlit linen beside fresh lemons",
     "design_rationale": "Quiet, premium and on-theme for slow Mediterranean mornings.",
     "listing_title_seed": "Amalfi Morning Lemon Tee — Slow Coastal Living",
     "listing_tags_seed": ["mediterranean", "lemon", "coastal", "slow living"],
@@ -68,8 +67,10 @@ def test_build_writes_all_six_files(config, db, tmp_path):
     assert result["status"] == "ready"
     folder = Path(result["path"])
     for name in ("design_brief.json", "print_spec.json", "artwork_prompt.txt",
-                 "mockup_prompt.txt", "listing_seed.json", "compliance_report.json"):
+                 "listing_seed.json", "compliance_report.json"):
         assert (folder / name).exists(), f"missing {name}"
+    # The mock-up prompt is gone — CommercialPromptBuilder owns gallery prompts.
+    assert not (folder / "mockup_prompt.txt").exists()
     # Lives under exports/opportunities/<id>/
     assert folder.parent.name == "opportunities"
     assert folder.name == oid
@@ -108,8 +109,9 @@ def test_print_spec_and_seed_and_prompts_are_consistent(config, db, tmp_path):
     seed = result["listing_seed"]
     assert seed["title_seed"] and seed["tags_seed"]
     assert "future listing" in seed["note"].lower()
-    # The mock-up file is a PROMPT, explicitly not a mock-up.
-    assert "future mock-up generator" in result["mockup_prompt"].lower()
+    # No mock-up prompt is produced — the Artwork Studio's CommercialPromptBuilder
+    # is the single source of truth for gallery/mock-up image prompts.
+    assert "mockup_prompt" not in result
     assert "transparent background" in result["artwork_prompt"].lower()
 
 

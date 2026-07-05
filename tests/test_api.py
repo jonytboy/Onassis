@@ -57,7 +57,7 @@ _DESIGN = {
     "shirt_colour": "ecru", "print_colour": "terracotta",
     "typography_direction": "serif lowercase", "layout_direction": "centred",
     "print_placement": "centre chest", "print_size_guidance": "25cm wide",
-    "artwork_description": "A line-drawn lemon branch.", "mockup_scene": "tee on linen",
+    "artwork_description": "A line-drawn lemon branch.",
     "design_rationale": "On theme.", "listing_title_seed": "Amalfi Tee",
     "listing_tags_seed": ["lemon", "coastal"], "listing_description_seed": "A calm tee.",
 }
@@ -687,7 +687,7 @@ def test_build_design_package_endpoint(app_and_client, tmp_path):
         "typography_direction": "serif lowercase", "layout_direction": "centred",
         "print_placement": "centre chest", "print_size_guidance": "25cm wide",
         "artwork_description": "A line-drawn lemon branch.",
-        "mockup_scene": "tee on linen", "design_rationale": "On theme.",
+        "design_rationale": "On theme.",
         "listing_title_seed": "Amalfi Tee", "listing_tags_seed": ["lemon", "coastal"],
         "listing_description_seed": "A calm tee.",
     })
@@ -698,7 +698,7 @@ def test_build_design_package_endpoint(app_and_client, tmp_path):
     assert built["status"] == "ready"
     assert set(built["files"]) == {
         "design_brief.json", "print_spec.json", "artwork_prompt.txt",
-        "mockup_prompt.txt", "listing_seed.json", "compliance_report.json"}
+        "listing_seed.json", "compliance_report.json"}
 
     fetched = client.get(f"/opportunities/{oid}/design-package").json()
     assert fetched["design_brief"]["product_name"] == "Amalfi Morning Tee"
