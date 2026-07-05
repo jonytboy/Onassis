@@ -27,6 +27,7 @@ from typing import Any
 from onassis.config import ROOT_DIR, Config
 from onassis.database import Database
 from onassis.logger import get_logger
+from onassis.product_status import is_valid_listing_id
 from onassis.proposals import is_compliant
 
 log = get_logger(__name__)
@@ -90,9 +91,19 @@ class PublisherService:
             self.publish(campaign_id, mode=mode, product_key=s["product_key"])
             for s in launched
         ]
-        published = sum(1 for r in results if r["status"] in (DRAFT, DRY_RUN))
+        # Honest counts (Sprint 40): a real Etsy draft is only DRAFT status with
+        # a listing id — never a dry_run, never a failed attempt.
+        drafts_created = sum(1 for r in results if r["status"] == DRAFT)
+        drafts_failed = sum(1 for r in results if r["status"] in ("failed", "not_configured"))
+        dry_runs = sum(1 for r in results if r["status"] == DRY_RUN)
+        # ``published`` counts real drafts (draft mode) or the dry-run simulations
+        # (dry-run mode) so a dry-run still reports what it *would* publish, but
+        # the two are never conflated in draft mode.
+        published = drafts_created + (dry_runs if (mode or self.default_mode) == DRY_RUN else 0)
         return {"status": "ok", "campaign_id": campaign_id,
-                "count": len(results), "published": published, "results": results}
+                "count": len(results), "published": published,
+                "drafts_created": drafts_created, "drafts_failed": drafts_failed,
+                "dry_runs": dry_runs, "results": results}
 
     def publish(
         self, campaign_id: int, mode: str | None = None, product_key: str | None = None
@@ -158,7 +169,15 @@ class PublisherService:
             try:
                 backend = self._draft_backend()
                 result = backend.create_draft(listing)
-                listing_id = str(result.get("listing_id"))
+                # Etsy Draft Validation (Sprint 40): only treat this as a draft
+                # when Etsy actually returned a *valid* listing id. A missing id
+                # used to be stringified to "None" and stored as a real draft.
+                raw_id = (result or {}).get("listing_id")
+                if not is_valid_listing_id(raw_id):
+                    raise ValueError(
+                        "Etsy did not return a valid listing id "
+                        f"(got {raw_id!r}) — draft not confirmed.")
+                listing_id = str(raw_id)
                 uploads = self._upload_images(backend, listing_id, listing, images_dir)
                 pub = {"platform": PLATFORM, "product_id": product_id,
                        "campaign_id": campaign_id, "listing_id": listing_id,

@@ -604,6 +604,43 @@ CREATE TABLE IF NOT EXISTS protection_decisions (
     reason               TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_protection_decision ON protection_decisions(decision);
+
+-- Operator approval workspace (Sprint 40): the human's explicit decision on a
+-- product's listing. One row per product (sku); the full decision trail lives in
+-- approval_history. Distinct from the CEO/Compliance verdicts — this is the
+-- operator saying "publish it" (or not) from the Operations Centre.
+CREATE TABLE IF NOT EXISTS product_approvals (
+    sku          TEXT    PRIMARY KEY,
+    product_key  TEXT,
+    campaign_id  INTEGER,
+    decision     TEXT    NOT NULL DEFAULT 'awaiting',  -- awaiting | approved | rejected
+    operator     TEXT,
+    notes        TEXT,
+    created_at   TEXT    NOT NULL,
+    updated_at   TEXT    NOT NULL
+);
+
+-- Append-only audit of every approval action (who / what / when / why).
+CREATE TABLE IF NOT EXISTS approval_history (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at   TEXT    NOT NULL,
+    sku          TEXT    NOT NULL,
+    product_key  TEXT,
+    campaign_id  INTEGER,
+    decision     TEXT    NOT NULL,
+    operator     TEXT,
+    notes        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_approval_history_sku ON approval_history(sku);
+
+-- Business settings (Sprint 40): operator-editable configuration overlaid on
+-- config.yaml so the business can be tuned from the UI without editing files.
+CREATE TABLE IF NOT EXISTS settings (
+    key         TEXT    PRIMARY KEY,
+    value       TEXT    NOT NULL,          -- JSON-encoded value
+    updated_at  TEXT    NOT NULL,
+    updated_by  TEXT
+);
 """
 
 
@@ -1511,6 +1548,121 @@ class Database:
         with self._connect() as conn:
             rows = conn.execute("SELECT * FROM publications ORDER BY id DESC").fetchall()
         return [dict(r) for r in rows]
+
+    def get_latest_publication(
+        self, campaign_id: int, platform: str = "etsy", product_id: str | None = None
+    ) -> dict[str, Any] | None:
+        """The most recent publication for a product **regardless of status** —
+        including ``failed``. The Product Status Engine needs the true latest
+        attempt (a failed publish must surface as Failed, not be hidden like
+        :meth:`get_active_publication` does)."""
+        sql = "SELECT * FROM publications WHERE campaign_id = ? AND platform = ?"
+        params: list[Any] = [campaign_id, platform]
+        if product_id is not None:
+            sql += " AND product_id = ?"
+            params.append(product_id)
+        sql += " ORDER BY id DESC LIMIT 1"
+        with self._connect() as conn:
+            row = conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
+
+    # --- Operator approvals (Sprint 40 workspace) -------------------
+
+    def set_product_approval(self, approval: dict[str, Any]) -> dict[str, Any]:
+        """Record the operator's decision on a product and append to the audit
+        trail. Upserts the current decision (one row per sku), logs history."""
+        now = _utcnow()
+        sku = approval["sku"]
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO product_approvals
+                    (sku, product_key, campaign_id, decision, operator, notes,
+                     created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(sku) DO UPDATE SET
+                    decision = excluded.decision,
+                    operator = excluded.operator,
+                    notes = excluded.notes,
+                    updated_at = excluded.updated_at
+                """,
+                (sku, approval.get("product_key"), approval.get("campaign_id"),
+                 approval.get("decision", "awaiting"), approval.get("operator"),
+                 approval.get("notes"), now, now),
+            )
+            conn.execute(
+                """
+                INSERT INTO approval_history
+                    (created_at, sku, product_key, campaign_id, decision, operator, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (now, sku, approval.get("product_key"), approval.get("campaign_id"),
+                 approval.get("decision", "awaiting"), approval.get("operator"),
+                 approval.get("notes")),
+            )
+        return self.get_product_approval(sku) or {}
+
+    def get_product_approval(self, sku: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM product_approvals WHERE sku = ?", (sku,)).fetchone()
+        return dict(row) if row else None
+
+    def list_product_approvals(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM product_approvals").fetchall()
+        return [dict(r) for r in rows]
+
+    def list_approval_history(self, sku: str | None = None,
+                              limit: int = 50) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM approval_history"
+        params: list[Any] = []
+        if sku is not None:
+            sql += " WHERE sku = ?"
+            params.append(sku)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    # --- Business settings (Sprint 40 UI-editable config) -----------
+
+    def get_setting(self, key: str, default: Any = None) -> Any:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        if row is None:
+            return default
+        try:
+            return json.loads(row["value"])
+        except (ValueError, TypeError):
+            return default
+
+    def set_setting(self, key: str, value: Any, updated_by: str | None = None) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO settings (key, value, updated_at, updated_by)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at,
+                    updated_by = excluded.updated_by
+                """,
+                (key, json.dumps(value), _utcnow(), updated_by),
+            )
+
+    def all_settings(self) -> dict[str, Any]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT key, value FROM settings").fetchall()
+        out: dict[str, Any] = {}
+        for r in rows:
+            try:
+                out[r["key"]] = json.loads(r["value"])
+            except (ValueError, TypeError):
+                out[r["key"]] = r["value"]
+        return out
 
     # --- Metric snapshots (append-only history) ---------------------
 

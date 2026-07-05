@@ -35,8 +35,11 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
+from onassis.business_settings import BusinessSettings
 from onassis.config import ROOT_DIR
 from onassis.logger import get_logger
+from onassis.product_status import (
+    FILTERS, derive_product_status, is_valid_listing_id, matches_filter)
 from onassis.security import security_enabled
 
 log = get_logger(__name__)
@@ -357,7 +360,12 @@ def build_operations_router(get_state) -> APIRouter:
                 result = daily.run("production")
                 status = "completed_with_failures" if any(
                     s["status"] == "failed" for s in state.run["stages"]) else "completed"
-                state.end_run(result.get("status", status), _run_summary(result))
+                summary = _run_summary(result)
+                try:
+                    summary["publish"] = _publish_summary(request.app.state)
+                except Exception:  # summary is best-effort; never fail the run on it
+                    log.debug("publish summary unavailable", exc_info=True)
+                state.end_run(result.get("status", status), summary)
                 state.add_log(f"RUN BUSINESS finished: {result.get('status')}.")
             except Exception as exc:  # never crash the server on a run failure
                 state.end_run("failed", {"error": str(exc)})
@@ -411,28 +419,86 @@ def build_operations_router(get_state) -> APIRouter:
             "headline": board["headline"],
         }
 
-    # --- Products tab ---
+    # --- Products tab (dashboard + filters + publish summary) ---
     @router.get("/api/products")
-    def api_products(request: Request) -> Any:
+    def api_products(request: Request, filter: str | None = None) -> Any:
         _require_operator(request)
-        return {"products": _products(request.app.state)}
+        s = request.app.state
+        return {"products": _products(s, filter),
+                "summary": _publish_summary(s),
+                "filters": ["all", *FILTERS.keys()]}
+
+    @router.get("/api/publish-summary")
+    def api_publish_summary(request: Request) -> Any:
+        _require_operator(request)
+        return _publish_summary(request.app.state)
 
     @router.get("/api/products/{sku}")
     def api_product(request: Request, sku: str) -> Any:
         _require_operator(request)
+        detail = _product_detail(request.app.state, sku)
+        if detail is None:
+            raise HTTPException(status_code=404, detail="Unknown product.")
+        return detail
+
+    # --- Approval workspace decisions (Sprint 40, Objective 2) ---
+    @router.post("/api/approvals/{sku}/decision")
+    def api_approval_decision(request: Request, sku: str, payload: dict | None = None) -> Any:
+        _require_operator(request)
         s = request.app.state
+        body = payload or {}
+        action = str(body.get("action", "")).lower()
+        operator = body.get("operator") or "operator"
+        notes = body.get("notes")
         product = s.db.get_product_by_sku(sku)
         if not product:
             raise HTTPException(status_code=404, detail="Unknown product.")
-        key = product.get("product_key")
-        scores = [sc for sc in s.db.list_product_scores() if sc.get("product_key") == key]
-        return {
-            "product": product,
-            "reviews": s.db.list_portfolio_reviews(sku),
-            "marketing": s.db.list_marketing_assets(product_key=key),
-            "scores": scores[:1],
-            "protection": s.db.list_protection_decisions()[:5],
-        }
+        key, cid = product.get("product_key"), product.get("campaign_id")
+
+        def _record(decision: str) -> dict[str, Any]:
+            return s.db.set_product_approval({
+                "sku": sku, "product_key": key, "campaign_id": cid,
+                "decision": decision, "operator": operator, "notes": notes})
+
+        if action == "reject":
+            _record("rejected")
+            get_state(request.app).add_log(f"Product {sku} REJECTED by {operator}.", "warn")
+            return {"sku": sku, "decision": "rejected", "published": None}
+        if action == "approve":
+            _record("approved")
+            get_state(request.app).add_log(f"Product {sku} APPROVED by {operator}.")
+            return {"sku": sku, "decision": "approved", "published": None}
+        if action in ("approve_and_publish", "retry"):
+            if action == "approve_and_publish":
+                _record("approved")
+            result = s.daily.publisher.publish(cid, product_key=key)
+            ok = result.get("status") in ("draft", "dry_run")
+            lvl = "info" if ok else "error"
+            get_state(request.app).add_log(
+                f"Publish {sku} -> {result.get('status')}"
+                f"{': ' + result.get('reason', '') if not ok else ''}.", lvl)
+            return {"sku": sku, "decision": "approved", "published": result}
+        raise HTTPException(status_code=400, detail=f"Unknown approval action '{action}'.")
+
+    # --- Business settings (Sprint 40, Objective 7) ---
+    @router.get("/api/business-settings")
+    def api_get_business_settings(request: Request) -> Any:
+        _require_operator(request)
+        s = request.app.state
+        return {"settings": BusinessSettings(s.db, s.config).describe()}
+
+    @router.post("/api/business-settings")
+    def api_set_business_settings(request: Request, payload: dict | None = None) -> Any:
+        _require_operator(request)
+        s = request.app.state
+        changes = (payload or {}).get("changes", payload or {})
+        try:
+            values = BusinessSettings(s.db, s.config).update(
+                changes, operator=(payload or {}).get("operator"))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        get_state(request.app).add_log("Business settings updated by operator.")
+        return {"settings": BusinessSettings(s.db, s.config).describe(), "values": values}
 
     # --- Pipeline tab ---
     @router.get("/api/pipeline")
@@ -512,27 +578,251 @@ def _run_summary(result: dict[str, Any]) -> dict[str, Any]:
         "assets_created", "first_draft_at")}
 
 
-def _products(state: Any) -> list[dict[str, Any]]:
-    perf = {p["product_key"]: p for p in state.db.list_product_performance()}
-    rows: list[dict[str, Any]] = []
-    for p in state.db.list_products():
-        key = p.get("product_key")
-        pf = perf.get(key, {})
-        rows.append({
-            "sku": p.get("sku"), "name": p.get("name") or key, "product_key": key,
-            "status": "archived" if not p.get("active", 1) else "published",
-            "units": int(pf.get("units_sold", 0) or 0),
-            "net_profit": float(pf.get("net_profit", 0) or 0),
-            "launched_at": p.get("launched_at") or p.get("created_at"),
-        })
+def _product_context(state: Any) -> dict[str, Any]:
+    """Load the lookup tables the product dashboard needs, once."""
+    db = state.db
+    return {
+        "perf": {p["product_key"]: p for p in db.list_product_performance()},
+        "approvals": {a["sku"]: a for a in db.list_product_approvals()},
+        "campaigns": {c["id"]: c for c in db.list_campaigns()},
+    }
+
+
+def _product_row(state: Any, p: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
+    """One fully-resolved product dashboard row (Sprint 40, Objective 6).
+
+    The status comes from the Product Status Engine — the single source of truth
+    — never from the ``active`` flag. Etsy status reflects the real publication.
+    """
+    db = state.db
+    sku = p.get("sku")
+    key = p.get("product_key")
+    cid = p.get("campaign_id")
+    pf = ctx["perf"].get(key, {})
+    approval = ctx["approvals"].get(sku)
+    pub = db.get_latest_publication(cid, "etsy", product_id=sku) if cid else None
+    marketing = db.list_marketing_assets(product_key=key) if key else []
+    units = int(pf.get("units_sold", 0) or 0)
+    st = derive_product_status(product=p, publication=pub, approval=approval,
+                               marketing_count=len(marketing), units_sold=units)
+
+    # Etsy facts (views/url) come from the imported listing, when there is one.
+    views, listing_url = 0, ""
+    if st.listing_id and is_valid_listing_id(st.listing_id):
+        try:
+            listing = db.get_etsy_listing(int(st.listing_id))
+        except (TypeError, ValueError):
+            listing = None
+        if listing:
+            views = int(listing.get("views", 0) or 0)
+            listing_url = listing.get("url") or ""
+
+    campaign = ctx["campaigns"].get(cid, {})
+    marketing_status = ("live" if marketing else
+                        ("pending" if st.status in ("live", "marketing", "tracking")
+                         else "none"))
+    return {
+        "sku": sku, "name": p.get("name") or key, "product_key": key,
+        "type": key, "campaign_id": cid, "campaign": campaign.get("name") or "",
+        "status": st.status, "status_label": st.label,
+        "reason": st.reason, "retryable": st.retryable,
+        "etsy_status": st.label, "listing_id": st.listing_id, "listing_url": listing_url,
+        "approval": (approval or {}).get("decision", "awaiting"),
+        "operator": (approval or {}).get("operator") or "",
+        "marketing_status": marketing_status,
+        "views": views,
+        "units": units, "sales": units,
+        "revenue": float(pf.get("gross_revenue", 0) or 0),
+        "net_profit": float(pf.get("net_profit", 0) or 0),
+        "launched_at": p.get("launched_at") or p.get("created_at"),
+        "updated_at": (approval or {}).get("updated_at") or p.get("launched_at")
+                      or p.get("created_at"),
+    }
+
+
+def _products(state: Any, filter_bucket: str | None = None) -> list[dict[str, Any]]:
+    ctx = _product_context(state)
+    rows = [_product_row(state, p, ctx) for p in state.db.list_products()]
+    if filter_bucket and filter_bucket != "all":
+        rows = [r for r in rows if matches_filter(r["status"], filter_bucket)]
     return rows
 
 
+def _publish_summary(state: Any) -> dict[str, Any]:
+    """The honest publish summary (Sprint 40, Objective 5) — real state, not
+    'Completed'. Products by lifecycle, real drafts, failures, marketing reach,
+    scheduled pins and a revenue forecast."""
+    rows = _products(state)
+    by_status: dict[str, int] = {}
+    for r in rows:
+        by_status[r["status"]] = by_status.get(r["status"], 0) + 1
+    approved = sum(by_status.get(s, 0) for s in ("approved",))
+    awaiting = by_status.get("awaiting_approval", 0)
+    drafts_created = sum(by_status.get(s, 0) for s in ("draft_created", "publishing",
+                                                       "marketing", "tracking", "live"))
+    drafts_failed = by_status.get("failed", 0)
+    db = state.db
+    pins_scheduled = len(db.list_pin_schedule(status="scheduled"))
+    marketing_assets = sum(db.count_marketing_assets(channel=ch)
+                           for ch in ("pinterest", "instagram", "facebook", "blog", "email"))
+    # Revenue forecast: per-unit expected profit of launched, priced products.
+    forecast = 0.0
+    for s in db.list_product_scores():
+        if s.get("launched"):
+            forecast += float(s.get("expected_profit", 0) or 0)
+    return {
+        "products_created": len(rows),
+        "products_approved": approved,
+        "products_awaiting_review": awaiting,
+        "drafts_created": drafts_created,
+        "drafts_failed": drafts_failed,
+        "marketing_assets": marketing_assets,
+        "pinterest_posts_scheduled": pins_scheduled,
+        "revenue_forecast": round(forecast, 2),
+        "by_status": by_status,
+    }
+
+
+def _product_detail(state: Any, sku: str) -> dict[str, Any] | None:
+    """The Product Detail Drawer payload (Sprint 40, Objective 3)."""
+    db = state.db
+    product = db.get_product_by_sku(sku)
+    if not product:
+        return None
+    ctx = _product_context(state)
+    row = _product_row(state, product, ctx)
+    key = product.get("product_key")
+    cid = product.get("campaign_id")
+    scores = [sc for sc in db.list_product_scores(cid) if sc.get("product_key") == key]
+    compliance = db.get_compliance_for_campaign(cid) if cid else None
+    return {
+        "product": product,
+        "row": row,
+        "score": scores[0] if scores else None,
+        "ceo_reasoning": (scores[0].get("reasoning") if scores else "") or "",
+        "compliance": compliance,
+        "marketing": db.list_marketing_assets(product_key=key) if key else [],
+        "reviews": db.list_portfolio_reviews(sku),
+        "approval": db.get_product_approval(sku),
+        "approval_history": db.list_approval_history(sku),
+        "publication": db.get_latest_publication(cid, "etsy", product_id=sku) if cid else None,
+    }
+
+
+def _exports_dir(state: Any) -> Path:
+    base = Path((state.config.listing or {}).get("exports_dir", "exports"))
+    if not base.is_absolute():
+        base = ROOT_DIR / base
+    return base
+
+
+def _package_assets(state: Any, campaign_id: Any, product_key: str | None) -> dict[str, Any]:
+    """Resolve a product package's real artwork/mock-up/listing assets to
+    /exports URLs (best-effort — missing files degrade to empty, so this is
+    offline-safe). Powers the Approval Workspace cards and Detail Drawer."""
+    out: dict[str, Any] = {"has_artwork": False, "has_mockups": False,
+                           "artwork_url": "", "hero_url": "", "mockups": [],
+                           "listing_title": "", "seo_score": None,
+                           "listing_package_url": ""}
+    if campaign_id is None or not product_key:
+        return out
+    folder = _exports_dir(state) / str(campaign_id) / str(product_key)
+    rel = f"/exports/{campaign_id}/{product_key}"
+    artwork = folder / "master_artwork.png"
+    if artwork.exists():
+        out["has_artwork"] = True
+        out["artwork_url"] = f"{rel}/master_artwork.png"
+    listing_path = folder / "listing.json"
+    if listing_path.exists():
+        out["listing_package_url"] = f"{rel}/listing.json"
+        try:
+            import json as _json
+            listing = _json.loads(listing_path.read_text(encoding="utf-8"))
+        except Exception:
+            listing = {}
+        out["listing_title"] = listing.get("title") or ""
+        out["seo_score"] = listing.get("seo_score")
+        images = listing.get("images") or []
+        mockups = [f"{rel}/images/{img['filename']}" for img in images
+                   if (folder / "images" / img.get("filename", "")).exists()]
+        out["mockups"] = mockups
+        out["has_mockups"] = bool(mockups)
+        out["hero_url"] = mockups[0] if mockups else out["artwork_url"]
+    else:
+        out["hero_url"] = out["artwork_url"]
+    return out
+
+
+# The operator actions each card offers, gated by the product's lifecycle status.
+def _card_actions(status: str) -> list[str]:
+    base = ["view_artwork", "view_mockups", "edit_listing"]
+    if status == "awaiting_approval":
+        return ["approve", "approve_and_publish", "reject", *base]
+    if status == "approved":
+        return ["approve_and_publish", "reject", *base]
+    if status == "failed":
+        return ["retry", "reject", *base]
+    if status in ("draft_created", "live", "marketing", "tracking"):
+        return ["view_listing", *base]
+    return base
+
+
+def _approval_card(state: Any, row: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any]:
+    """One operational approval card (Sprint 40, Objective 2)."""
+    db = state.db
+    cid = row["campaign_id"]
+    key = row["product_key"]
+    assets = _package_assets(state, cid, key)
+    scores = [sc for sc in db.list_product_scores(cid) if sc.get("product_key") == key]
+    score = scores[0] if scores else {}
+    compliance = db.get_compliance_for_campaign(cid) if cid else None
+    confidence = float(score.get("composite_score", 0) or 0) / 100.0
+    return {
+        "sku": row["sku"], "name": row["name"], "type": key,
+        "campaign_id": cid, "campaign": row["campaign"],
+        "status": row["status"], "status_label": row["status_label"],
+        "hero_url": assets["hero_url"], "artwork_url": assets["artwork_url"],
+        "mockups": assets["mockups"], "has_artwork": assets["has_artwork"],
+        "has_mockups": assets["has_mockups"],
+        "listing_title": assets["listing_title"] or row["name"],
+        "listing_package_url": assets["listing_package_url"],
+        "seo_score": assets["seo_score"],
+        "confidence": round(confidence, 3),
+        "ceo_rationale": (score.get("reasoning") or "").strip(),
+        "compliance": (compliance or {}).get("verdict") or "PENDING",
+        "compliance_score": (compliance or {}).get("compliance_score"),
+        "approval": row["approval"], "operator": row["operator"],
+        "listing_id": row["listing_id"], "listing_url": row["listing_url"],
+        "reason": row["reason"], "retryable": row["retryable"],
+        "actions": _card_actions(row["status"]),
+    }
+
+
 def _approvals(state: Any) -> dict[str, Any]:
-    """The manual-approval queue: auto-approved / needs-review / blocked, derived
-    from the compliance verdicts + protection confidence the system already
-    records. ONASSIS does 99%; the operator only sees what needs a human."""
+    """The Approval Workspace (Sprint 40, Objective 2): operational product cards
+    the operator can act on, plus the legacy compliance summary buckets.
+
+    ``queue`` holds the products that need a human decision (awaiting / failed),
+    ``ready`` those the operator approved and can publish, and the auto/needs/
+    blocked buckets summarise the compliance verdicts as before."""
     threshold = float((state.config.compliance or {}).get("auto_approve_confidence", 0.85))
+    try:
+        threshold = float(BusinessSettings(state.db, state.config).get("auto_approval_threshold"))
+    except Exception:
+        pass
+
+    ctx = _product_context(state)
+    rows = [_product_row(state, p, ctx) for p in state.db.list_products()]
+    queue, ready, published = [], [], []
+    for r in rows:
+        if r["status"] in ("awaiting_approval", "failed"):
+            queue.append(_approval_card(state, r, ctx))
+        elif r["status"] == "approved":
+            ready.append(_approval_card(state, r, ctx))
+        elif r["status"] in ("draft_created", "live", "marketing", "tracking"):
+            published.append(_approval_card(state, r, ctx))
+
+    # Legacy compliance-derived buckets (kept for the summary strip).
     blocked, review, auto = [], [], []
     for r in state.db.list_compliance_reports()[:50]:
         verdict = (r.get("verdict") or "").upper()
@@ -544,12 +834,12 @@ def _approvals(state: Any) -> dict[str, Any]:
             review.append(item)
         else:
             auto.append(item)
-    # Low-confidence protection decisions also want a human look.
     for d in state.db.list_protection_decisions(decision="REJECT")[:20]:
         review.append({"subject": f"{d['action']} · {d.get('product_key') or ''}",
                        "verdict": "PROTECTION_HOLD", "score": d.get("confidence"),
                        "reason": d.get("reason")})
-    return {"auto_approved": auto[:20], "needs_review": review[:20],
+    return {"queue": queue, "ready": ready, "published": published,
+            "auto_approved": auto[:20], "needs_review": review[:20],
             "blocked": blocked[:20], "confidence_threshold": threshold}
 
 

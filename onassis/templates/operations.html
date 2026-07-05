@@ -205,23 +205,51 @@
 
   <!-- PRODUCTS -->
   <div x-show="tab==='products'">
+    <div class="panel" x-show="productSummary" style="margin-bottom:12px">
+      <h2>Publish summary — real state, not "completed"</h2>
+      <div class="grid">
+        <div class="stat"><div class="k">Created</div><div class="v" x-text="productSummary?.products_created"></div></div>
+        <div class="stat"><div class="k">Approved</div><div class="v" x-text="productSummary?.products_approved"></div></div>
+        <div class="stat"><div class="k">Awaiting review</div><div class="v" x-text="productSummary?.products_awaiting_review"></div></div>
+        <div class="stat"><div class="k">Drafts created</div><div class="v" x-text="productSummary?.drafts_created"></div></div>
+        <div class="stat"><div class="k">Drafts failed</div><div class="v" x-text="productSummary?.drafts_failed"></div></div>
+        <div class="stat"><div class="k">Marketing assets</div><div class="v" x-text="productSummary?.marketing_assets"></div></div>
+        <div class="stat"><div class="k">Pins scheduled</div><div class="v" x-text="productSummary?.pinterest_posts_scheduled"></div></div>
+        <div class="stat"><div class="k">Revenue forecast</div><div class="v sm" x-text="money(productSummary?.revenue_forecast)"></div></div>
+      </div>
+    </div>
     <div class="panel">
       <h2>Products (<span x-text="products.length"></span>)</h2>
+      <div class="secondary" style="grid-template-columns:repeat(7,1fr);margin-bottom:10px">
+        <template x-for="f in productFilters" :key="f[0]">
+          <button class="btn small" :class="{primary:productFilter===f[0]}" @click="setFilter(f[0])" x-text="f[1]"></button>
+        </template>
+      </div>
       <input class="keybar" style="width:100%;margin-bottom:12px" placeholder="Search products…"
              x-model="productSearch" @input="void 0">
-      <table><thead><tr><th>Product</th><th>Status</th><th>Units</th><th>Net profit</th><th>Launched</th></tr></thead>
+      <div style="overflow-x:auto">
+      <table><thead><tr><th>Campaign</th><th>Product</th><th>Type</th><th>Approval</th><th>Etsy status</th><th>Marketing</th><th>Views</th><th>Sales</th><th>Revenue</th><th>Profit</th><th>Updated</th><th>Operator</th></tr></thead>
       <tbody>
         <template x-for="p in filteredProducts()" :key="p.sku">
           <tr>
+            <td class="muted" x-text="p.campaign||'—'"></td>
             <td x-text="p.name"></td>
-            <td><span class="pill" :class="p.status" x-text="p.status"></span></td>
-            <td x-text="p.units"></td>
+            <td class="muted" x-text="p.type"></td>
+            <td><span class="pill" :class="p.approval" x-text="p.approval"></span></td>
+            <td><span class="pill" :class="p.status" x-text="p.status_label"></span>
+                <template x-if="p.status==='failed'"><span class="note" x-text="' '+(p.reason||'')"></span></template></td>
+            <td class="muted" x-text="p.marketing_status"></td>
+            <td x-text="p.views"></td>
+            <td x-text="p.sales"></td>
+            <td x-text="money(p.revenue)"></td>
             <td x-text="money(p.net_profit)"></td>
-            <td class="muted mono" x-text="(p.launched_at||'').slice(0,10)"></td>
+            <td class="muted mono" x-text="(p.updated_at||'').slice(0,10)"></td>
+            <td class="muted" x-text="p.operator||'—'"></td>
           </tr>
         </template>
-        <tr x-show="!products.length"><td colspan="5" class="muted">No products yet — click RUN BUSINESS.</td></tr>
+        <tr x-show="!products.length"><td colspan="12" class="muted">No products in this view.</td></tr>
       </tbody></table>
+      </div>
     </div>
   </div>
 
@@ -247,9 +275,47 @@
   <!-- APPROVALS -->
   <div x-show="tab==='approvals'">
     <div class="panel" x-show="approvals">
-      <h2>Approval queue — automation where safe, humans where it matters</h2>
-      <div class="note">Auto-approve confidence threshold: <b x-text="approvals?.confidence_threshold"></b></div>
-      <div class="cols" style="margin-top:12px">
+      <h2>Approval workspace — review, approve &amp; publish</h2>
+      <div class="note">Auto-approve confidence threshold: <b x-text="approvals?.confidence_threshold"></b>
+        · <span x-text="(approvals?.queue||[]).length"></span> awaiting · <span x-text="(approvals?.ready||[]).length"></span> ready to publish</div>
+
+      <h2 style="margin-top:16px">🟡 Needs your decision (<span x-text="((approvals?.queue||[]).length)"></span>)</h2>
+      <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr))">
+        <template x-for="c in (approvals?.queue||[])" :key="c.sku">
+          <div class="panel" style="margin:0">
+            <div style="display:flex;gap:12px">
+              <img x-show="c.hero_url" :src="c.hero_url" alt="" style="width:88px;height:88px;object-fit:cover;border-radius:8px;background:#222">
+              <div style="flex:1;min-width:0">
+                <div class="v sm" x-text="c.listing_title"></div>
+                <div class="note"><span x-text="c.type"></span> · confidence <b x-text="pct(c.confidence)"></b> · SEO <span x-text="c.seo_score??'—'"></span></div>
+                <div class="note">Compliance: <span class="pill" :class="c.compliance==='APPROVE'?'ok':'failed'" x-text="c.compliance"></span></div>
+                <div class="note" x-show="c.status==='failed'" style="color:#ff8a8a" x-text="'Failed: '+(c.reason||'')"></div>
+              </div>
+            </div>
+            <div class="note" style="margin-top:8px" x-text="c.ceo_rationale"></div>
+            <div class="secondary" style="grid-template-columns:repeat(2,1fr);margin-top:10px">
+              <button class="btn small primary" x-show="c.actions.includes('approve')" @click="decide(c.sku,'approve')">Approve</button>
+              <button class="btn small primary" x-show="c.actions.includes('approve_and_publish')" @click="decide(c.sku,'approve_and_publish')">Approve &amp; Publish</button>
+              <button class="btn small" x-show="c.actions.includes('retry')" @click="decide(c.sku,'retry')">Retry</button>
+              <button class="btn small" @click="decide(c.sku,'reject')">Reject</button>
+              <a class="btn small" x-show="c.artwork_url" :href="c.artwork_url" target="_blank">View Artwork</a>
+              <a class="btn small" x-show="c.mockups?.length" :href="c.mockups[0]" target="_blank">View Mockups</a>
+              <a class="btn small" x-show="c.listing_package_url" :href="c.listing_package_url" target="_blank">Listing Package</a>
+            </div>
+          </div>
+        </template>
+        <div x-show="!(approvals?.queue||[]).length" class="muted">Nothing awaiting a decision.</div>
+      </div>
+
+      <h2 style="margin-top:18px">🟢 Ready to publish (<span x-text="((approvals?.ready||[]).length)"></span>)</h2>
+      <template x-for="c in (approvals?.ready||[])" :key="c.sku">
+        <div class="stat" style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
+          <div><div class="v sm" x-text="c.listing_title"></div><div class="note" x-text="c.type+' · approved by '+(c.operator||'—')"></div></div>
+          <button class="btn small primary" @click="decide(c.sku,'approve_and_publish')">Publish to Etsy</button>
+        </div>
+      </template>
+
+      <div class="cols" style="margin-top:18px">
         <div><h2>🟢 Auto-approved</h2><template x-for="a in (approvals?.auto_approved||[])"><div class="stat" style="margin-bottom:8px"><div class="v sm" x-text="a.subject"></div><div class="note">score <span x-text="a.score"></span></div></div></template></div>
         <div><h2>🟡 Needs review</h2><template x-for="a in (approvals?.needs_review||[])"><div class="stat" style="margin-bottom:8px"><div class="v sm" x-text="a.subject"></div><div class="note" x-text="a.verdict + (a.reason? ' · '+a.reason:'')"></div></div></template></div>
         <div><h2>🔴 Blocked by compliance</h2><template x-for="a in (approvals?.blocked||[])"><div class="stat" style="margin-bottom:8px"><div class="v sm" x-text="a.subject"></div><div class="note" x-text="a.verdict"></div></div></template></div>
@@ -259,6 +325,27 @@
 
   <!-- SYSTEM -->
   <div x-show="tab==='system'">
+    <div class="panel" x-show="settings" style="margin-bottom:12px">
+      <h2>Business settings — tune the business without editing config.yaml</h2>
+      <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(240px,1fr))">
+        <template x-for="s in (settings||[])" :key="s.key">
+          <div class="stat">
+            <div class="k" x-text="s.label"></div>
+            <template x-if="s.kind==='bool'">
+              <label style="display:flex;gap:8px;align-items:center;margin-top:6px">
+                <input type="checkbox" x-model="s.value"><span class="note" x-text="s.value?'On':'Off'"></span></label>
+            </template>
+            <template x-if="s.kind!=='bool'">
+              <input class="keybar" style="width:100%;margin-top:6px" type="number"
+                     :step="s.kind==='float'?0.01:1" :min="s.min" :max="s.max" x-model.number="s.value">
+            </template>
+            <div class="note" x-text="s.help"></div>
+          </div>
+        </template>
+      </div>
+      <button class="btn primary" style="margin-top:12px" @click="saveSettings()"
+              :disabled="savingSettings" x-text="savingSettings?'Saving…':'Save settings'"></button>
+    </div>
     <div class="panel" x-show="system">
       <h2>System</h2>
       <div class="grid">
@@ -319,13 +406,17 @@ function ops(){
           {id:'products',label:'Products'},{id:'marketing',label:'Marketing'},
           {id:'approvals',label:'Approvals'},{id:'system',label:'System'}],
     status:null, run:null, logs:[], logSeq:0, logUid:0, _polling:false,
-    business:null, products:[], marketing:null, approvals:null, system:null,
-    productSearch:'',
+    business:null, products:[], productSummary:null, marketing:null, approvals:null, system:null,
+    settings:null, savingSettings:false,
+    productSearch:'', productFilter:'all',
+    productFilters:[['all','All'],['awaiting_approval','Awaiting Approval'],['ready_to_publish','Ready to Publish'],['draft_created','Draft Created'],['live','Live'],['failed','Failed'],['archived','Archived']],
     get running(){ return this.run?.status==='running'; },
     get mode(){ return this.status?.business_mode || 'running'; },
     headers(){ return this.key ? {'X-API-Key':this.key} : {}; },
     async get(p){ const r=await fetch(p,{headers:this.headers()}); if(!r.ok) throw r.status; return r.json(); },
-    async post(p){ const r=await fetch(p,{method:'POST',headers:this.headers()}); return r.ok? r.json() : {error:r.status}; },
+    async post(p,body){ const h={...this.headers()}; if(body) h['Content-Type']='application/json';
+      const r=await fetch(p,{method:'POST',headers:h,body:body?JSON.stringify(body):undefined});
+      return r.ok? r.json() : {error:r.status}; },
     ledColor(s){ return {green:'#3ddc84',amber:'#ffcc4d',red:'#ff5c5c',grey:'#576067'}[s]||'#576067'; },
     statusWord(s){ return {green:'OK',amber:'Attention',red:'Fault',grey:'N/A'}[s]||s; },
     stageLed(s){ return {ok:'green',failed:'red',skipped:'grey',running:'amber',pending:'grey'}[s]||'grey'; },
@@ -362,10 +453,23 @@ function ops(){
       if(r&&r.mode===undefined&&r.ok===false) alert(a+' failed — see the live log.'); },
     async loadTab(t){ try{
       if(t==='business') this.business=await this.get('/operations/api/business');
-      else if(t==='products') this.products=(await this.get('/operations/api/products')).products;
+      else if(t==='products'){ const d=await this.get('/operations/api/products?filter='+this.productFilter);
+        this.products=d.products; this.productSummary=d.summary; }
       else if(t==='marketing') this.marketing=await this.get('/operations/api/marketing');
       else if(t==='approvals') this.approvals=await this.get('/operations/api/approvals');
-      else if(t==='system') this.system=await this.get('/operations/api/system'); }catch(e){} },
+      else if(t==='system'){ this.system=await this.get('/operations/api/system');
+        this.settings=(await this.get('/operations/api/business-settings')).settings; } }catch(e){} },
+    setFilter(f){ this.productFilter=f; this.loadTab('products'); },
+    async decide(sku,action){
+      if(action==='reject'&&!confirm('Reject '+sku+'?')) return;
+      const r=await this.post('/operations/api/approvals/'+encodeURIComponent(sku)+'/decision',{action,operator:'operator'});
+      if(r&&r.error){ alert('Action failed ('+r.error+').'); return; }
+      this.loadTab('approvals'); this.pollLogs(); },
+    async saveSettings(){ this.savingSettings=true;
+      const changes={}; for(const s of (this.settings||[])) changes[s.key]=s.value;
+      const r=await this.post('/operations/api/business-settings',{changes});
+      if(r&&r.settings) this.settings=r.settings; else alert('Save failed — check values.');
+      this.savingSettings=false; },
     go(t){ this.tab=t; this.loadTab(t); },
     refreshAll(){ this.refreshStatus(); this.refreshRun(); this.pollLogs(); this.loadTab(this.tab); },
     init(){ this.refreshAll();

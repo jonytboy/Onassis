@@ -125,3 +125,117 @@ def test_legacy_operations_endpoints_stay_globally_protected(config, tmp_path):
     # /operations/status (the OperationsManager, not the centre) is NOT exempt.
     assert cl.get("/operations/status").status_code == 401
     assert cl.get("/operations/status", headers={"X-API-Key": key}).status_code == 200
+
+
+# --- Sprint 40: Product Operations & Commercial Workflow -------------
+
+def _seed_launched_product(db, *, key="ceramic_mug", draft=False):
+    """A campaign with one CEO-approved, launched product (optionally drafted)."""
+    brief_id = db.insert_brief({"brief_date": "2026-07-01", "theme": "Salt", "keywords": []})
+    cid = db.insert_campaign({"name": "Salt Air", "brief_id": brief_id})
+    db.insert_compliance_report({"campaign_id": cid, "verdict": "APPROVE",
+                                 "reasoning": "ok", "compliance_score": 92})
+    sku = f"{cid}-{key}"
+    db.insert_product({"sku": sku, "name": key, "campaign_id": cid, "product_key": key})
+    db.insert_product_score({"campaign_id": cid, "product_key": key, "product_name": key,
+                             "launched": 1, "composite_score": 88, "expected_profit": 9.5,
+                             "ceo_verdict": "APPROVE", "reasoning": "Strong margin."})
+    if draft:
+        db.insert_publication({"platform": "etsy", "product_id": sku, "campaign_id": cid,
+                               "listing_id": "555", "mode": "draft", "status": "draft"})
+    return cid, sku
+
+
+def test_products_status_reflects_real_lifecycle_not_active_flag(client):
+    db = client.app.state.db
+    cid, sku = _seed_launched_product(db)                 # launched, no draft
+    _, sku2 = _seed_launched_product(db, key="poster", draft=True)  # real Etsy draft
+
+    rows = {r["sku"]: r for r in client.get("/operations/api/products").json()["products"]}
+    # The launched-but-undrafted product is Awaiting Approval, never "published".
+    assert rows[sku]["status"] == "awaiting_approval"
+    assert rows[sku]["status"] != "published"
+    # Only the product Etsy actually drafted shows Draft Created.
+    assert rows[sku2]["status"] == "draft_created"
+    assert rows[sku2]["listing_id"] == "555"
+
+
+def test_products_filter_buckets(client):
+    db = client.app.state.db
+    _seed_launched_product(db, key="mug")
+    _seed_launched_product(db, key="poster", draft=True)
+    awaiting = client.get("/operations/api/products?filter=awaiting_approval").json()
+    assert all(r["status"] == "awaiting_approval" for r in awaiting["products"])
+    drafts = client.get("/operations/api/products?filter=draft_created").json()
+    assert all(r["status"] in ("draft_created", "publishing") for r in drafts["products"])
+
+
+def test_publish_summary_is_honest(client):
+    db = client.app.state.db
+    _seed_launched_product(db, key="mug")
+    _seed_launched_product(db, key="poster", draft=True)
+    summary = client.get("/operations/api/publish-summary").json()
+    assert summary["products_created"] == 2
+    assert summary["products_awaiting_review"] == 1
+    assert summary["drafts_created"] == 1
+    assert "revenue_forecast" in summary
+
+
+def test_approval_workspace_has_operational_cards(client):
+    db = client.app.state.db
+    cid, sku = _seed_launched_product(db)
+    a = client.get("/operations/api/approvals").json()
+    assert "queue" in a and a["queue"]
+    card = a["queue"][0]
+    assert card["sku"] == sku
+    assert "approve" in card["actions"] and "approve_and_publish" in card["actions"]
+    assert "ceo_rationale" in card and card["compliance"] == "APPROVE"
+
+
+def test_approve_and_reject_decisions_persist(client):
+    db = client.app.state.db
+    cid, sku = _seed_launched_product(db)
+    r = client.post(f"/operations/api/approvals/{sku}/decision",
+                    json={"action": "approve", "operator": "jony"})
+    assert r.json()["decision"] == "approved"
+    assert db.get_product_approval(sku)["decision"] == "approved"
+    # Status now reads Approved (ready to publish).
+    rows = {x["sku"]: x for x in client.get("/operations/api/products").json()["products"]}
+    assert rows[sku]["status"] == "approved"
+    # Reject flips it and is recorded in history.
+    client.post(f"/operations/api/approvals/{sku}/decision",
+                json={"action": "reject", "operator": "jony", "notes": "off-brand"})
+    assert db.get_product_approval(sku)["decision"] == "rejected"
+    assert len(db.list_approval_history(sku)) == 2
+
+
+def test_unknown_approval_action_is_400(client):
+    db = client.app.state.db
+    _, sku = _seed_launched_product(db)
+    assert client.post(f"/operations/api/approvals/{sku}/decision",
+                       json={"action": "nonsense"}).status_code == 400
+
+
+def test_business_settings_get_and_update(client):
+    got = client.get("/operations/api/business-settings").json()["settings"]
+    keys = {s["key"] for s in got}
+    assert {"products_per_campaign", "auto_approval_threshold", "auto_publish",
+            "pinterest_enabled"} <= keys
+    # Update a couple and read them back.
+    r = client.post("/operations/api/business-settings",
+                    json={"changes": {"products_per_campaign": 5,
+                                      "auto_approval_threshold": 0.9}})
+    assert r.status_code == 200
+    values = {s["key"]: s["value"] for s in r.json()["settings"]}
+    assert values["products_per_campaign"] == 5
+    assert values["auto_approval_threshold"] == 0.9
+    # Persisted across requests.
+    again = {s["key"]: s["value"]
+             for s in client.get("/operations/api/business-settings").json()["settings"]}
+    assert again["products_per_campaign"] == 5
+
+
+def test_business_settings_validation_rejects_out_of_range(client):
+    r = client.post("/operations/api/business-settings",
+                    json={"changes": {"auto_approval_threshold": 5}})  # > 1.0
+    assert r.status_code == 400

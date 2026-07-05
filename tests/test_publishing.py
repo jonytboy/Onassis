@@ -476,6 +476,64 @@ def test_no_go_live_when_live_mode_disabled(config, db, tmp_path):
     assert all(p["status"] == "draft" for p in db.list_publications())
 
 
+# --- Sprint 40: Etsy draft validation -------------------------------
+
+class NoIdDraftClient:
+    """Returns a response with a missing/invalid listing id (Etsy hiccup)."""
+
+    def __init__(self, listing_id=None):
+        self.listing_id = listing_id
+        self.calls = 0
+
+    def create_draft(self, listing):
+        self.calls += 1
+        return {"listing_id": self.listing_id, "state": "draft"}
+
+
+def test_missing_listing_id_is_a_failure_not_a_draft(config, db, tmp_path):
+    """A publish that returns no valid listing id must be recorded FAILED —
+    never stored as a draft with id 'None'."""
+    config.listing = {"exports_dir": str(tmp_path / "exports")}
+    config.publishing = {"enabled_modes": ["draft"], "max_retries": 2}
+    pub = PublisherService(config, db, draft_client=NoIdDraftClient(listing_id=None))
+    cid = _approved_campaign(db)
+    _write_package(tmp_path, cid)
+
+    result = pub.publish(cid, mode="draft")
+    assert result["status"] == "failed"
+    assert "valid listing id" in result["reason"]
+    stored = db.list_publications()[0]
+    assert stored["status"] == "failed"
+    assert stored["listing_id"] is None
+    # No active (draft/live) publication exists, so a retry is still possible.
+    assert db.get_active_publication(cid) is None
+
+
+def test_string_none_listing_id_is_rejected(config, db, tmp_path):
+    config.listing = {"exports_dir": str(tmp_path / "exports")}
+    config.publishing = {"enabled_modes": ["draft"], "max_retries": 1}
+    pub = PublisherService(config, db, draft_client=NoIdDraftClient(listing_id="None"))
+    cid = _approved_campaign(db)
+    _write_package(tmp_path, cid)
+    assert pub.publish(cid, mode="draft")["status"] == "failed"
+
+
+def test_publish_products_counts_are_honest(config, db, tmp_path):
+    """drafts_created counts only real drafts; a failure is not 'published'."""
+    config.listing = {"exports_dir": str(tmp_path / "exports")}
+    config.publishing = {"enabled_modes": ["draft"], "max_retries": 1}
+    pub = PublisherService(config, db, draft_client=StubDraftClient())
+    cid = _approved_campaign(db)
+    _launch(db, cid, "ceramic_mug")
+    _write_product_package(tmp_path, cid, "ceramic_mug")
+    _launch(db, cid, "premium_poster")  # launched but NO package -> blocked
+
+    result = pub.publish_products(cid, mode="draft")
+    assert result["drafts_created"] == 1
+    assert result["published"] == 1        # only the real draft counts
+    assert result["count"] == 2
+
+
 # --- Status ---------------------------------------------------------
 
 def test_status_summary(publisher, db, tmp_path):
