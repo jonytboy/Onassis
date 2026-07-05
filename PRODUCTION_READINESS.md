@@ -93,3 +93,75 @@ ONASSIS is **functionally complete and production-grade in its decision, finance
 3. **Listing mock-up images** — currently placeholder PNGs; need a real image/mock-up generator before listings are visually complete.
 
 Live publishing is intentionally disabled (Draft mode only) and is a deliberate safety default, not a defect.
+
+---
+
+## Operations runbook (deploy · backup · rollback · health)
+
+_Manually maintained (Sprint 38). Root-level scripts wrap the routine operations
+so a normal deployment or health check is one command — no SSH gymnastics, no
+remembered flags. Each script is self-contained and overridable via the
+environment (`ONASSIS_SERVICE`, `ONASSIS_HEALTH_URL`, `ONASSIS_LOCAL_URL`, …)._
+
+### Normal deployment — one command
+```bash
+cd ~/Onassis
+./deploy.sh
+```
+`deploy.sh` **backs up first** (and stops if the backup fails), records the
+current commit as the rollback point, prints the old → new commit SHAs, pulls
+`origin/<current-branch>`, reinstalls dependencies **only if `requirements.txt`
+changed**, restarts the service, and verifies `systemctl is-active` **and** the
+public health endpoint. Any failure exits non-zero and points you at
+`./rollback.sh`.
+
+### Backup — timestamped, git-ignored
+```bash
+./backup.sh          # -> backups/YYYY-MM-DD-HHMMSS/
+```
+Backs up `data/onassis.db`, `.env`, `config.yaml`, `exports/`, `logs/` plus a
+`MANIFEST.txt` (commit, branch, host, contents). Backups live under `backups/`
+which is git-ignored — they are never committed.
+
+### Rollback — undo a bad deploy
+```bash
+./rollback.sh        # asks to confirm;  ./rollback.sh -y  to skip the prompt
+```
+Hard-resets to the commit recorded by the last `deploy.sh`
+(`.onassis_deploy_state`), reinstalls dependencies, restarts the service, and
+re-checks health.
+
+### Health check — pass/fail production status
+```bash
+./health.sh          # exit 0 = PASS, non-zero = FAIL (safe for cron/monitoring)
+```
+Reports git commit, systemd service status, public API health, `/exports` local
+reachability, disk + memory usage, and recent `journalctl` errors, then prints an
+overall **PASS/FAIL**.
+
+### Where logs live
+* **Application log:** `logs/onassis.log` (rotating — see `logging.max_bytes` /
+  `backup_count` in `config.yaml`; rotated files are `logs/onassis.log.1` …).
+* **Service log (systemd/journal):** `journalctl -u onassis` (add `-f` to follow,
+  `-p err` for errors only).
+
+### Restart ONASSIS
+```bash
+sudo systemctl restart onassis      # restart
+sudo systemctl status  onassis      # check
+sudo systemctl restart onassis && ./health.sh   # restart + verify
+```
+
+### Edit `.env` safely
+`.env` holds live secrets and is git-ignored — never commit it, and back it up
+before editing:
+```bash
+./backup.sh                                     # snapshot current .env
+cp .env "backups/.env.$(date +%F-%H%M%S)"       # quick extra copy (optional)
+${EDITOR:-nano} .env                            # edit
+sudo systemctl restart onassis                  # apply (config is read at startup)
+./health.sh                                     # confirm still healthy
+```
+Only the six protection controls and integration keys belong in `.env`; all
+business logic stays in `config.yaml`. After any `.env` change the service must
+be **restarted** to pick it up.

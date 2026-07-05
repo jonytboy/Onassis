@@ -12,6 +12,11 @@ logs/*.log
 logs/*.log.*
 exports/
 
+# --- Operations (Sprint 38) ---
+# Timestamped backups (backup.sh) and the deploy rollback-point marker.
+backups/
+.onassis_deploy_state
+
 # --- Python ---
 __pycache__/
 *.py[cod]
