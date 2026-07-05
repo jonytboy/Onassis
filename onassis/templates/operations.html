@@ -285,7 +285,7 @@
   <div class="panel">
     <h2>Live log</h2>
     <div class="console" x-ref="console">
-      <template x-for="l in logs" :key="l.seq">
+      <template x-for="l in logs" :key="l.uid">
         <div class="ln"><span class="ts" x-text="l.ts"></span><span :class="l.level" x-text="l.line"></span></div>
       </template>
       <div x-show="!logs.length" class="muted">Waiting for activity…</div>
@@ -318,7 +318,7 @@ function ops(){
     tabs:[{id:'overview',label:'Overview'},{id:'business',label:'Business'},
           {id:'products',label:'Products'},{id:'marketing',label:'Marketing'},
           {id:'approvals',label:'Approvals'},{id:'system',label:'System'}],
-    status:null, run:null, logs:[], logSeq:0,
+    status:null, run:null, logs:[], logSeq:0, logUid:0, _polling:false,
     business:null, products:[], marketing:null, approvals:null, system:null,
     productSearch:'',
     get running(){ return this.run?.status==='running'; },
@@ -337,10 +337,26 @@ function ops(){
     scrollLog(){ const c=this.$refs.console; if(c) c.scrollTop=c.scrollHeight; },
     async refreshStatus(){ try{ this.status=await this.get('/operations/api/status'); }catch(e){} },
     async refreshRun(){ try{ this.run=await this.get('/operations/api/run'); }catch(e){} },
-    async pollLogs(){ try{ const d=await this.get('/operations/api/logs?since='+this.logSeq);
-      if(d.logs?.length){ this.logs.push(...d.logs); this.logSeq=d.logs[d.logs.length-1].seq;
-        if(this.logs.length>400) this.logs=this.logs.slice(-400); this.$nextTick(()=>this.scrollLog()); } }catch(e){} },
-    async runBusiness(){ this.logs.push({seq:0,ts:'',level:'info',line:'Starting…'}); await this.post('/operations/api/run-business'); this.refreshRun(); },
+    async pollLogs(){
+      if(this._polling) return;                 // guard: never run two polls at once
+      this._polling=true;
+      try{
+        const since=this.logSeq;
+        const d=await this.get('/operations/api/logs?since='+since);
+        // Defensive: only take entries strictly newer than what we've shown, and
+        // give each a globally-unique client key so x-for keys never collide.
+        const fresh=(d.logs||[]).filter(x=>x.seq>this.logSeq);
+        if(fresh.length){
+          for(const x of fresh){ x.uid=++this.logUid; }
+          this.logSeq=Math.max(this.logSeq, ...fresh.map(x=>x.seq));
+          this.logs.push(...fresh);
+          if(this.logs.length>400) this.logs=this.logs.slice(-400);
+          this.$nextTick(()=>this.scrollLog());
+        }
+      }catch(e){}
+      finally{ this._polling=false; }
+    },
+    async runBusiness(){ await this.post('/operations/api/run-business'); this.refreshRun(); this.pollLogs(); },
     async control(a){ if(a==='rollback'&&!confirm('Roll back to the previous deploy and restart?')) return;
       const r=await this.post('/operations/api/control/'+a); this.refreshStatus();
       if(r&&r.mode===undefined&&r.ok===false) alert(a+' failed — see the live log.'); },
