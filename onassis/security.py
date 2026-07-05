@@ -41,7 +41,15 @@ access_log = get_logger("onassis.access")
 # does its OWN operator-key check and polls frequently (so the shared rate
 # limiter must not throttle it). The legacy /operations/check|status|report
 # endpoints are NOT exempt — they stay behind the global key.
-_PUBLIC_EXACT = {"/", "/health", "/operations", "/operations/"}
+_PUBLIC_EXACT = {
+    "/",
+    "/health",
+    "/operations",
+    "/operations/",
+    "/etsy/oauth/login",
+    "/etsy/oauth/callback",
+    "/etsy/oauth/status",
+}
 _PUBLIC_PREFIXES = ("/exports", "/operations/api", "/operations/static")
 
 _DEFAULT_HEADERS = {
