@@ -130,6 +130,15 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     install_security(app, config)
 
+    # The Operations Centre — the browser control room (Jinja + HTMX + Alpine).
+    # Adds no business logic; reuses the engines below. Serves /operations.
+    from onassis.operations_centre import (
+        OperationsState, build_operations_router,
+    )
+
+    app.state.ops_state = OperationsState()
+    app.include_router(build_operations_router(lambda a: a.state.ops_state))
+
     # Expose services for tests / introspection.
     app.state.config = config
     app.state.orchestrator = orchestrator

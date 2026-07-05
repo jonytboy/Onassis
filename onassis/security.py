@@ -36,8 +36,13 @@ log = get_logger(__name__)
 access_log = get_logger("onassis.access")
 
 # Publicly reachable without a key (success criteria: Gelato + health probes).
-_PUBLIC_EXACT = {"/", "/health"}
-_PUBLIC_PREFIXES = ("/exports",)
+# The Operations Centre shell (/operations) and its data/action API
+# (/operations/api/*) are exempt from the GLOBAL middleware because the centre
+# does its OWN operator-key check and polls frequently (so the shared rate
+# limiter must not throttle it). The legacy /operations/check|status|report
+# endpoints are NOT exempt — they stay behind the global key.
+_PUBLIC_EXACT = {"/", "/health", "/operations", "/operations/"}
+_PUBLIC_PREFIXES = ("/exports", "/operations/api", "/operations/static")
 
 _DEFAULT_HEADERS = {
     "X-Content-Type-Options": "nosniff",
