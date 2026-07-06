@@ -500,6 +500,66 @@ def build_operations_router(get_state) -> APIRouter:
         get_state(request.app).add_log("Business settings updated by operator.")
         return {"settings": BusinessSettings(s.db, s.config).describe(), "values": values}
 
+    # --- Software Updates & Deployment (Sprint 40.1) ---
+    @router.get("/api/updates")
+    def api_updates(request: Request) -> Any:
+        _require_operator(request)
+        # Fast page-load view — no network fetch (use Check for Updates for that).
+        return request.app.state.deployment.status(check_remote=False)
+
+    @router.post("/api/updates/check")
+    def api_updates_check(request: Request) -> Any:
+        _require_operator(request)
+        result = request.app.state.deployment.check_updates(fetch=True)
+        get_state(request.app).add_log(
+            f"Checked for updates: {'update available' if result['update_available'] else 'up to date'} "
+            f"({result['behind']} behind).")
+        return result
+
+    @router.get("/api/updates/validate")
+    def api_updates_validate(request: Request) -> Any:
+        _require_operator(request)
+        return request.app.state.deployment.validate()
+
+    @router.get("/api/updates/history")
+    def api_updates_history(request: Request) -> Any:
+        _require_operator(request)
+        return {"deployments": request.app.state.deployment.history(25)}
+
+    @router.post("/api/updates/deploy")
+    def api_updates_deploy(request: Request, payload: dict | None = None) -> Any:
+        _require_operator(request)
+        body = payload or {}
+        state = get_state(request.app)
+        state.add_log("Deployment requested — fetch → validate → backup → deploy → health.")
+        result = request.app.state.deployment.deploy(
+            operator=body.get("operator") or "operator", notes=body.get("notes"),
+            allow_dirty=bool(body.get("allow_dirty", False)))
+        lvl = "info" if result.get("ok") else "error"
+        tail = "" if result.get("ok") else f" — {result.get('error')}" + (
+            " (rolled back)" if result.get("rollback_performed") else "")
+        state.add_log(f"Deployment {result.get('status')}{tail}.", lvl)
+        return result
+
+    @router.post("/api/updates/rollback")
+    def api_updates_rollback(request: Request, payload: dict | None = None) -> Any:
+        _require_operator(request)
+        body = payload or {}
+        state = get_state(request.app)
+        state.add_log("Rollback requested.")
+        result = request.app.state.deployment.rollback(
+            operator=body.get("operator") or "operator",
+            to_commit=body.get("to_commit"), notes=body.get("notes"))
+        state.add_log(f"Rollback {result.get('status')}.",
+                      "info" if result.get("ok") else "error")
+        return result
+
+    # --- Health dashboard (expanded — Sprint 40.1) ---
+    @router.get("/api/health")
+    def api_health(request: Request) -> Any:
+        _require_operator(request)
+        return request.app.state.deployment.health()
+
     # --- Pipeline tab ---
     @router.get("/api/pipeline")
     def api_pipeline(request: Request) -> Any:
@@ -561,8 +621,23 @@ def build_operations_router(get_state) -> APIRouter:
             state.mode = STOPPED
             state.add_log("EMERGENCY STOP engaged — no new runs will start.", "error")
             return {"mode": state.mode}
-        if action in ("backup", "health", "deploy", "rollback", "restart"):
-            return _run_script(action, state)
+        # Lifecycle actions go through the Deployment Service — the Operations
+        # Centre never executes shell commands directly (Sprint 40.1).
+        deployment = request.app.state.deployment
+        if action == "backup":
+            state.add_log("Backup requested.")
+            return deployment.backup()
+        if action == "health":
+            return deployment.health()
+        if action == "restart":
+            state.add_log("Service restart requested.")
+            return deployment.restart()
+        if action == "deploy":
+            state.add_log("Deploy requested via control — running full deployment.")
+            return deployment.deploy(operator="operator")
+        if action == "rollback":
+            state.add_log("Rollback requested via control.")
+            return deployment.rollback(operator="operator")
         raise HTTPException(status_code=400, detail=f"Unknown action '{action}'.")
 
     return router
@@ -870,31 +945,3 @@ def _recent_logs(limit: int = 60) -> list[str]:
         return lines[-limit:]
     except Exception:
         return []
-
-
-def _run_script(name: str, state: OperationsState) -> dict[str, Any]:
-    """Run an operations script (backup/health/deploy/rollback) or restart the
-    service, capturing output for the console. Bounded timeout; never blocks."""
-    if name == "restart":
-        cmd = ["sudo", "systemctl", "restart", "onassis"]
-    else:
-        script = ROOT_DIR / f"{name}.sh"
-        if not script.exists():
-            raise HTTPException(status_code=404, detail=f"{name}.sh not found.")
-        cmd = ["bash", str(script)]
-        if name == "rollback":
-            cmd.append("-y")
-    state.add_log(f"Running: {' '.join(cmd)}")
-    try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=600,
-                             cwd=str(ROOT_DIR))
-    except subprocess.TimeoutExpired:
-        state.add_log(f"{name}: timed out.", "error")
-        return {"action": name, "ok": False, "detail": "timed out"}
-    for line in (out.stdout or "").splitlines()[-40:]:
-        state.add_log(line)
-    if out.returncode != 0:
-        for line in (out.stderr or "").splitlines()[-10:]:
-            state.add_log(line, "error")
-    return {"action": name, "ok": out.returncode == 0, "returncode": out.returncode,
-            "output": (out.stdout or "")[-4000:], "error": (out.stderr or "")[-2000:]}

@@ -26,6 +26,17 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG_PATH = ROOT_DIR / "config.yaml"
 
 
+def runtime_root() -> Path:
+    """Where mutable runtime state (db, logs, backups, exports) lives.
+
+    Defaults to the repo root for backwards-compatible local/dev runs, but
+    setting ``ONASSIS_RUNTIME_DIR`` moves ALL runtime assets outside the Git
+    checkout (Sprint 40.1: application code becomes read-only; runtime state is
+    separated from source so a deploy/rollback never touches business data)."""
+    override = os.environ.get("ONASSIS_RUNTIME_DIR")
+    return Path(override).expanduser().resolve() if override else ROOT_DIR
+
+
 @dataclass
 class Config:
     """Typed, validated view over merged YAML + environment settings."""
@@ -90,10 +101,16 @@ class Config:
     anthropic_api_key: str | None = None
 
     def __post_init__(self) -> None:
-        # Resolve paths relative to the repo root so the app behaves the
-        # same regardless of the current working directory.
-        self.db_path = (ROOT_DIR / self.db_path).resolve()
-        self.log_dir = (ROOT_DIR / self.log_dir).resolve()
+        # Resolve runtime paths under the runtime root (repo root by default,
+        # or ONASSIS_RUNTIME_DIR when runtime is kept outside the checkout). An
+        # absolute db_path/log_dir (e.g. ONASSIS_DB_PATH=/var/lib/...) is honoured
+        # as-is.
+        base = runtime_root()
+        self.runtime_dir = base
+        db = Path(self.db_path)
+        self.db_path = db.resolve() if db.is_absolute() else (base / db).resolve()
+        log = Path(self.log_dir)
+        self.log_dir = log.resolve() if log.is_absolute() else (base / log).resolve()
 
 
 def _env(key: str, default: Any = None) -> Any:

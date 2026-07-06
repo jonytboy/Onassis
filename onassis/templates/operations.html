@@ -346,6 +346,84 @@
       <button class="btn primary" style="margin-top:12px" @click="saveSettings()"
               :disabled="savingSettings" x-text="savingSettings?'Saving…':'Save settings'"></button>
     </div>
+    <!-- Software Updates (Sprint 40.1) -->
+    <div class="panel" x-show="updates" style="margin-bottom:12px">
+      <h2>Software Updates</h2>
+      <div class="grid">
+        <div class="stat"><div class="k">Current version</div><div class="v sm mono" x-text="updates?.current_version"></div></div>
+        <div class="stat"><div class="k">Latest version</div><div class="v sm mono" x-text="updates?.latest_version"></div></div>
+        <div class="stat"><div class="k">Git</div><div class="v sm"><span x-text="updates?.git?.short_commit"></span> · <span x-text="updates?.git?.branch"></span>
+          <span class="pill" :class="updates?.git?.clean?'ok':'failed'" x-text="updates?.git?.clean?'clean':'modified'"></span></div></div>
+        <div class="stat"><div class="k">Updates</div><div class="v sm">
+          <span class="pill" :class="updates?.updates?.update_available?'needs_review':'ok'"
+            x-text="updates?.updates?.update_available?(updates.updates.behind+' behind'):'up to date'"></span></div></div>
+        <div class="stat"><div class="k">Deployment status</div><div class="v sm" x-text="updates?.last_deployment?.status || 'none'"></div></div>
+        <div class="stat"><div class="k">Health</div><div class="v sm"><span class="led" :class="updates?.health?.database?.ok?'green':'red'"></span>
+          <span x-text="updates?.health?.database?.ok?'healthy':'attention'"></span></div></div>
+        <div class="stat"><div class="k">Last deployment</div><div class="v sm mono" x-text="(updates?.last_deployment?.created_at||'—').slice(0,19).replace('T',' ')"></div></div>
+        <div class="stat"><div class="k">Last backup</div><div class="v sm mono" x-text="updates?.last_backup?.at || '—'"></div></div>
+      </div>
+      <div class="note" x-show="updates?.restart_required" style="color:#d9a63e;margin-top:8px">⚠ Restart required to finish applying an update.</div>
+      <div class="secondary" style="grid-template-columns:repeat(3,1fr);margin-top:12px">
+        <button class="btn small" @click="checkUpdates()">Check for Updates</button>
+        <button class="btn small primary" @click="deploy()" :disabled="deploying" x-text="deploying?'Deploying…':'Deploy'"></button>
+        <button class="btn small" @click="rollback()">Rollback</button>
+        <button class="btn small" @click="showNotes=!showNotes" x-show="updates?.updates?.release_notes?.length">View Release Notes</button>
+      </div>
+      <div x-show="showNotes&&updates?.updates?.release_notes?.length" style="margin-top:10px">
+        <h2>Release notes</h2>
+        <table><tbody>
+          <template x-for="n in (updates?.updates?.release_notes||[])" :key="n.sha">
+            <tr><td class="mono muted" x-text="n.sha"></td><td x-text="n.subject"></td></tr>
+          </template>
+        </tbody></table>
+      </div>
+      <h2 style="margin-top:16px">Deployment history</h2>
+      <table><thead><tr><th>When</th><th>Action</th><th>Version</th><th>Commit</th><th>Operator</th><th>Duration</th><th>Result</th><th></th></tr></thead>
+      <tbody>
+        <template x-for="d in deployHistory" :key="d.id">
+          <tr>
+            <td class="mono muted" x-text="(d.created_at||'').slice(0,19).replace('T',' ')"></td>
+            <td x-text="d.action"></td>
+            <td class="mono" x-text="d.version"></td>
+            <td class="mono muted"><span x-text="(d.from_commit||'').slice(0,7)"></span>→<span x-text="(d.to_commit||'').slice(0,7)"></span></td>
+            <td x-text="d.operator"></td>
+            <td class="mono" x-text="(d.duration_seconds||0)+'s'"></td>
+            <td><span class="pill" :class="d.status==='success'||d.status==='rolled_back'?'ok':'failed'" x-text="d.status"></span>
+                <span x-show="d.rollback_performed" class="pill needs_review">rolled back</span></td>
+            <td><button class="btn small" @click="showLog = showLog===d.id?null:d.id">Log</button></td>
+          </tr>
+        </template>
+        <tr x-show="!deployHistory.length"><td colspan="8" class="muted">No deployments yet.</td></tr>
+      </tbody></table>
+      <template x-for="d in deployHistory" :key="'log'+d.id">
+        <div x-show="showLog===d.id" class="console" style="margin-top:8px">
+          <template x-for="(st,i) in (d.steps||[])" :key="i">
+            <div class="ln"><span :class="st.status==='ok'?'info':'error'" x-text="(st.status==='ok'?'✓':'✗')+' '+st.step"></span> <span class="muted" x-text="st.detail"></span></div>
+          </template>
+        </div>
+      </template>
+    </div>
+
+    <!-- Health dashboard (expanded — Sprint 40.1) -->
+    <div class="panel" x-show="health" style="margin-bottom:12px">
+      <h2>Health</h2>
+      <div class="grid">
+        <div class="stat"><div class="k">Application</div><div class="v sm"><span class="led" :class="health?.application?.ok?'green':'red'"></span> running</div></div>
+        <div class="stat"><div class="k">API</div><div class="v sm"><span class="led" :class="health?.api?.ok?'green':'red'"></span> responding</div></div>
+        <div class="stat"><div class="k">Database</div><div class="v sm"><span class="led" :class="health?.database?.ok?'green':'red'"></span> <span x-text="health?.database?.ok?'ok':'FAILED'"></span></div></div>
+        <div class="stat"><div class="k">Disk</div><div class="v sm" x-text="(health?.disk?.percent??'—')+'% · '+(health?.disk?.free_gb??'—')+' GB free'"></div></div>
+        <div class="stat"><div class="k">Memory</div><div class="v sm" x-text="(health?.memory?.percent??'—')+'% used'"></div></div>
+        <div class="stat"><div class="k">CPU</div><div class="v sm" x-text="(health?.cpu?.percent??'—')+'% · load '+(health?.cpu?.load1??'—')"></div></div>
+        <div class="stat"><div class="k">Service</div><div class="v sm" x-text="health?.service?.detail"></div></div>
+        <div class="stat"><div class="k">Repository</div><div class="v sm"><span class="led" :class="health?.repository_clean?'green':'amber'"></span> <span x-text="health?.repository_clean?'clean':'modified'"></span></div></div>
+        <div class="stat"><div class="k">Pending updates</div><div class="v sm" x-text="health?.pending_updates"></div></div>
+        <div class="stat"><div class="k">Python</div><div class="v sm mono" x-text="health?.python_version"></div></div>
+        <div class="stat"><div class="k">OS</div><div class="v sm" x-text="health?.operating_system"></div></div>
+        <div class="stat"><div class="k">Restart required</div><div class="v sm" x-text="health?.restart_required?'Yes':'No'"></div></div>
+      </div>
+    </div>
+
     <div class="panel" x-show="system">
       <h2>System</h2>
       <div class="grid">
@@ -408,6 +486,7 @@ function ops(){
     status:null, run:null, logs:[], logSeq:0, logUid:0, _polling:false,
     business:null, products:[], productSummary:null, marketing:null, approvals:null, system:null,
     settings:null, savingSettings:false,
+    updates:null, health:null, deployHistory:[], deploying:false, showNotes:false, showLog:null,
     productSearch:'', productFilter:'all',
     productFilters:[['all','All'],['awaiting_approval','Awaiting Approval'],['ready_to_publish','Ready to Publish'],['draft_created','Draft Created'],['live','Live'],['failed','Failed'],['archived','Archived']],
     get running(){ return this.run?.status==='running'; },
@@ -458,7 +537,23 @@ function ops(){
       else if(t==='marketing') this.marketing=await this.get('/operations/api/marketing');
       else if(t==='approvals') this.approvals=await this.get('/operations/api/approvals');
       else if(t==='system'){ this.system=await this.get('/operations/api/system');
-        this.settings=(await this.get('/operations/api/business-settings')).settings; } }catch(e){} },
+        this.settings=(await this.get('/operations/api/business-settings')).settings;
+        this.updates=await this.get('/operations/api/updates');
+        this.health=await this.get('/operations/api/health');
+        this.deployHistory=(await this.get('/operations/api/updates/history')).deployments; } }catch(e){} },
+    async checkUpdates(){ this.updates=await this.get('/operations/api/updates');
+      const r=await this.post('/operations/api/updates/check');
+      if(this.updates) this.updates.updates=r; this.pollLogs(); },
+    async deploy(){ if(!confirm('Deploy the latest version? This backs up, updates and restarts.')) return;
+      this.deploying=true;
+      const r=await this.post('/operations/api/updates/deploy',{operator:'operator'});
+      this.deploying=false; this.pollLogs();
+      if(r&&r.rollback_performed) alert('Deployment failed and was rolled back:\n'+(r.error||''));
+      else if(r&&!r.ok) alert('Deployment failed:\n'+(r.error||''));
+      this.loadTab('system'); },
+    async rollback(){ if(!confirm('Roll back to the previous version and restart?')) return;
+      const r=await this.post('/operations/api/updates/rollback',{operator:'operator'});
+      this.pollLogs(); if(r&&!r.ok) alert('Rollback failed:\n'+(r.error||'')); this.loadTab('system'); },
     setFilter(f){ this.productFilter=f; this.loadTab('products'); },
     async decide(sku,action){
       if(action==='reject'&&!confirm('Reject '+sku+'?')) return;

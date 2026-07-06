@@ -239,3 +239,82 @@ def test_business_settings_validation_rejects_out_of_range(client):
     r = client.post("/operations/api/business-settings",
                     json={"changes": {"auto_approval_threshold": 5}})  # > 1.0
     assert r.status_code == 400
+
+
+# --- Sprint 40.1: Software Updates & Deployment ----------------------
+
+def _inject_fake_deployment(client, tmp_path, **git):
+    """Replace the app's DeploymentService with one driven by a fake Git runner,
+    so update/deploy endpoints never touch the real repository."""
+    from onassis.deployment import DeploymentService
+    from tests.test_deployment import FakeGit
+    s = client.app.state
+    dep = DeploymentService(s.config, s.db, runner=FakeGit(branch="main", **git),
+                            root=tmp_path)
+    dep.branch = "main"
+    dep.backup_dir = tmp_path / "dep_backups"
+    s.deployment = dep
+    return dep
+
+
+def test_software_updates_status(client, tmp_path):
+    _inject_fake_deployment(client, tmp_path, behind=0)
+    r = client.get("/operations/api/updates").json()
+    assert "current_version" in r and "git" in r and "health" in r
+    assert r["updates"]["update_available"] is False
+
+
+def test_check_for_updates_endpoint(client, tmp_path):
+    _inject_fake_deployment(client, tmp_path, behind=1,
+                            notes=[{"sha": "abc", "subject": "New feature"}])
+    r = client.post("/operations/api/updates/check").json()
+    assert r["update_available"] is True and r["behind"] == 1
+    assert r["release_notes"][0]["subject"] == "New feature"
+
+
+def test_validate_endpoint(client, tmp_path):
+    _inject_fake_deployment(client, tmp_path)
+    v = client.get("/operations/api/updates/validate").json()
+    assert v["ok"] is True and any(c["name"] == "Correct branch" for c in v["checks"])
+
+
+def test_one_click_deploy_and_history(client, tmp_path):
+    _inject_fake_deployment(client, tmp_path, head="old000000000",
+                            remote="new111111111", behind=1)
+    r = client.post("/operations/api/updates/deploy",
+                    json={"operator": "jony"}).json()
+    assert r["ok"] is True and r["status"] == "success"
+    hist = client.get("/operations/api/updates/history").json()["deployments"]
+    assert hist[0]["operator"] == "jony" and hist[0]["status"] == "success"
+
+
+def test_deploy_auto_rollback_reported_to_operator(client, tmp_path):
+    dep = _inject_fake_deployment(client, tmp_path, head="old000000000",
+                                  remote="new111111111", behind=1)
+    dep._health_hook = lambda: {"ok": False, "detail": "db down"}
+    r = client.post("/operations/api/updates/deploy").json()
+    assert r["status"] == "failed" and r["rollback_performed"] is True
+    assert "health check failed" in r["error"]
+
+
+def test_rollback_endpoint(client, tmp_path):
+    _inject_fake_deployment(client, tmp_path, head="old000000000",
+                            remote="new111111111", behind=1)
+    client.post("/operations/api/updates/deploy")
+    r = client.post("/operations/api/updates/rollback", json={"operator": "jony"}).json()
+    assert r["ok"] is True and r["status"] == "rolled_back"
+
+
+def test_health_dashboard_endpoint(client, tmp_path):
+    _inject_fake_deployment(client, tmp_path)
+    h = client.get("/operations/api/health").json()
+    for k in ("application", "database", "disk", "memory", "cpu", "python_version",
+              "restart_required", "pending_updates"):
+        assert k in h
+
+
+def test_control_deploy_routes_through_service_not_shell(client, tmp_path):
+    _inject_fake_deployment(client, tmp_path, head="old000000000",
+                            remote="new111111111", behind=1)
+    r = client.post("/operations/api/control/deploy").json()
+    assert r["status"] == "success" and r["action"] == "deploy"

@@ -641,6 +641,27 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at  TEXT    NOT NULL,
     updated_by  TEXT
 );
+
+-- Deployment history (Sprint 40.1): one row per deploy/rollback initiated from
+-- the Operations Centre. A full, auditable trail of what changed, by whom, how
+-- long it took, and whether it succeeded or rolled back.
+CREATE TABLE IF NOT EXISTS deployments (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at        TEXT    NOT NULL,
+    action            TEXT    NOT NULL,          -- deploy | rollback
+    version           TEXT,
+    from_commit       TEXT,
+    to_commit         TEXT,
+    branch            TEXT,
+    operator          TEXT,
+    duration_seconds  REAL    NOT NULL DEFAULT 0,
+    status            TEXT    NOT NULL,          -- success | failed | rolled_back
+    rollback_performed INTEGER NOT NULL DEFAULT 0,
+    steps             TEXT,                       -- JSON list of step results
+    notes             TEXT,
+    error             TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_deployments_created ON deployments(created_at);
 """
 
 
@@ -1663,6 +1684,61 @@ class Database:
             except (ValueError, TypeError):
                 out[r["key"]] = r["value"]
         return out
+
+    # --- Deployments (Sprint 40.1 audit trail) ----------------------
+
+    def insert_deployment(self, dep: dict[str, Any]) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO deployments
+                    (created_at, action, version, from_commit, to_commit, branch,
+                     operator, duration_seconds, status, rollback_performed, steps,
+                     notes, error)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _utcnow(), dep.get("action", "deploy"), dep.get("version"),
+                    dep.get("from_commit"), dep.get("to_commit"), dep.get("branch"),
+                    dep.get("operator"), float(dep.get("duration_seconds", 0) or 0),
+                    dep.get("status", "success"),
+                    1 if dep.get("rollback_performed") else 0,
+                    json.dumps(dep.get("steps", [])), dep.get("notes"), dep.get("error"),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_deployments(self, limit: int = 25) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM deployments ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["steps"] = json.loads(d.get("steps") or "[]")
+            except (ValueError, TypeError):
+                d["steps"] = []
+            out.append(d)
+        return out
+
+    def get_last_deployment(self, action: str | None = None) -> dict[str, Any] | None:
+        sql = "SELECT * FROM deployments"
+        params: list[Any] = []
+        if action is not None:
+            sql += " WHERE action = ?"
+            params.append(action)
+        sql += " ORDER BY id DESC LIMIT 1"
+        with self._connect() as conn:
+            row = conn.execute(sql, params).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        try:
+            d["steps"] = json.loads(d.get("steps") or "[]")
+        except (ValueError, TypeError):
+            d["steps"] = []
+        return d
 
     # --- Metric snapshots (append-only history) ---------------------
 

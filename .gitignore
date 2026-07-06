@@ -37,3 +37,39 @@ env/
 .DS_Store
 .idea/
 .vscode/
+
+# --- Sprint 40.1: Repository & Deployment Hygiene ---
+# Runtime data lives OUTSIDE the repo (ONASSIS_RUNTIME_DIR); these patterns
+# also catch the repo-local defaults so runtime state is never tracked.
+data/
+runtime/
+uploads/
+cache/
+tmp/
+*.tmp
+*.pid
+*.sock
+
+# Git bundles (out-of-band code transfer, never source)
+*.bundle
+
+# Personal / operator notes (kept local, never committed)
+NOTES.md
+NOTES*.md
+notes/
+scratch/
+TODO.local.md
+
+# Server / deployment configuration (environment-specific, not source)
+*.service
+*.socket
+nginx.conf
+*.nginx
+Caddyfile
+gunicorn.conf.py
+.env.*
+!.env.example
+
+# Deployment state markers
+.onassis_deploy_state
+.onassis_restart_required

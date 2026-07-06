@@ -170,6 +170,9 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.etsy_intelligence = etsy_intelligence
     app.state.protection = protection
 
+    from onassis.deployment import DeploymentService
+    app.state.deployment = DeploymentService(config, db)
+
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""
         view = campaigns.get_campaign(campaign_id)
