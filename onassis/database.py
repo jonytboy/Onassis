@@ -28,6 +28,11 @@ from onassis.logger import get_logger
 
 log = get_logger(__name__)
 
+# Bump whenever the schema changes (new table / column). Surfaced in the
+# Operations Centre "Environment" panel so an operator can see at a glance
+# whether the running database matches the code they expect.
+SCHEMA_VERSION = 41
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS briefs (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -709,6 +714,12 @@ class Database:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
                 except sqlite3.OperationalError:
                     pass  # column already present
+            # Stamp the schema version (PRAGMA can't be parameterised).
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+    def schema_version(self) -> int:
+        with self._connect() as conn:
+            return int(conn.execute("PRAGMA user_version").fetchone()[0])
 
     # --- Briefs -----------------------------------------------------
 

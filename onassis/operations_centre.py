@@ -500,13 +500,21 @@ def build_operations_router(get_state) -> APIRouter:
         get_state(request.app).add_log("Business settings updated by operator.")
         return {"settings": BusinessSettings(s.db, s.config).describe(), "values": values}
 
-    # --- Software Updates & Deployment (Sprint 40.1) ---
+    # --- Software Updates & Deployment (Sprint 40.1 / 40.2) ---
+    # Small, well-defined surface: check · download · preview · validate ·
+    # deploy · rollback · health. The Operations Centre never runs shell.
     @router.get("/api/updates")
     def api_updates(request: Request) -> Any:
         _require_operator(request)
         # Fast page-load view — no network fetch (use Check for Updates for that).
         return request.app.state.deployment.status(check_remote=False)
 
+    @router.get("/api/environment")
+    def api_environment(request: Request) -> Any:
+        _require_operator(request)
+        return request.app.state.deployment.environment()
+
+    # Safe Mode step 1 — Check (contacts GitHub; changes nothing).
     @router.post("/api/updates/check")
     def api_updates_check(request: Request) -> Any:
         _require_operator(request)
@@ -516,30 +524,70 @@ def build_operations_router(get_state) -> APIRouter:
             f"({result['behind']} behind).")
         return result
 
+    # Safe Mode step 2 — Download (fetch Git only; nothing applied).
+    @router.post("/api/updates/download")
+    def api_updates_download(request: Request) -> Any:
+        _require_operator(request)
+        result = request.app.state.deployment.download()
+        get_state(request.app).add_log(f"Downloaded latest code: {result.get('detail')}.")
+        return result
+
+    # Release preview — what a deploy WOULD do (read-only).
+    @router.get("/api/updates/preview")
+    def api_updates_preview(request: Request) -> Any:
+        _require_operator(request)
+        return request.app.state.deployment.preview()
+
+    # Safe Mode step 3 — Validate (simulate the deploy; changes nothing).
     @router.get("/api/updates/validate")
     def api_updates_validate(request: Request) -> Any:
         _require_operator(request)
-        return request.app.state.deployment.validate()
+        return request.app.state.deployment.simulate()
+
+    @router.get("/api/updates/versions")
+    def api_updates_versions(request: Request) -> Any:
+        _require_operator(request)
+        return {"versions": request.app.state.deployment.available_versions()}
 
     @router.get("/api/updates/history")
     def api_updates_history(request: Request) -> Any:
         _require_operator(request)
         return {"deployments": request.app.state.deployment.history(25)}
 
+    @router.get("/api/updates/deploy-status")
+    def api_updates_deploy_status(request: Request) -> Any:
+        _require_operator(request)
+        return request.app.state.deployment.deploy_status() or {"status": "idle"}
+
+    # Safe Mode step 4 — Deploy (privileged; locked; runs live in the background).
     @router.post("/api/updates/deploy")
     def api_updates_deploy(request: Request, payload: dict | None = None) -> Any:
         _require_operator(request)
         body = payload or {}
+        deployment = request.app.state.deployment
+        # Deployment lock — refuse a second concurrent deploy (Objective 4).
+        if deployment.is_deploying:
+            active = deployment.deploy_status() or {}
+            raise HTTPException(status_code=409, detail={
+                "message": "Deployment already running.",
+                "started_at": active.get("started_at"),
+                "operator": active.get("operator"),
+                "current_stage": active.get("current_stage")})
         state = get_state(request.app)
-        state.add_log("Deployment requested — fetch → validate → backup → deploy → health.")
-        result = request.app.state.deployment.deploy(
-            operator=body.get("operator") or "operator", notes=body.get("notes"),
-            allow_dirty=bool(body.get("allow_dirty", False)))
-        lvl = "info" if result.get("ok") else "error"
-        tail = "" if result.get("ok") else f" — {result.get('error')}" + (
-            " (rolled back)" if result.get("rollback_performed") else "")
-        state.add_log(f"Deployment {result.get('status')}{tail}.", lvl)
-        return result
+        operator = body.get("operator") or "operator"
+        notes = body.get("notes")
+        allow_dirty = bool(body.get("allow_dirty", False))
+        state.add_log(f"Deployment requested by {operator}.")
+
+        def worker() -> None:
+            result = deployment.deploy(operator=operator, notes=notes, allow_dirty=allow_dirty)
+            lvl = "info" if result.get("ok") else "error"
+            tail = "" if result.get("ok") else f" — {result.get('error')}" + (
+                " (rolled back)" if result.get("rollback_performed") else "")
+            state.add_log(f"Deployment {result.get('status')}{tail}.", lvl)
+
+        threading.Thread(target=worker, name="deploy", daemon=True).start()
+        return {"status": "started"}
 
     @router.post("/api/updates/rollback")
     def api_updates_rollback(request: Request, payload: dict | None = None) -> Any:

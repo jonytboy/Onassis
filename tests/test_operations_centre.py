@@ -274,16 +274,29 @@ def test_check_for_updates_endpoint(client, tmp_path):
 
 def test_validate_endpoint(client, tmp_path):
     _inject_fake_deployment(client, tmp_path)
-    v = client.get("/operations/api/updates/validate").json()
-    assert v["ok"] is True and any(c["name"] == "Correct branch" for c in v["checks"])
+    v = client.get("/operations/api/updates/validate").json()   # now a simulation
+    assert v["ok"] is True
+    assert any(c["name"] == "Correct branch" for c in v["validate"]["checks"])
+
+
+def _wait_deploy(client, tries=60):
+    """Deploy runs in a background thread; poll deploy-status until it settles."""
+    for _ in range(tries):
+        st = client.get("/operations/api/updates/deploy-status").json()
+        if st.get("status") not in ("running", "idle"):
+            return st
+        time.sleep(0.05)
+    return client.get("/operations/api/updates/deploy-status").json()
 
 
 def test_one_click_deploy_and_history(client, tmp_path):
     _inject_fake_deployment(client, tmp_path, head="old000000000",
                             remote="new111111111", behind=1)
-    r = client.post("/operations/api/updates/deploy",
-                    json={"operator": "jony"}).json()
-    assert r["ok"] is True and r["status"] == "success"
+    started = client.post("/operations/api/updates/deploy",
+                          json={"operator": "jony"}).json()
+    assert started["status"] == "started"
+    st = _wait_deploy(client)
+    assert st["status"] == "success"
     hist = client.get("/operations/api/updates/history").json()["deployments"]
     assert hist[0]["operator"] == "jony" and hist[0]["status"] == "success"
 
@@ -292,15 +305,64 @@ def test_deploy_auto_rollback_reported_to_operator(client, tmp_path):
     dep = _inject_fake_deployment(client, tmp_path, head="old000000000",
                                   remote="new111111111", behind=1)
     dep._health_hook = lambda: {"ok": False, "detail": "db down"}
-    r = client.post("/operations/api/updates/deploy").json()
-    assert r["status"] == "failed" and r["rollback_performed"] is True
-    assert "health check failed" in r["error"]
+    client.post("/operations/api/updates/deploy")
+    st = _wait_deploy(client)
+    assert st["status"] == "failed"
+    assert st["result"]["rollback_performed"] is True
+    assert "health check failed" in st["result"]["error"]
+
+
+def test_environment_awareness_endpoint(client, tmp_path):
+    _inject_fake_deployment(client, tmp_path)
+    e = client.get("/operations/api/environment").json()
+    for k in ("environment", "branch", "commit", "git_status",
+              "database_version", "application_version"):
+        assert k in e
+    assert e["database_version"] == 41
+
+
+def test_download_fetches_only(client, tmp_path):
+    _inject_fake_deployment(client, tmp_path, behind=2)
+    r = client.post("/operations/api/updates/download").json()
+    assert r["fetched"] is True and r["behind"] == 2
+
+
+def test_release_preview(client, tmp_path):
+    dep = _inject_fake_deployment(client, tmp_path, head="a", remote="b", behind=1)
+    # Fake diff: database.py + a file changed → migration yes, restart yes.
+    dep._run.diff_files = ["onassis/database.py", "onassis/api.py"]
+    p = client.get("/operations/api/updates/preview").json()
+    assert p["files_changed"] == 2 and p["database_migration"] is True
+    assert p["restart_required"] is True and p["estimated_deployment"].startswith("~")
+
+
+def test_validate_is_a_simulation(client, tmp_path):
+    _inject_fake_deployment(client, tmp_path)
+    v = client.get("/operations/api/updates/validate").json()
+    assert "validate" in v and "preview" in v and "would_deploy" in v
+
+
+def test_self_healing_message_on_dirty_repo(client, tmp_path):
+    _inject_fake_deployment(client, tmp_path, clean=False)
+    v = client.get("/operations/api/updates/validate").json()
+    assert v["would_deploy"] is False
+    assert "local code modifications" in v["validate"]["remediation"]
+
+
+def test_available_versions_for_rollback(client, tmp_path):
+    _inject_fake_deployment(client, tmp_path, head="old000000000",
+                            remote="new111111111", behind=1)
+    client.post("/operations/api/updates/deploy")
+    _wait_deploy(client)
+    versions = client.get("/operations/api/updates/versions").json()["versions"]
+    assert versions and "commit" in versions[0]
 
 
 def test_rollback_endpoint(client, tmp_path):
     _inject_fake_deployment(client, tmp_path, head="old000000000",
                             remote="new111111111", behind=1)
     client.post("/operations/api/updates/deploy")
+    _wait_deploy(client)                        # let the deploy finish first
     r = client.post("/operations/api/updates/rollback", json={"operator": "jony"}).json()
     assert r["ok"] is True and r["status"] == "rolled_back"
 

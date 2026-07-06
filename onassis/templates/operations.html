@@ -97,6 +97,14 @@
   details.adv{margin-top:12px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 18px}
   details.adv summary{cursor:pointer;font-weight:700;color:var(--amber)}
   .note{font-size:12px;color:var(--faint);margin-top:8px}
+  .envbar{display:flex;flex-wrap:wrap;gap:8px 20px;align-items:center;margin:0 0 20px;
+    padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--card);
+    font-size:12.5px;color:var(--muted)}
+  .envbar b{color:var(--faint);font-weight:600;font-size:11px;text-transform:uppercase;
+    letter-spacing:.04em;margin-right:5px}
+  .ladder{display:flex;gap:0;flex-wrap:wrap;margin:12px 0}
+  .ladder .step{display:flex;align-items:center}
+  .ladder .arrow{color:var(--faint);margin:0 8px;align-self:center}
   .cols{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
   @media(max-width:820px){.cols{grid-template-columns:1fr}}
 </style>
@@ -129,15 +137,24 @@
       <button class="btn small" @click="control('pause')"    :disabled="mode!=='running'">Pause Business</button>
       <button class="btn small" @click="control('resume')"   :disabled="mode==='running'">Resume Business</button>
       <button class="btn small danger" @click="control('emergency-stop')">Emergency Stop</button>
-      <button class="btn small" @click="control('deploy')">Deploy Latest</button>
       <button class="btn small" @click="control('restart')">Restart ONASSIS</button>
       <button class="btn small" @click="control('backup')">Backup</button>
-      <button class="btn small danger" @click="control('rollback')">Rollback</button>
       <button class="btn small" @click="control('health')">Health Check</button>
+      <button class="btn small" @click="go('system')">Software Updates →</button>
     </div>
   </div>
   <div class="note" x-show="mode!=='running'">
     Business mode: <b x-text="mode"></b> — RUN BUSINESS is disabled until you Resume.
+  </div>
+
+  <!-- Environment banner (always on) -->
+  <div class="envbar" x-show="environment">
+    <span><b>Environment</b> <span class="pill" :class="environment?.environment==='production'?'ok':'needs_review'" x-text="environment?.environment"></span></span>
+    <span><b>Branch</b> <span class="mono" x-text="environment?.branch"></span></span>
+    <span><b>Commit</b> <span class="mono" x-text="environment?.commit"></span></span>
+    <span><b>Git</b> <span class="pill" :class="environment?.clean?'ok':'failed'" x-text="environment?.git_status"></span></span>
+    <span><b>DB version</b> <span class="mono" x-text="environment?.database_version"></span></span>
+    <span><b>App version</b> <span class="mono" x-text="environment?.application_version"></span></span>
   </div>
 
   <!-- Status board -->
@@ -364,10 +381,70 @@
         <div class="stat"><div class="k">Last backup</div><div class="v sm mono" x-text="updates?.last_backup?.at || '—'"></div></div>
       </div>
       <div class="note" x-show="updates?.restart_required" style="color:#d9a63e;margin-top:8px">⚠ Restart required to finish applying an update.</div>
-      <div class="secondary" style="grid-template-columns:repeat(3,1fr);margin-top:12px">
-        <button class="btn small" @click="checkUpdates()">Check for Updates</button>
-        <button class="btn small primary" @click="deploy()" :disabled="deploying" x-text="deploying?'Deploying…':'Deploy'"></button>
-        <button class="btn small" @click="rollback()">Rollback</button>
+
+      <!-- Safe Mode ladder: Check → Download → Validate → Deploy -->
+      <div class="ladder">
+        <div class="step"><button class="btn small" @click="checkUpdates()">1 · Check</button></div>
+        <span class="arrow">→</span>
+        <div class="step"><button class="btn small" @click="download()">2 · Download</button></div>
+        <span class="arrow">→</span>
+        <div class="step"><button class="btn small" @click="validateDeploy()">3 · Validate</button></div>
+        <span class="arrow">→</span>
+        <div class="step"><button class="btn small primary" @click="deploy()" :disabled="deploying" x-text="deploying?'Deploying…':'4 · Deploy'"></button></div>
+      </div>
+      <div class="note">Check &amp; Validate change nothing. Download fetches Git only. Only Deploy applies changes — and it backs up first, runs live, and auto-rolls-back on failure.</div>
+
+      <!-- Self-healing / validation result -->
+      <div x-show="validation" style="margin-top:12px">
+        <div class="note" style="color:#ff8a8a" x-show="validation && !validation.would_deploy && validation.validate?.remediation" x-text="validation.validate.remediation"></div>
+        <table x-show="validation"><tbody>
+          <template x-for="c in (validation?.validate?.checks||[])" :key="c.name">
+            <tr><td><span class="led" :class="c.ok?'green':(c.critical?'red':'amber')"></span> <span x-text="c.name"></span></td><td class="muted" x-text="c.detail"></td></tr>
+          </template>
+        </tbody></table>
+      </div>
+
+      <!-- Release preview -->
+      <div x-show="preview" style="margin-top:12px">
+        <h2>Release preview</h2>
+        <div class="grid">
+          <div class="stat"><div class="k">Files changed</div><div class="v" x-text="preview?.files_changed"></div></div>
+          <div class="stat"><div class="k">DB migration</div><div class="v sm" x-text="preview?.database_migration?'Yes':'No'"></div></div>
+          <div class="stat"><div class="k">Requirements changed</div><div class="v sm" x-text="preview?.requirements_changed?'Yes':'No'"></div></div>
+          <div class="stat"><div class="k">Restart required</div><div class="v sm" x-text="preview?.restart_required?'Yes':'No'"></div></div>
+          <div class="stat"><div class="k">Estimated</div><div class="v sm" x-text="preview?.estimated_deployment"></div></div>
+        </div>
+      </div>
+
+      <!-- Live deployment log -->
+      <div x-show="deployRun && deployRun.status!=='idle'" style="margin-top:12px">
+        <h2>Deployment <span class="pill" :class="deployRun?.status==='success'||deployRun?.status==='rolled_back'?'ok':(deployRun?.status==='running'?'needs_review':'failed')" x-text="deployRun?.status"></span>
+          <span class="muted" style="font-size:12px" x-show="deployRun?.status==='running'"> · <span x-text="deployRun?.current_stage"></span></span></h2>
+        <div class="console">
+          <template x-for="(l,i) in (deployRun?.log||[])" :key="i">
+            <div class="ln"><span class="ts" x-text="l.ts"></span><span :class="l.level" x-text="l.line"></span></div>
+          </template>
+        </div>
+        <div class="note" style="color:#ff8a8a" x-show="deployRun?.result && !deployRun.result.ok" x-text="deployRun.result.error + (deployRun.result.rollback_performed?' — automatically rolled back.':'')"></div>
+      </div>
+
+      <!-- Rollback to a specific version -->
+      <div style="margin-top:14px" x-show="(updates?.versions||[]).length">
+        <h2>Rollback</h2>
+        <table><thead><tr><th>Version</th><th>Commit</th><th>When</th><th>Status</th><th></th></tr></thead><tbody>
+          <template x-for="v in (updates?.versions||[])" :key="v.commit">
+            <tr>
+              <td class="mono" x-text="v.version"></td>
+              <td class="mono muted" x-text="(v.commit||'').slice(0,8)"></td>
+              <td class="mono muted" x-text="(v.at||'').slice(0,19).replace('T',' ')"></td>
+              <td><span class="pill" :class="v.status==='success'||v.status==='rolled_back'?'ok':'failed'" x-text="v.status"></span></td>
+              <td><button class="btn small" @click="rollbackTo(v.commit)">Rollback →</button></td>
+            </tr>
+          </template>
+        </tbody></table>
+      </div>
+
+      <div class="secondary" style="grid-template-columns:repeat(2,1fr);margin-top:12px">
         <button class="btn small" @click="showNotes=!showNotes" x-show="updates?.updates?.release_notes?.length">View Release Notes</button>
       </div>
       <div x-show="showNotes&&updates?.updates?.release_notes?.length" style="margin-top:10px">
@@ -487,6 +564,7 @@ function ops(){
     business:null, products:[], productSummary:null, marketing:null, approvals:null, system:null,
     settings:null, savingSettings:false,
     updates:null, health:null, deployHistory:[], deploying:false, showNotes:false, showLog:null,
+    environment:null, deployRun:null, preview:null, validation:null, _deployPoll:null,
     productSearch:'', productFilter:'all',
     productFilters:[['all','All'],['awaiting_approval','Awaiting Approval'],['ready_to_publish','Ready to Publish'],['draft_created','Draft Created'],['live','Live'],['failed','Failed'],['archived','Archived']],
     get running(){ return this.run?.status==='running'; },
@@ -540,19 +618,35 @@ function ops(){
         this.settings=(await this.get('/operations/api/business-settings')).settings;
         this.updates=await this.get('/operations/api/updates');
         this.health=await this.get('/operations/api/health');
-        this.deployHistory=(await this.get('/operations/api/updates/history')).deployments; } }catch(e){} },
-    async checkUpdates(){ this.updates=await this.get('/operations/api/updates');
-      const r=await this.post('/operations/api/updates/check');
-      if(this.updates) this.updates.updates=r; this.pollLogs(); },
-    async deploy(){ if(!confirm('Deploy the latest version? This backs up, updates and restarts.')) return;
-      this.deploying=true;
+        this.deployHistory=(await this.get('/operations/api/updates/history')).deployments;
+        const ds=await this.get('/operations/api/updates/deploy-status');
+        this.deployRun=(ds&&ds.status!=='idle')?ds:this.deployRun;
+        if(this.deployRun&&this.deployRun.status==='running'&&!this._deployPoll){ this.deploying=true; this.pollDeploy(); } } }catch(e){} },
+    async refreshEnvironment(){ try{ this.environment=await this.get('/operations/api/environment'); }catch(e){} },
+    // Safe Mode step 1 — Check (nothing changes).
+    async checkUpdates(){ const r=await this.post('/operations/api/updates/check');
+      if(this.updates) this.updates.updates=r; else this.updates={updates:r};
+      if(r&&r.update_available) await this.previewRelease(); this.pollLogs(); },
+    // Safe Mode step 2 — Download (fetch only).
+    async download(){ const r=await this.post('/operations/api/updates/download');
+      await this.previewRelease(); this.pollLogs();
+      if(r&&!r.fetched) alert('Download failed: '+(r.detail||'')); },
+    async previewRelease(){ try{ this.preview=await this.get('/operations/api/updates/preview'); }catch(e){} },
+    // Safe Mode step 3 — Validate (simulate; nothing changes).
+    async validateDeploy(){ this.validation=await this.get('/operations/api/updates/validate');
+      this.preview=this.validation?.preview||this.preview; },
+    // Safe Mode step 4 — Deploy (privileged; runs live in the background).
+    async deploy(){ if(!confirm('Deploy the latest version?\nONASSIS will back up, apply, restart and health-check — and automatically roll back if anything fails.')) return;
       const r=await this.post('/operations/api/updates/deploy',{operator:'operator'});
-      this.deploying=false; this.pollLogs();
-      if(r&&r.rollback_performed) alert('Deployment failed and was rolled back:\n'+(r.error||''));
-      else if(r&&!r.ok) alert('Deployment failed:\n'+(r.error||''));
-      this.loadTab('system'); },
-    async rollback(){ if(!confirm('Roll back to the previous version and restart?')) return;
-      const r=await this.post('/operations/api/updates/rollback',{operator:'operator'});
+      if(r&&r.error&&r.status===undefined){ alert('Deployment already running.'); return; }
+      this.deploying=true; this.pollDeploy(); this.pollLogs(); },
+    pollDeploy(){ if(this._deployPoll) clearInterval(this._deployPoll);
+      const tick=async()=>{ try{ this.deployRun=await this.get('/operations/api/updates/deploy-status'); }catch(e){}
+        if(this.deployRun && this.deployRun.status!=='running' && this.deployRun.status!=='idle'){
+          clearInterval(this._deployPoll); this._deployPoll=null; this.deploying=false; this.loadTab('system'); } };
+      tick(); this._deployPoll=setInterval(tick,1000); },
+    async rollbackTo(commit){ if(!confirm('Roll back to '+commit.slice(0,8)+' and restart?')) return;
+      const r=await this.post('/operations/api/updates/rollback',{operator:'operator',to_commit:commit});
       this.pollLogs(); if(r&&!r.ok) alert('Rollback failed:\n'+(r.error||'')); this.loadTab('system'); },
     setFilter(f){ this.productFilter=f; this.loadTab('products'); },
     async decide(sku,action){
@@ -566,9 +660,9 @@ function ops(){
       if(r&&r.settings) this.settings=r.settings; else alert('Save failed — check values.');
       this.savingSettings=false; },
     go(t){ this.tab=t; this.loadTab(t); },
-    refreshAll(){ this.refreshStatus(); this.refreshRun(); this.pollLogs(); this.loadTab(this.tab); },
+    refreshAll(){ this.refreshStatus(); this.refreshEnvironment(); this.refreshRun(); this.pollLogs(); this.loadTab(this.tab); },
     init(){ this.refreshAll();
-      setInterval(()=>this.refreshStatus(),5000);
+      setInterval(()=>{ this.refreshStatus(); this.refreshEnvironment(); },5000);
       setInterval(()=>{ this.refreshRun(); this.pollLogs(); if(this.running&&(this.tab==='products'||this.tab==='marketing')) this.loadTab(this.tab); },1500); },
   }
 }

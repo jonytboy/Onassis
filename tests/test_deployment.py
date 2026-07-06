@@ -15,7 +15,8 @@ class FakeGit:
     named subcommands (e.g. {'fetch'} or {'reset'})."""
 
     def __init__(self, *, head="a1a1a1a1a1a1", remote="b2b2b2b2b2b2", branch="main",
-                 clean=True, behind=0, notes=None, fail=None, deps_changed=False):
+                 clean=True, behind=0, notes=None, fail=None, deps_changed=False,
+                 diff_files=None):
         self.head = head
         self.remote = remote
         self.branch = branch
@@ -24,6 +25,9 @@ class FakeGit:
         self.notes = notes or []
         self.fail = set(fail or ())
         self.deps_changed = deps_changed
+        # Files reported by `git diff --name-only` (for preview/deps detection).
+        self.diff_files = list(diff_files) if diff_files is not None else (
+            ["requirements.txt"] if deps_changed else [])
         self.calls: list[list] = []
 
     def __call__(self, cmd, timeout=120):
@@ -53,7 +57,7 @@ class FakeGit:
         if sub == "log":
             return (0, "\n".join(f"{n['sha']}\x1f{n['subject']}" for n in self.notes), "")
         if sub == "diff":
-            return (0, "requirements.txt" if self.deps_changed else "", "")
+            return (0, "\n".join(self.diff_files), "")
         if sub == "reset":                     # reset --hard <target>
             target = args[2]
             self.head = self.remote if target.startswith("origin/") else target
@@ -202,3 +206,75 @@ def test_status_combines_version_git_health(svc):
     s = svc.status(check_remote=False)
     assert "current_version" in s and "git" in s and "health" in s
     assert "updates" in s and "last_deployment" in s
+    assert "environment" in s and "versions" in s
+
+
+# --- Sprint 40.2: safe ladder, preview, environment, lock -----------
+
+def test_environment_awareness(svc):
+    e = svc.environment()
+    assert e["branch"] == "main" and e["git_status"] == "clean"
+    assert e["database_version"] == 41
+    assert "application_version" in e
+
+
+def test_download_fetches_but_does_not_apply(config, db, tmp_path):
+    s, g = _fresh(config, db, tmp_path, head="old000000000", remote="new111111111", behind=1)
+    r = s.download()
+    assert r["fetched"] is True and r["behind"] == 1
+    assert g.head == "old000000000"       # nothing applied — tree unchanged
+    assert not any(c[3:4] == ["reset"] for c in g.calls if c[0] == "git")
+
+
+def test_preview_reports_migration_and_estimate(config, db, tmp_path):
+    s, g = _fresh(config, db, tmp_path, head="a", remote="b", behind=1,
+                  diff_files=["onassis/database.py", "requirements.txt", "onassis/api.py"])
+    p = s.preview()
+    assert p["files_changed"] == 3
+    assert p["database_migration"] is True and p["requirements_changed"] is True
+    assert p["restart_required"] is True and "minute" in p["estimated_deployment"]
+
+
+def test_simulate_changes_nothing(config, db, tmp_path):
+    s, g = _fresh(config, db, tmp_path, behind=1, diff_files=["onassis/api.py"])
+    sim = s.simulate()
+    assert sim["ok"] is True and sim["would_deploy"] is True
+    assert "preview" in sim and "validate" in sim
+    assert not any(c[3:4] == ["reset"] for c in g.calls if c[0] == "git")
+
+
+def test_validate_gives_self_healing_message_when_dirty(config, db, tmp_path):
+    s, _ = _fresh(config, db, tmp_path, clean=False)
+    v = s.validate()
+    assert v["ok"] is False
+    assert "local code modifications" in v["remediation"]
+    assert "stash or commit" in v["remediation"]
+
+
+def test_deployment_lock_refuses_concurrent_deploy(svc):
+    # Hold the lock as if a deploy were mid-flight.
+    svc._begin_run("jony")
+    assert svc._deploy_lock.acquire(blocking=False)
+    try:
+        r = svc.deploy(operator="someone-else")
+        assert r["status"] == "busy" and r["ok"] is False
+        assert r["operator"] == "jony"
+    finally:
+        svc._deploy_lock.release()
+
+
+def test_deploy_records_live_progress(config, db, tmp_path):
+    s, _ = _fresh(config, db, tmp_path, head="old000000000", remote="new111111111", behind=1)
+    result = s.deploy(operator="jony")
+    run = s.deploy_status()
+    assert run["status"] == "success" and run["operator"] == "jony"
+    assert run["log"] and any("Confirm success" in e["line"] for e in run["log"])
+    assert result["ok"] is True
+
+
+def test_available_versions_lists_recorded_commits(config, db, tmp_path):
+    s, _ = _fresh(config, db, tmp_path, head="old000000000", remote="new111111111", behind=1)
+    s.deploy(operator="a")
+    versions = s.available_versions()
+    assert versions and versions[0]["commit"]
+    assert all("commit" in v for v in versions)

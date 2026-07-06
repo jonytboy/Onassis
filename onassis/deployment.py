@@ -1,29 +1,39 @@
 """The Deployment Service — ONASSIS manages its own software lifecycle.
 
-Sprint 40.1 makes software updates a first-class capability of the Operations
-Centre. The operator never touches SSH, Git or shell scripts: the Operations
-Centre calls this service over HTTP, and the service encapsulates the whole
-lifecycle —
+Guiding principle:
 
-    check updates → validate → backup → migrate → deploy → restart →
-    health check → (automatic rollback on failure)
+    Routine operation of ONASSIS, including software updates, should be possible
+    entirely from the Operations Centre. Terminal access should be reserved for
+    exceptional maintenance and disaster recovery, not normal business operation.
 
-The service is deterministic and dependency-injected: the Git/command runner,
-the service-restart hook and the health check are all replaceable, so the entire
-flow runs offline in tests with a fake runner and is safe on a real server.
-Every deploy/rollback is recorded to the ``deployments`` table for a complete,
-auditable history.
+Software deployment is a *privileged* operation, so the flow is deliberately
+staged and safe rather than one-click:
+
+    Check  → contact GitHub, report what's available (changes nothing)
+    Download → fetch Git only (still nothing applied)
+    Validate → simulate the deploy (pre-flight checks + release preview)
+    Deploy  → the privileged step: backup → migrate → apply → restart → health,
+              with an automatic snapshot before, a deployment lock so only one
+              runs, a live progress log, and automatic rollback on failure.
+
+The service exposes a **small, well-defined API** — check / download / preview /
+validate / deploy / rollback / health / backup — and never runs arbitrary shell
+commands on behalf of the web app. It is deterministic and dependency-injected
+(Git runner, restart hook, health check all replaceable), so the whole flow runs
+offline in tests and is safe on a live server. Every deploy/rollback is recorded
+to the ``deployments`` table for a complete, auditable history.
 """
 
 from __future__ import annotations
 
-import hashlib
 import os
 import platform
 import shutil
 import subprocess
 import sys
+import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -68,6 +78,10 @@ class DeploymentService:
         self._health_hook = health_check
         self.backup_dir = runtime_root() / "backups"
         self.branch = os.environ.get("ONASSIS_BRANCH") or self._current_branch_raw() or "main"
+        # Deployment lock + live run state (only one deploy at a time).
+        self._deploy_lock = threading.Lock()
+        self._state_lock = threading.Lock()
+        self._deploy_run: dict | None = None
 
     # --- Git primitives ---------------------------------------------
 
@@ -206,7 +220,16 @@ class DeploymentService:
         add("Backup location writable", backup_ok, str(self.backup_dir))
 
         ok = all(c["ok"] for c in checks if c["critical"])
-        return {"ok": ok, "checks": checks}
+        # Repository self-healing: turn a raw Git error into a clear operational
+        # message the operator can act on, rather than just "failed".
+        remediation = ""
+        if not gs["clean"] and not allow_dirty:
+            files = ", ".join(gs["dirty_files"][:5]) or "tracked files"
+            remediation = (
+                "Deployment cannot continue because the repository has local code "
+                f"modifications ({files}). Restore, stash or commit the changes on "
+                "the server before retrying — production code must match Git.")
+        return {"ok": ok, "checks": checks, "remediation": remediation}
 
     # --- Backup (Python, no shell) ----------------------------------
 
@@ -327,10 +350,141 @@ class DeploymentService:
         matches Git exactly (no drift)."""
         return self._git("reset", "--hard", commit)
 
-    # --- One-click deploy (Objective 6) -----------------------------
+    # --- Environment awareness --------------------------------------
+
+    def environment(self) -> dict:
+        """The always-on environment banner: which env / branch / commit is
+        running, whether the tree is clean, and the DB vs app version."""
+        gs = self.git_status()
+        try:
+            db_version = self.db.schema_version()
+        except Exception:
+            db_version = None
+        return {
+            "environment": getattr(self.config, "environment", "development"),
+            "branch": gs["branch"],
+            "expected_branch": self.branch,
+            "commit": gs["short_commit"],
+            "git_status": "clean" if gs["clean"] else "modified",
+            "clean": gs["clean"],
+            "database_version": db_version,
+            "application_version": self.version(),
+        }
+
+    # --- Safe Mode ladder: Check → Download → Validate → Deploy ------
+
+    def download(self) -> dict:
+        """Safe Mode step 2 — fetch from origin ONLY. Nothing is applied to the
+        working tree; this just makes the latest code available locally."""
+        rc, _, err = self._fetch()
+        ahead, behind = self._ahead_behind()
+        return {"ok": rc == 0, "fetched": rc == 0, "behind": behind, "ahead": ahead,
+                "branch": self.branch, "detail": "fetched origin/" + self.branch
+                if rc == 0 else (err or "fetch failed")}
+
+    def preview(self) -> dict:
+        """Release Preview — what a deploy WOULD do (read-only). Reports files
+        changed, whether migrations/requirements are involved, restart need, and
+        an estimated duration, so the operator has confidence before deploying."""
+        target = self._resolve(f"origin/{self.branch}")
+        changed: list = []
+        if target:
+            rc, out, _ = self._git("diff", "--name-only", f"HEAD..{target}")
+            if rc == 0 and out:
+                changed = [ln.strip() for ln in out.splitlines() if ln.strip()]
+        migration = any(f == "onassis/database.py" for f in changed)
+        requirements = any(f == "requirements.txt" for f in changed)
+        restart = len(changed) > 0
+        est = 30 + (90 if requirements else 0) + (15 if migration else 0) + (
+            10 if restart else 0)
+        return {
+            "files_changed": len(changed),
+            "changed_files": changed[:50],
+            "database_migration": migration,
+            "requirements_changed": requirements,
+            "restart_required": restart,
+            "estimated_seconds": est,
+            "estimated_deployment": _human_duration(est),
+            "update_available": len(changed) > 0,
+        }
+
+    def simulate(self) -> dict:
+        """Safe Mode step 3 — 'Validate': dry-run the deploy. Runs every
+        pre-flight check and the release preview WITHOUT changing anything."""
+        val = self.validate()
+        return {"ok": val["ok"], "validate": val, "preview": self.preview(),
+                "would_deploy": val["ok"]}
+
+    def available_versions(self) -> list:
+        """Versions available to roll back to — drawn from the deployment
+        history (most recent first), each a real recorded commit."""
+        seen: set = set()
+        out: list = []
+        for d in self.db.list_deployments(50):
+            commit = d.get("to_commit") or d.get("from_commit")
+            if not commit or commit in seen:
+                continue
+            seen.add(commit)
+            out.append({"version": d.get("version"), "commit": commit,
+                        "at": d.get("created_at"), "status": d.get("status"),
+                        "action": d.get("action")})
+        return out
+
+    # --- Deployment lock + live progress ----------------------------
+
+    @property
+    def is_deploying(self) -> bool:
+        with self._state_lock:
+            return bool(self._deploy_run and self._deploy_run.get("status") == "running")
+
+    def deploy_status(self) -> dict | None:
+        """The current or most recent deployment run (live progress + log)."""
+        with self._state_lock:
+            return dict(self._deploy_run) if self._deploy_run else None
+
+    def _begin_run(self, operator: str) -> None:
+        with self._state_lock:
+            self._deploy_run = {
+                "status": "running", "operator": operator,
+                "started_at": _now_iso(), "current_stage": "Starting",
+                "steps": [], "log": [], "result": None}
+
+    def _emit(self, stage: str, status: str = "info", detail: str = "") -> None:
+        with self._state_lock:
+            if not self._deploy_run:
+                return
+            self._deploy_run["current_stage"] = stage
+            self._deploy_run["log"].append(
+                {"ts": _now_hms(), "line": stage + (f" — {detail}" if detail else ""),
+                 "level": "error" if status == "failed" else "info"})
+
+    def _end_run(self, result: dict) -> None:
+        with self._state_lock:
+            if self._deploy_run:
+                self._deploy_run["status"] = result.get("status", "failed")
+                self._deploy_run["current_stage"] = "Done"
+                self._deploy_run["result"] = result
+
+    # --- Deploy (privileged, locked, live) --------------------------
 
     def deploy(self, operator: str = "operator", notes: str | None = None,
                allow_dirty: bool = False) -> dict:
+        # Deployment lock — only one deploy at a time (Objective 4).
+        if not self._deploy_lock.acquire(blocking=False):
+            active = self.deploy_status() or {}
+            return {"ok": False, "status": "busy",
+                    "error": "Deployment already running.",
+                    "started_at": active.get("started_at"),
+                    "operator": active.get("operator"),
+                    "current_stage": active.get("current_stage")}
+        try:
+            self._begin_run(operator)
+            return self._deploy_locked(operator, notes, allow_dirty)
+        finally:
+            self._deploy_lock.release()
+
+    def _deploy_locked(self, operator: str, notes: str | None,
+                       allow_dirty: bool) -> dict:
         t0 = time.monotonic()
         steps: list = []
         from_commit = self.current_commit()
@@ -338,6 +492,7 @@ class DeploymentService:
         def step(name: str, ok: bool, detail: str = "") -> bool:
             steps.append({"step": name, "status": "ok" if ok else "failed",
                           "detail": detail})
+            self._emit(name, "ok" if ok else "failed", detail)  # live progress
             return ok
 
         def finish(status: str, error: str | None = None, to_commit: str | None = None,
@@ -351,7 +506,9 @@ class DeploymentService:
             rec["id"] = self.db.insert_deployment(rec)
             log.info("Deploy %s by %s (%s -> %s) in %ss", status, operator,
                      from_commit[:8], (to_commit or from_commit)[:8], dur)
-            return {**rec, "ok": status == "success"}
+            result = {**rec, "ok": status == "success"}
+            self._end_run(result)
+            return result
 
         # 1. Fetch — nothing has changed yet, so a failure just aborts cleanly.
         rc, _, err = self._fetch()
@@ -531,16 +688,35 @@ class DeploymentService:
             "current_version": self.version(),
             "latest_version": self.version() if not updates["update_available"]
                               else f"{self.version()}+{updates['behind']}",
+            "environment": self.environment(),
             "git": self.git_status(),
             "updates": updates,
             "health": self.health(),
+            "versions": self.available_versions(),
             "last_deployment": last_deploy,
             "last_backup": self.last_backup(),
             "restart_required": self.restart_required(),
+            "deploying": self.is_deploying,
+            "deploy_run": self.deploy_status(),
         }
 
 
 # --- Module helpers ---------------------------------------------------
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _now_hms() -> str:
+    return datetime.now(timezone.utc).strftime("%H:%M:%S")
+
+
+def _human_duration(seconds: int) -> str:
+    if seconds < 60:
+        return f"~{seconds} seconds"
+    mins = round(seconds / 60)
+    return f"~{mins} minute{'s' if mins != 1 else ''}"
+
 
 def _missing(module: str) -> bool:
     import importlib.util
