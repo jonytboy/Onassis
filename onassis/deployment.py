@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import os
 import platform
+import secrets
 import shutil
 import subprocess
 import sys
@@ -61,6 +62,50 @@ def _default_runner(cmd: list, timeout: int = 120) -> tuple:
         return 127, "", str(exc)
 
 
+class RestartBridge:
+    """Privilege-separated service restart.
+
+    The (unprivileged) web application must never call ``systemctl``. Instead it
+    drops a tiny request file into a spool directory; a **root** systemd
+    ``path`` unit notices it and triggers a ``oneshot`` service that performs the
+    actual restart and writes a result. The security boundary stays intact — the
+    web app can only *ask* for a restart, never execute one.
+
+    The request/result files are plain ``key=value`` so the shell worker can
+    parse them without a JSON library.
+    """
+
+    def __init__(self, spool_dir: str | Path) -> None:
+        self.spool = Path(spool_dir)
+        self.request_file = self.spool / "restart.request"
+        self.result_file = self.spool / "restart.result"
+
+    def request(self, reason: str = "deploy") -> str:
+        self.spool.mkdir(parents=True, exist_ok=True)
+        token = secrets.token_hex(8)
+        try:
+            self.result_file.unlink()          # clear any stale result
+        except FileNotFoundError:
+            pass
+        self.request_file.write_text(
+            f"token={token}\nreason={reason}\nrequested_at={_now_iso()}\n",
+            encoding="utf-8")
+        return token
+
+    def read_result(self, token: str | None = None) -> dict | None:
+        if not self.result_file.exists():
+            return None
+        data = _parse_kv(self.result_file.read_text(encoding="utf-8"))
+        if token is not None and data.get("token") != token:
+            return None
+        return {"ok": data.get("ok") == "true", "at": data.get("at"),
+                "token": data.get("token")}
+
+    @property
+    def pending(self) -> bool:
+        return self.request_file.exists()
+
+
 class DeploymentService:
     """Owns the application's deploy / rollback / health lifecycle."""
 
@@ -82,6 +127,9 @@ class DeploymentService:
         self._deploy_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._deploy_run: dict | None = None
+        # Privilege-separated restart bridge (systemd), when a spool is configured.
+        spool = os.environ.get("ONASSIS_RESTART_SPOOL")
+        self._bridge = RestartBridge(spool) if spool else None
 
     # --- Git primitives ---------------------------------------------
 
@@ -278,18 +326,26 @@ class DeploymentService:
     def _restart(self) -> dict:
         if self._restart_hook is not None:
             return self._restart_hook()
-        # Real restart is delegated to the service manager and is opt-in (it
-        # would kill this very process). Off by default and in dev.
-        if not os.environ.get("ONASSIS_ALLOW_RESTART") or not shutil.which("systemctl"):
+        # Preferred: privilege-separated systemd bridge. The web app only *asks*;
+        # a root oneshot performs the restart (which may terminate this process),
+        # so we fire-and-forget rather than block on a result we might not see.
+        if self._bridge is not None:
+            token = self._bridge.request("deploy")
             self._set_restart_required(True)
-            return {"ok": True, "detail": "restart deferred to service manager",
-                    "restarted": False}
-        service = self._service_name()
-        rc, _, err = self._run(["sudo", "systemctl", "restart", service], 60)
-        if rc == 0:
-            self._set_restart_required(False)
-        return {"ok": rc == 0, "detail": f"{service}: {'restarted' if rc == 0 else err}",
-                "restarted": rc == 0}
+            return {"ok": True, "restarted": False, "pending": True, "token": token,
+                    "detail": "restart requested via systemd bridge"}
+        # Fallback (simple single-host setups): direct restart, opt-in only.
+        if os.environ.get("ONASSIS_ALLOW_RESTART") and shutil.which("systemctl"):
+            service = self._service_name()
+            rc, _, err = self._run(["sudo", "systemctl", "restart", service], 60)
+            if rc == 0:
+                self._set_restart_required(False)
+            return {"ok": rc == 0, "restarted": rc == 0,
+                    "detail": f"{service}: {'restarted' if rc == 0 else err}"}
+        # Dev / no restart mechanism: defer and flag it.
+        self._set_restart_required(True)
+        return {"ok": True, "restarted": False, "pending": True,
+                "detail": "restart deferred to service manager"}
 
     def _health(self) -> dict:
         if self._health_hook is not None:
@@ -367,7 +423,11 @@ class DeploymentService:
             "commit": gs["short_commit"],
             "git_status": "clean" if gs["clean"] else "modified",
             "clean": gs["clean"],
-            "database_version": db_version,
+            "database_version": db_version,       # schema version
+            "schema_version": db_version,
+            # The sprint-based platform version is more operationally meaningful
+            # than a semantic version while we're moving fast.
+            "platform_version": self.version(),
             "application_version": self.version(),
         }
 
@@ -696,9 +756,24 @@ class DeploymentService:
             "last_deployment": last_deploy,
             "last_backup": self.last_backup(),
             "restart_required": self.restart_required(),
+            "restart": self.restart_state(),
             "deploying": self.is_deploying,
             "deploy_run": self.deploy_status(),
         }
+
+    def restart_state(self) -> dict:
+        """Whether an automated (privilege-separated) restart is available, and
+        the status of the most recent restart request."""
+        state = {"bridge": self._bridge is not None,
+                 "required": self.restart_required(), "pending": False, "last": None}
+        if self._bridge is not None:
+            state["pending"] = self._bridge.pending
+            state["last"] = self._bridge.read_result()
+            # The bridge completed and cleared the request — drop the marker.
+            if state["last"] and state["last"].get("ok") and not self._bridge.pending:
+                self._set_restart_required(False)
+                state["required"] = False
+        return state
 
 
 # --- Module helpers ---------------------------------------------------
@@ -716,6 +791,15 @@ def _human_duration(seconds: int) -> str:
         return f"~{seconds} seconds"
     mins = round(seconds / 60)
     return f"~{mins} minute{'s' if mins != 1 else ''}"
+
+
+def _parse_kv(text: str) -> dict:
+    out: dict = {}
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if sep:
+            out[key.strip()] = value.strip()
+    return out
 
 
 def _missing(module: str) -> bool:

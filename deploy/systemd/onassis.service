@@ -1,0 +1,25 @@
+# Sample main ONASSIS unit. The important part for privilege-separated restart
+# is RuntimeDirectory=onassis, which makes systemd create /run/onassis owned by
+# the (unprivileged) service user — the spool the web app writes restart
+# requests into, and the root restart worker reads. Adjust paths/user to taste.
+[Unit]
+Description=ONASSIS platform
+After=network.target
+
+[Service]
+User=onassis
+Group=onassis
+WorkingDirectory=/opt/onassis
+Environment=ONASSIS_ENV=production
+Environment=ONASSIS_RUNTIME_DIR=/var/lib/onassis
+Environment=ONASSIS_RESTART_SPOOL=/run/onassis
+Environment=ONASSIS_BRANCH=main
+# systemd creates and owns /run/onassis for us (cleared on reboot).
+RuntimeDirectory=onassis
+RuntimeDirectoryMode=0770
+ExecStart=/opt/onassis/.venv/bin/uvicorn onassis.api:create_app --factory --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

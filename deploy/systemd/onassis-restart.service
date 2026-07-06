@@ -1,0 +1,14 @@
+# Privileged oneshot that restarts ONASSIS on request. Runs as root, but does
+# exactly one thing (restart the service + health-check) via restart-worker.sh —
+# the web app can only drop a request file, never run this directly.
+[Unit]
+Description=Restart ONASSIS on request (privileged oneshot)
+After=network.target
+
+[Service]
+Type=oneshot
+Environment=ONASSIS_SERVICE=onassis
+Environment=ONASSIS_RESTART_SPOOL=/run/onassis
+Environment=ONASSIS_HEALTH_URL=http://127.0.0.1:8000/health
+Environment=ONASSIS_RESTART_MARKER=/opt/onassis/.onassis_restart_required
+ExecStart=/opt/onassis/deploy/restart-worker.sh

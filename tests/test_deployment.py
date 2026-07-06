@@ -278,3 +278,50 @@ def test_available_versions_lists_recorded_commits(config, db, tmp_path):
     versions = s.available_versions()
     assert versions and versions[0]["commit"]
     assert all("commit" in v for v in versions)
+
+
+# --- Sprint 40.3: privilege-separated restart bridge ----------------
+
+def test_restart_bridge_writes_request_not_shell(config, db, tmp_path, monkeypatch):
+    spool = tmp_path / "spool"
+    monkeypatch.setenv("ONASSIS_RESTART_SPOOL", str(spool))
+    g = FakeGit()
+    s = DeploymentService(config, db, runner=g, root=tmp_path)
+    r = s.restart()
+    assert r["pending"] is True and "systemd bridge" in r["detail"]
+    # The web app only dropped a request file — it never called systemctl.
+    assert (spool / "restart.request").exists()
+    assert not any("systemctl" in " ".join(c) for c in g.calls)
+
+
+def test_restart_bridge_result_clears_marker(config, db, tmp_path, monkeypatch):
+    spool = tmp_path / "spool"
+    monkeypatch.setenv("ONASSIS_RESTART_SPOOL", str(spool))
+    s = DeploymentService(config, db, runner=FakeGit(), root=tmp_path)
+    token = s._bridge.request("deploy")
+    # Simulate the privileged worker: consume request, write a healthy result.
+    (spool / "restart.request").unlink()
+    (spool / "restart.result").write_text(
+        f"token={token}\nok=true\nat=2026-07-06T10:00:00Z\n", encoding="utf-8")
+    state = s.restart_state()
+    assert state["bridge"] is True and state["pending"] is False
+    assert state["last"]["ok"] is True
+
+
+def test_environment_exposes_platform_and_schema(svc):
+    e = svc.environment()
+    assert e["platform_version"] == svc.version()
+    assert e["schema_version"] == 41 and e["database_version"] == 41
+
+
+def test_deploy_restart_uses_bridge_when_configured(config, db, tmp_path, monkeypatch):
+    spool = tmp_path / "spool"
+    monkeypatch.setenv("ONASSIS_RESTART_SPOOL", str(spool))
+    g = FakeGit(head="old000000000", remote="new111111111", behind=1)
+    s = DeploymentService(config, db, runner=g, root=tmp_path)
+    s.backup_dir = tmp_path / "backups"
+    result = s.deploy(operator="jony")
+    assert result["ok"] is True and result["status"] == "success"
+    # Restart went through the bridge — a request file exists, no systemctl call.
+    assert (spool / "restart.request").exists()
+    assert not any("systemctl" in " ".join(c) for c in g.calls)

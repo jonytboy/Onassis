@@ -153,8 +153,8 @@
     <span><b>Branch</b> <span class="mono" x-text="environment?.branch"></span></span>
     <span><b>Commit</b> <span class="mono" x-text="environment?.commit"></span></span>
     <span><b>Git</b> <span class="pill" :class="environment?.clean?'ok':'failed'" x-text="environment?.git_status"></span></span>
-    <span><b>DB version</b> <span class="mono" x-text="environment?.database_version"></span></span>
-    <span><b>App version</b> <span class="mono" x-text="environment?.application_version"></span></span>
+    <span><b>Schema</b> <span class="mono" x-text="environment?.schema_version"></span></span>
+    <span><b>Platform</b> <span class="mono" x-text="environment?.platform_version"></span></span>
   </div>
 
   <!-- Status board -->
@@ -380,7 +380,12 @@
         <div class="stat"><div class="k">Last deployment</div><div class="v sm mono" x-text="(updates?.last_deployment?.created_at||'—').slice(0,19).replace('T',' ')"></div></div>
         <div class="stat"><div class="k">Last backup</div><div class="v sm mono" x-text="updates?.last_backup?.at || '—'"></div></div>
       </div>
-      <div class="note" x-show="updates?.restart_required" style="color:#d9a63e;margin-top:8px">⚠ Restart required to finish applying an update.</div>
+      <div class="note" style="margin-top:8px">Restart:
+        <span x-show="updates?.restart?.bridge" class="pill ok">automatic (systemd)</span>
+        <span x-show="!updates?.restart?.bridge" class="pill needs_review">manual (bridge not configured)</span>
+        <span x-show="updates?.restart?.last" class="muted">· last <span x-text="updates?.restart?.last?.ok?'ok':'failed'"></span> at <span x-text="(updates?.restart?.last?.at||'').slice(11,19)"></span></span>
+      </div>
+      <div class="note" x-show="updates?.restart_required" style="color:#d9a63e;margin-top:4px">⚠ Restart required to finish applying an update.</div>
 
       <!-- Safe Mode ladder: Check → Download → Validate → Deploy -->
       <div class="ladder">

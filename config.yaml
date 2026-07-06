@@ -8,7 +8,9 @@
 
 app:
   name: ONASSIS
-  version: "0.1.0"
+  # Sprint-based platform version — more operationally meaningful than a semantic
+  # version while the platform is moving fast. Bump once per sprint.
+  version: "40.3"
   environment: development          # overridden by ONASSIS_ENV
 
 logging:

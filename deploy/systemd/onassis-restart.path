@@ -1,0 +1,12 @@
+# Watches for a restart request from the ONASSIS web app and triggers the
+# privileged oneshot that performs the restart. Install to /etc/systemd/system/
+# and enable:  systemctl enable --now onassis-restart.path
+[Unit]
+Description=Watch for ONASSIS restart requests (privilege-separated)
+
+[Path]
+PathExists=/run/onassis/restart.request
+Unit=onassis-restart.service
+
+[Install]
+WantedBy=multi-user.target
