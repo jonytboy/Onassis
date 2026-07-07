@@ -27,18 +27,18 @@ def test_describe_groups_and_summarises(config, db):
 
 
 def test_secrets_are_masked_by_default(config, db):
-    config.shopify = {"store_domain": "x.myshopify.com", "admin_token": "supersecrettoken"}
+    config.shopify = {"store_domain": "x.myshopify.com", "client_secret": "supersecrettoken"}
     card = _mgr(config, db).detail("shopify")
     fields = {f["key"]: f for f in card["fields"]}
-    assert fields["admin_token"]["secret"] is True
-    assert fields["admin_token"]["value"] != "supersecrettoken"  # masked
+    assert fields["client_secret"]["secret"] is True
+    assert fields["client_secret"]["value"] != "supersecrettoken"  # masked
     assert fields["store_domain"]["value"] == "x.myshopify.com"  # non-secret shown
 
 
 def test_reveal_returns_raw_secret(config, db):
-    config.shopify = {"store_domain": "x.myshopify.com", "admin_token": "supersecrettoken"}
+    config.shopify = {"store_domain": "x.myshopify.com", "client_secret": "supersecrettoken"}
     card = _mgr(config, db).detail("shopify", reveal=True)
-    assert {f["key"]: f["value"] for f in card["fields"]}["admin_token"] == "supersecrettoken"
+    assert {f["key"]: f["value"] for f in card["fields"]}["client_secret"] == "supersecrettoken"
 
 
 def test_mask_helper():
@@ -51,13 +51,13 @@ def test_mask_helper():
 
 def test_save_persists_and_overlays_live_config(config, db):
     m = _mgr(config, db)
-    m.save("shopify", {"store_domain": "s.myshopify.com", "admin_token": "tok12345"},
-           operator="jony")
+    m.save("shopify", {"store_domain": "s.myshopify.com", "client_id": "cid",
+                       "client_secret": "csecret123"}, operator="jony")
     # Persisted (survives a fresh manager) + configured.
     card = _mgr(config, db).detail("shopify")
     assert card["configured"] is True
     # Live config was overlaid so connectors pick it up.
-    assert config.shopify["admin_token"] == "tok12345"
+    assert config.shopify["client_secret"] == "csecret123"
     # Audited.
     assert any(e["kind"] == "credential_update" for e in card["events"])
 
@@ -70,7 +70,7 @@ def test_save_rejects_unknown_field(config, db):
 # --- Test + health ---------------------------------------------------
 
 def test_test_records_event_and_sets_health(config, db):
-    config.shopify = {"store_domain": "x.myshopify.com", "admin_token": "t"}
+    config.shopify = {"store_domain": "x.myshopify.com", "client_id": "c", "client_secret": "s"}
     ok_tester = {"shopify": lambda c, r, d: {"ok": True, "configured": True, "detail": "Connected"}}
     m = _mgr(config, db, testers=ok_tester)
     r = m.test("shopify")
@@ -93,11 +93,11 @@ def test_failed_test_sets_failed_health(config, db):
 
 
 def test_health_warns_when_credentials_change_after_test(config, db):
-    config.shopify = {"store_domain": "x.myshopify.com", "admin_token": "t"}
+    config.shopify = {"store_domain": "x.myshopify.com", "client_id": "c", "client_secret": "s"}
     m = _mgr(config, db, testers={"shopify": lambda c, r, d: {"ok": True, "configured": True}})
     m.test("shopify")
     assert _mgr(config, db).detail("shopify")["health"] == "healthy"
-    m.save("shopify", {"admin_token": "newtoken"})     # change since last test
+    m.save("shopify", {"client_secret": "newsecret"})     # change since last test
     assert _mgr(config, db, testers=m._testers).detail("shopify")["health"] == "warning"
 
 

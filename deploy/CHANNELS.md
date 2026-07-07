@@ -23,7 +23,7 @@ underlying env vars, but you no longer have to edit `.env` by hand.
 
 | Channel | Variables |
 |---|---|
-| Shopify | `SHOPIFY_STORE_DOMAIN` (`your-store.myshopify.com`), `SHOPIFY_ADMIN_TOKEN`, optional `SHOPIFY_LOCATION_ID`, `shopify.blog_id` (config, for Blog) |
+| Shopify | `SHOPIFY_STORE_DOMAIN` (`your-store.myshopify.com`), `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET` (from a Dev Dashboard app — ONASSIS obtains the access token itself via the client-credentials grant), optional `SHOPIFY_LOCATION_ID`, `shopify.blog_id` (config, for Blog). A legacy `SHOPIFY_ADMIN_TOKEN` is still honoured if you already have one. |
 | Facebook | `META_PAGE_ACCESS_TOKEN`, `FACEBOOK_PAGE_ID` |
 | Instagram | `META_PAGE_ACCESS_TOKEN`, `INSTAGRAM_USER_ID` (an IG **Business** account) |
 | Email | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`, `EMAIL_TO` |

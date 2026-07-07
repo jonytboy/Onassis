@@ -177,12 +177,16 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         "api_key": _env("GELATO_API_KEY", gelato.get("api_key")),
         "file_base_url": _env("GELATO_FILE_BASE_URL", gelato.get("file_base_url")),
     }
-    # Shopify — second sales channel (products published alongside Etsy).
+    # Shopify — second sales channel (products published alongside Etsy). New
+    # Dev Dashboard apps issue a Client ID/Secret and use the client-credentials
+    # grant; a legacy static Admin token is still honoured when present.
     shopify = raw.get("shopify", {})
     shopify = {
         **shopify,
         "store_domain": _env("SHOPIFY_STORE_DOMAIN", shopify.get("store_domain")),
-        "admin_token": _env("SHOPIFY_ADMIN_TOKEN", shopify.get("admin_token")),
+        "client_id": _env("SHOPIFY_CLIENT_ID", shopify.get("client_id")),
+        "client_secret": _env("SHOPIFY_CLIENT_SECRET", shopify.get("client_secret")),
+        "admin_token": _env("SHOPIFY_ADMIN_TOKEN", shopify.get("admin_token")),  # legacy
         "api_version": _env("SHOPIFY_API_VERSION", shopify.get("api_version", "2024-10")),
         "location_id": _env("SHOPIFY_LOCATION_ID", shopify.get("location_id")),
     }

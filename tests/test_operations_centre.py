@@ -289,8 +289,8 @@ def test_integrations_dashboard(client):
 def test_integration_detail_and_save_and_test(client):
     # Save credentials via the API, then a fake tester confirms the connection.
     r = client.post("/operations/api/integrations/shopify/save",
-                    json={"values": {"store_domain": "x.myshopify.com",
-                                     "admin_token": "tok1234567890"}, "operator": "jony"})
+                    json={"values": {"store_domain": "x.myshopify.com", "client_id": "cid123456",
+                                     "client_secret": "sec1234567890"}, "operator": "jony"})
     assert r.status_code == 200 and r.json()["configured"] is True
     # Inject a passing tester and test.
     client.app.state.integrations._testers["shopify"] = \
@@ -299,12 +299,12 @@ def test_integration_detail_and_save_and_test(client):
     assert t["ok"] is True and t["health"] == "healthy"
     # Detail shows masked secret + the audit events.
     detail = client.get("/operations/api/integrations/shopify").json()
-    tok = {f["key"]: f["value"] for f in detail["fields"]}["admin_token"]
-    assert tok != "tok1234567890" and "…" in tok
+    tok = {f["key"]: f["value"] for f in detail["fields"]}["client_secret"]
+    assert tok != "sec1234567890" and "…" in tok
     assert any(e["kind"] == "credential_update" for e in detail["events"])
     # Reveal returns the raw secret.
     revealed = client.get("/operations/api/integrations/shopify?reveal=1").json()
-    assert {f["key"]: f["value"] for f in revealed["fields"]}["admin_token"] == "tok1234567890"
+    assert {f["key"]: f["value"] for f in revealed["fields"]}["client_secret"] == "sec1234567890"
 
 
 def test_integration_save_rejects_bad_field(client):

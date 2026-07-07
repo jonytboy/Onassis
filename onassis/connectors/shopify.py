@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import base64
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from onassis.config import Config
 from onassis.logger import get_logger
@@ -38,7 +38,12 @@ class ShopifyConnector:
 
     @property
     def is_configured(self) -> bool:
-        return bool(self.cfg.get("store_domain") and self.cfg.get("admin_token"))
+        """Configured when we have a store + a way to get a token: either the new
+        Client ID/Secret (client-credentials grant) or a legacy Admin token."""
+        c = self.cfg
+        has_client = bool(c.get("client_id") and c.get("client_secret"))
+        has_token = bool(c.get("admin_token") or c.get("access_token"))
+        return bool(c.get("store_domain") and (has_client or has_token))
 
     @property
     def can_publish(self) -> bool:
@@ -46,17 +51,29 @@ class ShopifyConnector:
 
     def _c(self) -> Any:
         if self._client is None:
-            self._client = ShopifyAdminClient(
-                store_domain=self.cfg.get("store_domain"),
-                admin_token=self.cfg.get("admin_token"),
-                api_version=self.cfg.get("api_version", "2024-10"))
+            c = self.cfg
+            domain = c.get("store_domain")
+            version = c.get("api_version", "2024-10")
+            static = c.get("admin_token") or c.get("access_token")
+            if static:  # legacy static Admin token — still supported
+                self._client = ShopifyAdminClient(
+                    store_domain=domain, access_token=static, api_version=version)
+            else:       # new apps: obtain a token via the client-credentials grant
+                from onassis.connectors.shopify_oauth import ShopifyTokenProvider
+
+                provider = ShopifyTokenProvider(
+                    store_domain=domain, client_id=c.get("client_id"),
+                    client_secret=c.get("client_secret"), api_version=version)
+                self._client = ShopifyAdminClient(
+                    store_domain=domain, token_provider=provider.valid_access_token,
+                    api_version=version)
         return self._client
 
     def test_connection(self) -> dict[str, Any]:
         """Read-only auth check — confirms the store + token work (GET shop.json)."""
         if not self.can_publish:
             return {"ok": False, "configured": False,
-                    "detail": "Set SHOPIFY_STORE_DOMAIN + SHOPIFY_ADMIN_TOKEN."}
+                    "detail": "Set Store URL + Client ID + Client Secret."}
         try:
             shop = (self._c().get_shop() or {}).get("shop", {})
             return {"ok": True, "configured": True,
@@ -148,21 +165,34 @@ class ShopifyConnector:
 
 
 class ShopifyAdminClient:
-    """Minimal Shopify Admin REST client. Injectable for tests."""
+    """Minimal Shopify Admin REST client. Injectable for tests.
 
-    def __init__(self, store_domain: str | None, admin_token: str | None,
+    Accepts either a static ``access_token`` (legacy Admin token) or a
+    ``token_provider`` callable ``provider(force: bool) -> token`` (the
+    client-credentials flow). On a 401 it refreshes via the provider once and
+    retries, so an expired token heals itself transparently.
+    """
+
+    def __init__(self, store_domain: str | None, *, access_token: str | None = None,
+                 token_provider: Callable[..., str] | None = None,
                  api_version: str = "2024-10", timeout: float = 30.0) -> None:
         self.store_domain = (store_domain or "").replace("https://", "").strip("/")
-        self.admin_token = admin_token
+        self._access_token = access_token
+        self._token_provider = token_provider
         self.api_version = api_version
         self.timeout = timeout
+
+    def _token(self, force: bool = False) -> str:
+        if self._token_provider is not None:
+            return self._token_provider(force)
+        return self._access_token or ""
 
     @property
     def _base(self) -> str:
         return f"https://{self.store_domain}/admin/api/{self.api_version}"
 
-    def _headers(self) -> dict[str, str]:
-        return {"X-Shopify-Access-Token": self.admin_token or "",
+    def _headers(self, token: str) -> dict[str, str]:
+        return {"X-Shopify-Access-Token": token or "",
                 "Content-Type": "application/json"}
 
     def get_shop(self) -> dict[str, Any]:
@@ -195,8 +225,13 @@ class ShopifyAdminClient:
     def _request(self, method: str, path: str, body: dict[str, Any]) -> dict[str, Any]:
         import httpx
 
-        resp = httpx.request(method, f"{self._base}{path}", headers=self._headers(),
+        url = f"{self._base}{path}"
+        resp = httpx.request(method, url, headers=self._headers(self._token()),
                              json=body, timeout=self.timeout)
+        # An expired token → refresh once and retry (client-credentials flow).
+        if resp.status_code == 401 and self._token_provider is not None:
+            resp = httpx.request(method, url, headers=self._headers(self._token(force=True)),
+                                 json=body, timeout=self.timeout)
         if resp.status_code >= 400:
             raise RuntimeError(f"Shopify {method} {path} HTTP {resp.status_code}: {resp.text}")
         return resp.json()

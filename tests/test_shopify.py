@@ -43,8 +43,8 @@ class FakeAdminClient:
 
 
 def _configured(config):
-    config.shopify = {"store_domain": "shop.myshopify.com", "admin_token": "tok",
-                      "api_version": "2024-10"}
+    config.shopify = {"store_domain": "shop.myshopify.com", "client_id": "cid",
+                      "client_secret": "csecret", "api_version": "2024-10"}
     return config
 
 
