@@ -188,6 +188,9 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.integrations = IntegrationManager(config, db)
     app.state.reconcile_summary = _reconcile_summary
 
+    from onassis.commercial import CommercialIntelligence
+    app.state.commercial = CommercialIntelligence(config, db)
+
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""
         view = campaigns.get_campaign(campaign_id)

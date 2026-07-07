@@ -809,6 +809,19 @@ def build_operations_router(get_state) -> APIRouter:
                                       if isinstance(getattr(config, k), dict)),
         }
 
+    # --- Commercial Intelligence (Sprint 42 Phase 1) ---
+    @router.get("/api/commercial")
+    def api_commercial(request: Request) -> Any:
+        _require_operator(request)
+        c = request.app.state.commercial
+        return {"ceo": c.ceo_commercial(), "channels": c.channel_performance(),
+                "attribution": c.attribution()}
+
+    @router.get("/api/commercial/products")
+    def api_commercial_products(request: Request) -> Any:
+        _require_operator(request)
+        return {"products": request.app.state.commercial.product_analytics()}
+
     # --- Production health dashboard (Sprint 41.2, Obj 13) ---
     @router.get("/api/production-health")
     def api_production_health(request: Request) -> Any:

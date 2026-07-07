@@ -198,6 +198,60 @@
     </div>
   </div>
 
+  <!-- COMMERCIAL (CEO business dashboard) -->
+  <div x-show="tab==='commercial'">
+    <div class="panel" x-show="commercial">
+      <h2>CEO commercial dashboard — revenue, profit &amp; ROI</h2>
+      <div class="grid">
+        <div class="stat"><div class="k">Revenue</div><div class="v" x-text="money(commercial?.ceo?.revenue_today)"></div></div>
+        <div class="stat"><div class="k">Profit</div><div class="v" x-text="money(commercial?.ceo?.profit_today)"></div></div>
+        <div class="stat"><div class="k">Orders</div><div class="v" x-text="commercial?.ceo?.orders"></div></div>
+        <div class="stat"><div class="k">Avg order value</div><div class="v sm" x-text="money(commercial?.ceo?.average_order_value)"></div></div>
+        <div class="stat"><div class="k">Conversion</div><div class="v sm" x-text="pct(commercial?.ceo?.conversion_rate)"></div></div>
+        <div class="stat"><div class="k">Net margin</div><div class="v sm" x-text="pct(commercial?.ceo?.net_margin)"></div></div>
+        <div class="stat"><div class="k">CAC</div><div class="v sm" x-text="money(commercial?.ceo?.customer_acquisition_cost)"></div></div>
+        <div class="stat"><div class="k">Best product</div><div class="v sm" x-text="commercial?.ceo?.best_product||'—'"></div></div>
+        <div class="stat"><div class="k">Worst product</div><div class="v sm" x-text="commercial?.ceo?.worst_product||'—'"></div></div>
+        <div class="stat"><div class="k">Best channel</div><div class="v sm" x-text="commercial?.ceo?.best_channel||'—'"></div></div>
+        <div class="stat"><div class="k">AI spend</div><div class="v sm" x-text="money(commercial?.ceo?.ai_spend)"></div></div>
+        <div class="stat"><div class="k">Marketing spend</div><div class="v sm" x-text="money(commercial?.ceo?.marketing_spend)"></div></div>
+      </div>
+      <h2 style="margin-top:14px">Recommendations</h2>
+      <ul class="note" style="margin:0;padding-left:20px">
+        <template x-for="(r,i) in (commercial?.ceo?.recommendations||[])" :key="i"><li x-text="r"></li></template>
+      </ul>
+
+      <h2 style="margin-top:18px">Channel performance</h2>
+      <div style="overflow-x:auto"><table><thead><tr><th>Channel</th><th>Assets</th><th>Impressions</th><th>Clicks</th><th>CTR</th><th>Visits</th><th>Sales</th><th>Revenue</th></tr></thead><tbody>
+        <template x-for="c in (commercial?.channels||[])" :key="c.channel">
+          <tr><td x-text="c.channel"></td><td x-text="c.assets"></td><td x-text="c.impressions"></td><td x-text="c.clicks"></td>
+            <td x-text="pct(c.ctr)"></td><td x-text="c.visits"></td><td x-text="c.sales"></td><td x-text="money(c.revenue)"></td></tr>
+        </template>
+      </tbody></table></div>
+
+      <h2 style="margin-top:18px">Attribution — where sales came from</h2>
+      <div style="overflow-x:auto"><table><thead><tr><th>Source</th><th>Visits</th><th>Sales</th><th>Revenue</th><th>Share</th></tr></thead><tbody>
+        <template x-for="s in (commercial?.attribution?.sources||[])" :key="s.source">
+          <tr><td x-text="s.source"></td><td x-text="s.visits"></td><td x-text="s.sales"></td><td x-text="money(s.revenue)"></td><td x-text="pct(s.share)"></td></tr>
+        </template>
+        <tr x-show="!(commercial?.attribution?.sources||[]).length"><td colspan="5" class="muted">No attribution data yet.</td></tr>
+      </tbody></table></div>
+    </div>
+
+    <div class="panel" x-show="commercialProducts">
+      <h2>Product performance — commercial intelligence per product</h2>
+      <div style="overflow-x:auto"><table><thead><tr><th>Product</th><th>Type</th><th>Views</th><th>Clicks</th><th>Favs</th><th>Conv</th><th>Sales</th><th>Revenue</th><th>Profit</th><th>Mktg £</th><th>ROI</th></tr></thead><tbody>
+        <template x-for="p in (commercialProducts||[])" :key="p.sku">
+          <tr><td x-text="p.name"></td><td class="muted" x-text="p.type"></td><td x-text="p.views"></td><td x-text="p.clicks"></td>
+            <td x-text="p.favourites"></td><td x-text="pct(p.conversion)"></td><td x-text="p.sales"></td>
+            <td x-text="money(p.revenue)"></td><td x-text="money(p.profit)"></td><td x-text="money(p.marketing_cost)"></td>
+            <td x-text="p.roi!=null?pct(p.roi):'—'"></td></tr>
+        </template>
+        <tr x-show="!(commercialProducts||[]).length"><td colspan="11" class="muted">No product data yet.</td></tr>
+      </tbody></table></div>
+    </div>
+  </div>
+
   <!-- BUSINESS -->
   <div x-show="tab==='business'">
     <div class="panel" x-show="business">
@@ -731,7 +785,7 @@ function ops(){
     secured: {{ 'true' if secured else 'false' }},
     key: localStorage.getItem('onassis_ops_key') || '',
     tab:'overview',
-    tabs:[{id:'overview',label:'Overview'},{id:'business',label:'Business'},
+    tabs:[{id:'overview',label:'Overview'},{id:'business',label:'Business'},{id:'commercial',label:'Commercial'},
           {id:'products',label:'Products'},{id:'marketing',label:'Marketing'},
           {id:'approvals',label:'Approvals'},{id:'integrations',label:'Integrations'},
           {id:'system',label:'System'}],
@@ -742,6 +796,7 @@ function ops(){
     environment:null, deployRun:null, preview:null, validation:null, _deployPoll:null,
     productDetail:null, channelTests:null, testingChannels:false,
     integrations:null, integrationDetail:null, integrationEdits:{}, integrationBusy:false,
+    commercial:null, commercialProducts:null,
     productSearch:'', productFilter:'all', productHealth:null, toast:'',
     productFilters:[['all','All'],['awaiting_approval','Awaiting Approval'],['ready_to_publish','Ready to Publish'],['draft_created','Draft Created'],['live','Live'],['failed','Failed'],['etsy','On Etsy'],['shopify','On Shopify'],['both','Etsy + Shopify'],['archived','Archived']],
     get running(){ return this.run?.status==='running'; },
@@ -787,6 +842,8 @@ function ops(){
       if(r&&r.mode===undefined&&r.ok===false) alert(a+' failed — see the live log.'); },
     async loadTab(t){ try{
       if(t==='business') this.business=await this.get('/operations/api/business');
+      else if(t==='commercial'){ this.commercial=await this.get('/operations/api/commercial');
+        this.commercialProducts=(await this.get('/operations/api/commercial/products')).products; }
       else if(t==='products'){ const d=await this.get('/operations/api/products?filter='+this.productFilter);
         this.products=d.products; this.productSummary=d.summary;
         this.productHealth=await this.get('/operations/api/production-health'); }

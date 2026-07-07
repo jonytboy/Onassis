@@ -280,6 +280,15 @@ def test_channel_connection_tests(client, monkeypatch):
     assert r["facebook"]["configured"] is False           # not set → clean report
 
 
+def test_commercial_dashboard_endpoints(client):
+    c = client.get("/operations/api/commercial").json()
+    assert "ceo" in c and "channels" in c and "attribution" in c
+    for k in ("revenue_today", "profit_today", "orders", "average_order_value",
+              "net_margin", "recommendations"):
+        assert k in c["ceo"]
+    assert isinstance(client.get("/operations/api/commercial/products").json()["products"], list)
+
+
 def test_production_health_dashboard(client):
     db = client.app.state.db
     _seed_launched_product(db, key="mug")                 # awaiting
