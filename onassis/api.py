@@ -82,6 +82,14 @@ def create_app(config: Config | None = None) -> FastAPI:
     from onassis.integrations import IntegrationManager, apply_integration_overrides
 
     apply_integration_overrides(config, db)
+    # Self-healing: reconcile workflow state on startup so the operator always
+    # returns to a consistent system (Sprint 41.2). Never fatal.
+    from onassis.self_healing import reconcile
+
+    try:
+        _reconcile_summary = reconcile(config, db)
+    except Exception:  # noqa: BLE001
+        _reconcile_summary = {"repaired": 0, "error": "reconcile failed"}
     # One product-first workflow (the Daily Cycle). Everything the API exposes
     # reuses the cycle's own module instances, so there is a single shared set
     # and a single behaviour — no separate content-first path.
@@ -178,6 +186,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     from onassis.deployment import DeploymentService
     app.state.deployment = DeploymentService(config, db)
     app.state.integrations = IntegrationManager(config, db)
+    app.state.reconcile_summary = _reconcile_summary
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""

@@ -91,6 +91,15 @@ def test_connector_gate_off_without_creds(config):
     assert ShopifyConnector(config).can_publish is False
 
 
+def test_list_blogs(config):
+    _configured(config)
+    client = FakeAdminClient()
+    client.list_blogs = lambda: {"blogs": [{"id": 1, "title": "News"},
+                                           {"id": 2, "title": "Journal"}]}
+    blogs = ShopifyConnector(config, client=client).list_blogs()
+    assert blogs == [{"id": "1", "title": "News"}, {"id": "2", "title": "Journal"}]
+
+
 # --- Publisher (records a shopify publication) -----------------------
 
 def test_publisher_records_shopify_publication(config, db, tmp_path):

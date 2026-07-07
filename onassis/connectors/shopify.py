@@ -151,6 +151,11 @@ class ShopifyConnector:
 
     # --- Blog (for the marketing Blog channel) ----------------------
 
+    def list_blogs(self) -> list[dict[str, Any]]:
+        """Fetch the store's blogs so the operator can pick one (no manual id)."""
+        blogs = (self._c().list_blogs() or {}).get("blogs", [])
+        return [{"id": str(b.get("id")), "title": b.get("title", "")} for b in blogs]
+
     def publish_article(self, article: dict[str, Any]) -> dict[str, Any]:
         """Publish a blog article to the store's blog. ``article`` needs a
         ``title`` and ``body`` (HTML/markdown); ``blog_id`` falls back to config."""
@@ -210,6 +215,9 @@ class ShopifyAdminClient:
         body = {"image": {"attachment": data, "position": position,
                           "alt": alt_text or ""}}
         return self._post(f"/products/{product_id}/images.json", body)
+
+    def list_blogs(self) -> dict[str, Any]:
+        return self._request("GET", "/blogs.json", None)
 
     def create_article(self, blog_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post(f"/blogs/{blog_id}/articles.json", payload)

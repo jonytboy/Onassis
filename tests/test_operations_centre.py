@@ -280,6 +280,61 @@ def test_channel_connection_tests(client, monkeypatch):
     assert r["facebook"]["configured"] is False           # not set → clean report
 
 
+def test_production_health_dashboard(client):
+    db = client.app.state.db
+    _seed_launched_product(db, key="mug")                 # awaiting
+    _seed_launched_product(db, key="poster", draft=True)  # etsy draft today
+    h = client.get("/operations/api/production-health").json()
+    for k in ("products_waiting", "products_publishing", "published_today",
+              "failed_today", "retries", "success_rate", "etsy_success",
+              "shopify_success", "marketing_published"):
+        assert k in h
+    assert h["products_waiting"] >= 1
+    assert h["published_today"] >= 1
+
+
+def test_reconcile_endpoint_repairs(client):
+    db = client.app.state.db
+    db.insert_publication({"platform": "etsy", "product_id": "1-x", "campaign_id": 1,
+                           "listing_id": "None", "mode": "draft", "status": "draft"})
+    r = client.post("/operations/api/system/reconcile").json()
+    assert r["broken_publications_fixed"] == 1
+    assert client.get("/operations/api/system/reconcile").json()["repaired"] == 1
+
+
+def test_channel_filters(client):
+    db = client.app.state.db
+    _seed_launched_product(db, key="mug", draft=True)     # on etsy
+    both = client.get("/operations/api/products?filter=etsy").json()["products"]
+    assert all(r["on_etsy"] for r in both)
+    assert "shopify_status" in both[0]
+
+
+def test_approval_cards_have_complete_metadata(client):
+    db = client.app.state.db
+    _seed_launched_product(db, key="mug")
+    card = client.get("/operations/api/approvals").json()["queue"][0]
+    for k in ("hero_url", "has_hero", "type", "confidence", "seo_score", "compliance",
+              "workflow_stage", "publish_history", "retry_history", "last_updated",
+              "shopify_status"):
+        assert k in card
+    # Confidence is a real number here (score seeded at 88) — never a spurious 0.
+    assert card["confidence"] == 0.88
+    assert card["ceo_rationale"] != ""    # never blank/null
+
+
+def test_approve_and_publish_targets_both_channels(client):
+    db = client.app.state.db
+    cid, sku = _seed_launched_product(db, key="mug")
+    r = client.post(f"/operations/api/approvals/{sku}/decision",
+                    json={"action": "approve_and_publish", "operator": "jony"}).json()
+    published = r["published"]
+    assert "etsy" in published and "shopify" in published
+    # Shopify not configured in test -> a clear, human-readable status (not a crash).
+    assert published["shopify"]["status"] in ("not_configured", "failed")
+    assert "help" in published["shopify"]
+
+
 def test_integrations_dashboard(client):
     d = client.get("/operations/api/integrations").json()
     assert set(d["categories"]) == {"AI", "Commerce", "Marketing", "Production"}

@@ -164,6 +164,26 @@ class PublisherService:
         self, campaign_id: int, product_id: str | None, listing: dict[str, Any],
         images_dir: Path | None = None,
     ) -> dict[str, Any]:
+        from onassis.failure_help import explain
+        from onassis.listing_validation import operator_summary, validate_listing
+
+        # Pre-publish validation + safe sanitisation — never call Etsy with a
+        # listing we already know it will reject (Sprint 41.2).
+        vr = validate_listing(
+            listing, min_description=int(self.listing_cfg.get("min_description_chars", 20)))
+        if not vr["ok"]:
+            reason = operator_summary(vr)
+            pub = {"platform": PLATFORM, "product_id": product_id,
+                   "campaign_id": campaign_id, "listing_id": None, "mode": DRAFT,
+                   "status": "failed", "attempts": 0, "failure_reason": reason}
+            pub["id"] = self.db.insert_publication(pub)
+            log.warning("Pre-publish validation blocked campaign #%s: %s", campaign_id, reason)
+            return {"status": "failed", "campaign_id": campaign_id, "reason": reason,
+                    "issues": vr["issues"], "help": explain(reason, status="invalid"),
+                    "publication": pub, "validation": True}
+        listing = vr["listing"]                 # use the sanitised listing
+        sanitised = [i for i in vr["issues"] if i["fixed"]]
+
         last_error = ""
         for attempt in range(1, self.max_retries + 1):
             try:
@@ -188,7 +208,7 @@ class PublisherService:
                 log.info("Published campaign #%s as Etsy draft %s (%d image(s) attached)",
                          campaign_id, listing_id, uploads["uploaded"])
                 return {"status": DRAFT, "campaign_id": campaign_id, "publication": pub,
-                        "images": uploads}
+                        "images": uploads, "sanitised": sanitised}
             except Exception as exc:  # transient failure — retry safely
                 last_error = str(exc)
                 log.warning("Publish attempt %d for campaign #%s failed: %s",
@@ -200,7 +220,8 @@ class PublisherService:
                "failure_reason": last_error}
         pub["id"] = self.db.insert_publication(pub)
         return {"status": "failed", "campaign_id": campaign_id,
-                "reason": last_error, "publication": pub}
+                "reason": last_error, "publication": pub,
+                "help": explain(last_error)}
 
     # --- Launch policy (single approval → whole approved set) --------
 

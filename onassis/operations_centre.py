@@ -471,13 +471,19 @@ def build_operations_router(get_state) -> APIRouter:
         if action in ("approve_and_publish", "retry"):
             if action == "approve_and_publish":
                 _record("approved")
-            result = s.daily.publisher.publish(cid, product_key=key)
-            ok = result.get("status") in ("draft", "dry_run")
-            lvl = "info" if ok else "error"
+            # Publish to Etsy AND Shopify at the same time (Sprint 41.2, Obj 7).
+            result = _publish_all_channels(s, cid, key)
+            etsy_ok = (result.get("etsy") or {}).get("status") in ("draft", "dry_run")
             get_state(request.app).add_log(
-                f"Publish {sku} -> {result.get('status')}"
-                f"{': ' + result.get('reason', '') if not ok else ''}.", lvl)
+                f"Publish {sku}: etsy={result.get('etsy', {}).get('status')} "
+                f"shopify={result.get('shopify', {}).get('status')}.",
+                "info" if etsy_ok else "error")
             return {"sku": sku, "decision": "approved", "published": result}
+        if action == "publish_shopify":
+            result = _publish_shopify(s, cid, key)
+            get_state(request.app).add_log(
+                f"Shopify publish {sku} -> {result.get('status')}.")
+            return {"sku": sku, "channel": "shopify", "published": result}
         raise HTTPException(status_code=400, detail=f"Unknown approval action '{action}'.")
 
     # --- Business settings (Sprint 40, Objective 7) ---
@@ -769,6 +775,12 @@ def build_operations_router(get_state) -> APIRouter:
                 s.db.insert_integration_event({"integration": "shopify", "kind": "publish",
                                                "status": "failed", "detail": str(exc)})
                 return {"ok": False, "detail": str(exc)}
+        if key == "shopify" and action == "list_blogs":
+            try:
+                blogs = s.daily.shopify.connector.list_blogs()
+                return {"ok": True, "blogs": blogs}
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "detail": str(exc)}
         if key == "etsy" and action == "reconnect_oauth":
             return {"ok": True, "redirect": "/etsy/oauth/login"}
         raise HTTPException(status_code=400,
@@ -796,6 +808,29 @@ def build_operations_router(get_state) -> APIRouter:
             "config_sections": sorted(k for k in vars(config)
                                       if isinstance(getattr(config, k), dict)),
         }
+
+    # --- Production health dashboard (Sprint 41.2, Obj 13) ---
+    @router.get("/api/production-health")
+    def api_production_health(request: Request) -> Any:
+        _require_operator(request)
+        return _production_health(request.app.state)
+
+    # --- Self-healing reconciliation (Sprint 41.2, Obj 1/2) ---
+    @router.get("/api/system/reconcile")
+    def api_reconcile_status(request: Request) -> Any:
+        _require_operator(request)
+        return getattr(request.app.state, "reconcile_summary", {"repaired": 0})
+
+    @router.post("/api/system/reconcile")
+    def api_reconcile_run(request: Request) -> Any:
+        _require_operator(request)
+        from onassis.self_healing import reconcile
+        s = request.app.state
+        summary = reconcile(s.config, s.db)
+        s.reconcile_summary = summary
+        get_state(request.app).add_log(
+            f"Self-healing reconcile: {summary.get('repaired', 0)} issue(s) repaired.")
+        return summary
 
     # --- Control actions (business + ops scripts) ---
     @router.post("/api/control/{action}")
@@ -889,12 +924,19 @@ def _product_row(state: Any, p: dict[str, Any], ctx: dict[str, Any]) -> dict[str
     marketing_status = ("live" if marketing else
                         ("pending" if st.status in ("live", "marketing", "tracking")
                          else "none"))
+    # Shopify (second sales channel) status for this product.
+    shop_pub = db.get_latest_publication(cid, "shopify", product_id=sku) if cid else None
+    shopify_state = _pub_label(shop_pub, live_word="Published")
     return {
         "sku": sku, "name": p.get("name") or key, "product_key": key,
         "type": key, "campaign_id": cid, "campaign": campaign.get("name") or "",
         "status": st.status, "status_label": st.label,
         "reason": st.reason, "retryable": st.retryable,
         "etsy_status": st.label, "listing_id": st.listing_id, "listing_url": listing_url,
+        "shopify_status": shopify_state["label"], "shopify_state": shopify_state["status"],
+        "on_etsy": st.status in ("draft_created", "live", "marketing", "tracking"),
+        "on_shopify": shopify_state["status"] in ("draft", "live"),
+        "any_failed": st.status == "failed" or shopify_state["status"] == "failed",
         "approval": (approval or {}).get("decision", "awaiting"),
         "operator": (approval or {}).get("operator") or "",
         "marketing_status": marketing_status,
@@ -905,6 +947,68 @@ def _product_row(state: Any, p: dict[str, Any], ctx: dict[str, Any]) -> dict[str
         "launched_at": p.get("launched_at") or p.get("created_at"),
         "updated_at": (approval or {}).get("updated_at") or p.get("launched_at")
                       or p.get("created_at"),
+    }
+
+
+def _publish_shopify(state: Any, campaign_id: int, product_key: str) -> dict[str, Any]:
+    """Publish a single product to Shopify from its listing package (with help)."""
+    from onassis.failure_help import annotate
+
+    daily = state.daily
+    listing = daily._listing_json(campaign_id, product_key)
+    if not listing:
+        return annotate({"status": "failed", "reason": "No listing package to publish."})
+    images = daily._product_images_dir(campaign_id, product_key)
+    result = daily.shopify.publish(campaign_id, product_key, listing, images_dir=images)
+    return annotate(result)
+
+
+def _publish_all_channels(state: Any, campaign_id: int, product_key: str) -> dict[str, Any]:
+    """Publish a product to Etsy and Shopify together; each is independent."""
+    from onassis.failure_help import annotate
+
+    etsy = annotate(state.daily.publisher.publish(campaign_id, product_key=product_key))
+    shopify = _publish_shopify(state, campaign_id, product_key)
+    return {"etsy": etsy, "shopify": shopify}
+
+
+def _production_health(state: Any) -> dict[str, Any]:
+    """The operational heartbeat (Sprint 41.2, Obj 13)."""
+    db = state.db
+    rows = _products(state)
+    waiting = sum(1 for r in rows if r["status"] == "awaiting_approval")
+    publishing = sum(1 for r in rows if r["status"] == "approved")
+    pubs = db.list_publications()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    def _today(p: dict[str, Any]) -> bool:
+        return (p.get("created_at") or "")[:10] == today
+
+    def _rate(lst: list[dict[str, Any]]) -> int | None:
+        ok = sum(1 for p in lst if p.get("status") in ("draft", "published", "live"))
+        fail = sum(1 for p in lst if p.get("status") == "failed")
+        return round(ok / (ok + fail) * 100) if (ok + fail) else None
+
+    etsy = [p for p in pubs if p.get("platform") == "etsy"]
+    shop = [p for p in pubs if p.get("platform") == "shopify"]
+    report = {}
+    try:
+        report = state.report.build() or {}
+    except Exception:  # report is best-effort
+        report = {}
+    return {
+        "products_waiting": waiting,
+        "products_publishing": publishing,
+        "published_today": sum(1 for p in pubs if _today(p)
+                               and p.get("status") in ("draft", "published", "live")),
+        "failed_today": sum(1 for p in pubs if _today(p) and p.get("status") == "failed"),
+        "retries": sum(1 for p in pubs if int(p.get("attempts", 1) or 1) > 1),
+        "success_rate": _rate(pubs),
+        "etsy_success": _rate(etsy),
+        "shopify_success": _rate(shop),
+        "marketing_published": db.count_marketing_assets_by_status("posted"),
+        "revenue_today": (report.get("revenue") or {}).get("today"),
+        "profit_today": (report.get("profit") or {}).get("today_net"),
     }
 
 
@@ -966,11 +1070,23 @@ def _product_channels(state: Any, product: dict[str, Any]) -> list[dict[str, Any
     return rows
 
 
+# Sales-channel filters (Sprint 41.2, Obj 7) — distinct from lifecycle filters.
+_CHANNEL_FILTERS = {
+    "etsy": lambda r: r["on_etsy"],
+    "shopify": lambda r: r["on_shopify"],
+    "both": lambda r: r["on_etsy"] and r["on_shopify"],
+    "failed": lambda r: r["any_failed"],
+}
+
+
 def _products(state: Any, filter_bucket: str | None = None) -> list[dict[str, Any]]:
     ctx = _product_context(state)
     rows = [_product_row(state, p, ctx) for p in state.db.list_products()]
     if filter_bucket and filter_bucket != "all":
-        rows = [r for r in rows if matches_filter(r["status"], filter_bucket)]
+        if filter_bucket in _CHANNEL_FILTERS:
+            rows = [r for r in rows if _CHANNEL_FILTERS[filter_bucket](r)]
+        else:
+            rows = [r for r in rows if matches_filter(r["status"], filter_bucket)]
     return rows
 
 
@@ -1103,24 +1219,45 @@ def _approval_card(state: Any, row: dict[str, Any], ctx: dict[str, Any]) -> dict
     scores = [sc for sc in db.list_product_scores(cid) if sc.get("product_key") == key]
     score = scores[0] if scores else {}
     compliance = db.get_compliance_for_campaign(cid) if cid else None
-    confidence = float(score.get("composite_score", 0) or 0) / 100.0
+    # Real confidence only — never a spurious 0% when nothing was calculated.
+    raw_conf = score.get("composite_score")
+    confidence = round(float(raw_conf) / 100.0, 3) if raw_conf else None
+    # Publish + retry history across both sales channels (Obj 3).
+    pub_history, retries = [], 0
+    for platform in ("etsy", "shopify"):
+        pub = db.get_latest_publication(cid, platform, product_id=row["sku"]) if cid else None
+        if pub:
+            attempts = int(pub.get("attempts", 1) or 1)
+            retries += max(0, attempts - 1)
+            pub_history.append({"channel": platform, "status": pub.get("status"),
+                                "listing_id": pub.get("listing_id"),
+                                "attempts": attempts,
+                                "reason": pub.get("failure_reason"),
+                                "at": pub.get("created_at")})
+    # Hero is never blank — fall back to artwork, then a placeholder flag.
+    hero = assets["hero_url"] or assets["artwork_url"]
     return {
-        "sku": row["sku"], "name": row["name"], "type": key,
-        "campaign_id": cid, "campaign": row["campaign"],
+        "sku": row["sku"], "name": row["name"], "type": key or "product",
+        "campaign_id": cid, "campaign": row["campaign"] or "",
         "status": row["status"], "status_label": row["status_label"],
-        "hero_url": assets["hero_url"], "artwork_url": assets["artwork_url"],
+        "workflow_stage": row["status_label"],
+        "hero_url": hero, "has_hero": bool(hero),
+        "artwork_url": assets["artwork_url"],
         "mockups": assets["mockups"], "has_artwork": assets["has_artwork"],
         "has_mockups": assets["has_mockups"],
-        "listing_title": assets["listing_title"] or row["name"],
+        "listing_title": assets["listing_title"] or row["name"] or row["sku"],
         "listing_package_url": assets["listing_package_url"],
         "seo_score": assets["seo_score"],
-        "confidence": round(confidence, 3),
-        "ceo_rationale": (score.get("reasoning") or "").strip(),
+        "confidence": confidence,
+        "ceo_rationale": (score.get("reasoning") or "").strip() or "—",
         "compliance": (compliance or {}).get("verdict") or "PENDING",
         "compliance_score": (compliance or {}).get("compliance_score"),
-        "approval": row["approval"], "operator": row["operator"],
+        "approval": row["approval"], "operator": row["operator"] or "—",
         "listing_id": row["listing_id"], "listing_url": row["listing_url"],
-        "reason": row["reason"], "retryable": row["retryable"],
+        "shopify_status": row["shopify_status"],
+        "publish_history": pub_history, "retry_history": retries,
+        "last_updated": row["updated_at"],
+        "reason": row["reason"] or "", "retryable": row["retryable"],
         "actions": _card_actions(row["status"]),
     }
 

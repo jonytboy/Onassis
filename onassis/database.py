@@ -1663,6 +1663,23 @@ class Database:
             rows = conn.execute("SELECT * FROM product_approvals").fetchall()
         return [dict(r) for r in rows]
 
+    def delete_orphan_product_approvals(self) -> int:
+        """Remove approval rows whose product no longer exists (Sprint 41.2)."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM product_approvals WHERE sku NOT IN "
+                "(SELECT sku FROM products WHERE sku IS NOT NULL)")
+            return cur.rowcount
+
+    def clamp_product_score_confidence(self) -> int:
+        """Clamp impossible composite scores into [0, 100]. Returns rows fixed."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE product_scores SET composite_score = "
+                "MIN(100.0, MAX(0.0, composite_score)) "
+                "WHERE composite_score < 0 OR composite_score > 100")
+            return cur.rowcount
+
     def list_approval_history(self, sku: str | None = None,
                               limit: int = 50) -> list[dict[str, Any]]:
         sql = "SELECT * FROM approval_history"

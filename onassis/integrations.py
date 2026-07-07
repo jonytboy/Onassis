@@ -77,7 +77,7 @@ REGISTRY: list[Integration] = [
                  Field("client_secret", "Client Secret", secret=True, env="SHOPIFY_CLIENT_SECRET"),
                  Field("blog_id", "Blog ID", env="")],
                 required=["store_domain", "client_id", "client_secret"],
-                actions=["test", "publish_test_product"],
+                actions=["test", "publish_test_product", "list_blogs"],
                 setup=["Shopify Dev Dashboard → Create an app",
                        "Grant Products + Content scopes; install it on your store",
                        "Copy the app's Client ID + Client Secret",
