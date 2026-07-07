@@ -709,6 +709,71 @@ def build_operations_router(get_state) -> APIRouter:
             f"{r['failed']} failed.")
         return r
 
+    # --- Integration Manager (Sprint 41.1) ---
+    @router.get("/api/integrations")
+    def api_integrations(request: Request) -> Any:
+        _require_operator(request)
+        return request.app.state.integrations.describe()
+
+    @router.get("/api/integrations/{key}")
+    def api_integration(request: Request, key: str, reveal: int = 0) -> Any:
+        _require_operator(request)
+        detail = request.app.state.integrations.detail(key, reveal=bool(reveal))
+        if detail is None:
+            raise HTTPException(status_code=404, detail="Unknown integration.")
+        return detail
+
+    @router.post("/api/integrations/{key}/test")
+    def api_integration_test(request: Request, key: str) -> Any:
+        _require_operator(request)
+        r = request.app.state.integrations.test(key)
+        get_state(request.app).add_log(
+            f"Integration test {key}: {'OK' if r.get('ok') else r.get('detail')}",
+            "info" if r.get("ok") else "warn")
+        return r
+
+    @router.post("/api/integrations/{key}/save")
+    def api_integration_save(request: Request, key: str, payload: dict | None = None) -> Any:
+        _require_operator(request)
+        body = payload or {}
+        try:
+            card = request.app.state.integrations.save(
+                key, body.get("values", {}), operator=body.get("operator") or "operator")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        get_state(request.app).add_log(f"Integration {key} credentials updated.")
+        return card
+
+    @router.post("/api/integrations/{key}/action/{action}")
+    def api_integration_action(request: Request, key: str, action: str) -> Any:
+        _require_operator(request)
+        s = request.app.state
+        state = get_state(request.app)
+        if key == "email" and action == "send_test":
+            r = s.daily.distribution.email.send_test()
+            state.add_log(f"Test email: {'sent' if r.get('ok') else r.get('reason')}")
+            s.db.insert_integration_event({"integration": "email", "kind": "publish",
+                                           "status": "ok" if r.get("ok") else "failed",
+                                           "detail": "test email"})
+            return r
+        if key == "shopify" and action == "publish_test_product":
+            listing = {"title": "ONASSIS Test Product", "description": "Connection test.",
+                       "tags": ["test"], "price": 1.0, "product_id": "onassis-test"}
+            try:
+                r = s.daily.shopify.connector.publish_product(listing, active=False)
+                state.add_log(f"Shopify test product created: {r.get('product_id')}")
+                s.db.insert_integration_event({"integration": "shopify", "kind": "publish",
+                                               "status": "ok", "detail": "test product"})
+                return {"ok": True, **r}
+            except Exception as exc:  # noqa: BLE001
+                s.db.insert_integration_event({"integration": "shopify", "kind": "publish",
+                                               "status": "failed", "detail": str(exc)})
+                return {"ok": False, "detail": str(exc)}
+        if key == "etsy" and action == "reconnect_oauth":
+            return {"ok": True, "redirect": "/etsy/oauth/login"}
+        raise HTTPException(status_code=400,
+                            detail=f"No action '{action}' for '{key}'.")
+
     # --- Approval queue (auto / needs-review / blocked) ---
     @router.get("/api/approvals")
     def api_approvals(request: Request) -> Any:

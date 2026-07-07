@@ -9,7 +9,17 @@ The product lifecycle is separated from the publishing channel, so adding a
 channel is a connector, not a rewrite (Amazon / eBay / TikTok Shop could slot in
 the same way).
 
-## 1. Add credentials (`.env`)
+## 0. The Integrations page
+
+**System → Integrations** is the single place to configure, test, monitor and
+diagnose every external service — AI providers, marketplaces, marketing channels
+and production. Each connector has a card with a live health indicator
+(🟢 Healthy · 🟡 Warning · 🔴 Failed · ⚪ Not configured), editable + masked
+credentials, a real **Test Connection**, guided setup steps, and an activity log.
+You can onboard a connector entirely from the browser — the values below are the
+underlying env vars, but you no longer have to edit `.env` by hand.
+
+## 1. Credentials (env vars, or paste them on the Integrations page)
 
 | Channel | Variables |
 |---|---|

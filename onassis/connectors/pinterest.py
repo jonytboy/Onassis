@@ -70,6 +70,27 @@ class PinterestConnector:
         return self._pin_client is not None or bool(
             self.cfg.get("access_token") and self.board_id)
 
+    def test_connection(self) -> dict[str, Any]:
+        """Validate the token by reading the connected user account (read-only)."""
+        if not self.cfg.get("access_token"):
+            return {"ok": False, "configured": False,
+                    "detail": "Set PINTEREST_ACCESS_TOKEN (+ PINTEREST_BOARD_ID)."}
+        try:
+            import httpx
+
+            base = self.cfg.get("base_url", "https://api.pinterest.com/v5")
+            resp = httpx.get(f"{base}/user_account",
+                             headers={"Authorization": f"Bearer {self.cfg.get('access_token')}"},
+                             timeout=15.0)
+            if resp.status_code >= 400:
+                return {"ok": False, "configured": True,
+                        "detail": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+            user = resp.json().get("username", "")
+            return {"ok": True, "configured": True,
+                    "detail": f"Connected as @{user}" if user else "Token valid"}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "configured": True, "detail": str(exc)}
+
     def fetch_metrics(self) -> list[dict[str, Any]]:
         if not self.is_configured:
             return []  # safe no-op until credentials are provided

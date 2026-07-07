@@ -31,7 +31,7 @@ log = get_logger(__name__)
 # Bump whenever the schema changes (new table / column). Surfaced in the
 # Operations Centre "Environment" panel so an operator can see at a glance
 # whether the running database matches the code they expect.
-SCHEMA_VERSION = 42
+SCHEMA_VERSION = 43
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS briefs (
@@ -667,6 +667,19 @@ CREATE TABLE IF NOT EXISTS deployments (
     error             TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_deployments_created ON deployments(created_at);
+
+-- Integration activity + audit (Sprint 41.1): a per-connector event log —
+-- connection tests, publishes, syncs, auth failures and credential updates. The
+-- Operations Centre reads this for each integration's health, activity and logs.
+CREATE TABLE IF NOT EXISTS integration_events (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at   TEXT    NOT NULL,
+    integration  TEXT    NOT NULL,       -- anthropic|openai|etsy|shopify|...
+    kind         TEXT    NOT NULL,       -- test|connection|publish|sync|error|auth|credential_update
+    status       TEXT    NOT NULL,       -- ok|failed
+    detail       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_integration_events ON integration_events(integration, id);
 """
 
 
@@ -1737,6 +1750,45 @@ class Database:
                 d["steps"] = []
             out.append(d)
         return out
+
+    # --- Integration events (Sprint 41.1 audit + activity) ----------
+
+    def insert_integration_event(self, event: dict[str, Any]) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO integration_events (created_at, integration, kind, status, detail) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (_utcnow(), event["integration"], event.get("kind", "test"),
+                 event.get("status", "ok"), event.get("detail")))
+            return int(cur.lastrowid)
+
+    def list_integration_events(self, integration: str | None = None,
+                                limit: int = 25) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM integration_events"
+        params: list[Any] = []
+        if integration is not None:
+            sql += " WHERE integration = ?"
+            params.append(integration)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def last_integration_event(self, integration: str, *, kind: str | None = None,
+                               status: str | None = None) -> dict[str, Any] | None:
+        sql = "SELECT * FROM integration_events WHERE integration = ?"
+        params: list[Any] = [integration]
+        if kind is not None:
+            sql += " AND kind = ?"
+            params.append(kind)
+        if status is not None:
+            sql += " AND status = ?"
+            params.append(status)
+        sql += " ORDER BY id DESC LIMIT 1"
+        with self._connect() as conn:
+            row = conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
 
     def get_last_deployment(self, action: str | None = None) -> dict[str, Any] | None:
         sql = "SELECT * FROM deployments"

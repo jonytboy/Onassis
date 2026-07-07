@@ -402,6 +402,89 @@
     </div>
   </div>
 
+  <!-- INTEGRATIONS -->
+  <div x-show="tab==='integrations'">
+    <div class="panel" x-show="integrations">
+      <h2>Integrations — connect, test &amp; monitor every external service</h2>
+      <div class="grid" style="margin-bottom:6px">
+        <div class="stat"><div class="k">🟢 Healthy</div><div class="v" x-text="integrations?.summary?.healthy"></div></div>
+        <div class="stat"><div class="k">🟡 Warning</div><div class="v" x-text="integrations?.summary?.warning"></div></div>
+        <div class="stat"><div class="k">🔴 Failed</div><div class="v" x-text="integrations?.summary?.failed"></div></div>
+        <div class="stat"><div class="k">⚪ Not configured</div><div class="v" x-text="integrations?.summary?.not_configured"></div></div>
+      </div>
+      <div class="note">Secrets are masked and encrypted at rest when <span class="mono">ONASSIS_SECRET_KEY</span> is set
+        (<span x-text="integrations?.encryption?'encryption on':'encryption off — set ONASSIS_SECRET_KEY'"></span>).</div>
+
+      <template x-for="(cards,cat) in (integrations?.categories||{})" :key="cat">
+        <div style="margin-top:14px">
+          <h2 x-text="cat"></h2>
+          <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(240px,1fr))">
+            <template x-for="c in cards" :key="c.key">
+              <div class="stat" style="cursor:pointer" @click="openIntegration(c.key)">
+                <div class="k" x-text="c.label"></div>
+                <div class="v sm"><span x-text="healthDot(c.health)"></span>
+                  <span class="pill" :class="healthPill(c.health)" x-text="c.health.replace('_',' ')"></span></div>
+                <div class="note" x-show="c.activity?.last_error" style="color:#ff8a8a" x-text="c.activity?.last_error"></div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- Integration detail / editor -->
+    <div class="panel" x-show="integrationDetail" style="border-color:var(--accent)">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <h2><span x-text="healthDot(integrationDetail?.health)"></span> <span x-text="integrationDetail?.label"></span>
+          <span class="pill" :class="healthPill(integrationDetail?.health)" x-text="(integrationDetail?.health||'').replace('_',' ')"></span></h2>
+        <button class="btn small" @click="closeIntegration()">Close ✕</button>
+      </div>
+
+      <table style="margin-top:10px"><tbody>
+        <template x-for="f in (integrationDetail?.fields||[])" :key="f.key">
+          <tr>
+            <td class="muted" style="white-space:nowrap" x-text="f.label"></td>
+            <td><input class="keybar" style="width:100%" :type="f.secret?'text':'text'"
+                  :placeholder="f.set?('current: '+f.value):('set '+(f.env||f.key))"
+                  @input="integrationEdits[f.key]=$event.target.value"
+                  :value="integrationEdits[f.key]!==undefined?integrationEdits[f.key]:''"></td>
+            <td class="mono muted" x-text="f.env"></td>
+          </tr>
+        </template>
+      </tbody></table>
+
+      <div class="secondary" style="grid-template-columns:repeat(4,1fr);margin-top:12px">
+        <button class="btn small primary" @click="testIntegration()" :disabled="integrationBusy" x-text="integrationBusy?'…':'Test Connection'"></button>
+        <button class="btn small" @click="saveIntegration()" :disabled="integrationBusy">Save</button>
+        <button class="btn small" @click="openIntegration(integrationDetail.key,true)">Reveal Secrets</button>
+        <template x-for="a in (integrationDetail?.actions||[])" :key="a">
+          <button class="btn small" x-show="a!=='test'" @click="integrationAction(a)" x-text="a.replace(/_/g,' ')"></button>
+        </template>
+      </div>
+
+      <div class="cols" style="margin-top:14px">
+        <div class="stat"><div class="k">Last success</div><div class="v sm mono" x-text="(integrationDetail?.activity?.last_success||'—').slice(0,19).replace('T',' ')"></div></div>
+        <div class="stat"><div class="k">Last error</div><div class="v sm" x-text="integrationDetail?.activity?.last_error||'—'"></div></div>
+        <div class="stat"><div class="k">Last publish</div><div class="v sm mono" x-text="(integrationDetail?.activity?.last_publish||'—').slice(0,19).replace('T',' ')"></div></div>
+      </div>
+
+      <h2 style="margin-top:14px">Guided setup</h2>
+      <ol class="note" style="margin:0;padding-left:20px">
+        <template x-for="(step,i) in (integrationDetail?.setup||[])" :key="i"><li x-text="step"></li></template>
+      </ol>
+
+      <h2 style="margin-top:14px">Activity log</h2>
+      <div class="console" style="max-height:180px">
+        <template x-for="e in (integrationDetail?.events||[])" :key="e.id">
+          <div class="ln"><span class="ts" x-text="(e.created_at||'').slice(11,19)"></span>
+            <span :class="e.status==='ok'?'info':'error'" x-text="e.kind"></span>
+            <span class="muted" x-text="e.detail"></span></div>
+        </template>
+        <div x-show="!(integrationDetail?.events||[]).length" class="muted">No activity yet.</div>
+      </div>
+    </div>
+  </div>
+
   <!-- SYSTEM -->
   <div x-show="tab==='system'">
     <div class="panel" x-show="settings" style="margin-bottom:12px">
@@ -626,13 +709,15 @@ function ops(){
     tab:'overview',
     tabs:[{id:'overview',label:'Overview'},{id:'business',label:'Business'},
           {id:'products',label:'Products'},{id:'marketing',label:'Marketing'},
-          {id:'approvals',label:'Approvals'},{id:'system',label:'System'}],
+          {id:'approvals',label:'Approvals'},{id:'integrations',label:'Integrations'},
+          {id:'system',label:'System'}],
     status:null, run:null, logs:[], logSeq:0, logUid:0, _polling:false,
     business:null, products:[], productSummary:null, marketing:null, approvals:null, system:null,
     settings:null, savingSettings:false,
     updates:null, health:null, deployHistory:[], deploying:false, showNotes:false, showLog:null,
     environment:null, deployRun:null, preview:null, validation:null, _deployPoll:null,
     productDetail:null, channelTests:null, testingChannels:false,
+    integrations:null, integrationDetail:null, integrationEdits:{}, integrationBusy:false,
     productSearch:'', productFilter:'all',
     productFilters:[['all','All'],['awaiting_approval','Awaiting Approval'],['ready_to_publish','Ready to Publish'],['draft_created','Draft Created'],['live','Live'],['failed','Failed'],['archived','Archived']],
     get running(){ return this.run?.status==='running'; },
@@ -682,6 +767,7 @@ function ops(){
         this.products=d.products; this.productSummary=d.summary; }
       else if(t==='marketing') this.marketing=await this.get('/operations/api/marketing');
       else if(t==='approvals') this.approvals=await this.get('/operations/api/approvals');
+      else if(t==='integrations') this.integrations=await this.get('/operations/api/integrations');
       else if(t==='system'){ this.system=await this.get('/operations/api/system');
         this.settings=(await this.get('/operations/api/business-settings')).settings;
         this.updates=await this.get('/operations/api/updates');
@@ -724,6 +810,24 @@ function ops(){
     async sendTestEmail(){ const r=await this.post('/operations/api/channels/email/test-send'); this.pollLogs(); alert(r&&r.ok?'Test email sent.':'Not sent: '+((r&&(r.reason||r.detail))||'unknown')); },
     async distributeNow(){ const r=await this.post('/operations/api/channels/distribute'); this.pollLogs(); this.loadTab('marketing');
       alert('Distribution: '+((r&&r.posted)||0)+' posted, '+((r&&r.skipped)||0)+' skipped, '+((r&&r.failed)||0)+' failed.'); },
+    healthPill(h){ return {healthy:'ok',warning:'needs_review',failed:'failed',not_configured:'grey'}[h]||'grey'; },
+    healthDot(h){ return {healthy:'🟢',warning:'🟡',failed:'🔴',not_configured:'⚪'}[h]||'⚪'; },
+    async openIntegration(key,reveal){ this.integrationEdits={};
+      this.integrationDetail=await this.get('/operations/api/integrations/'+key+(reveal?'?reveal=1':'')); },
+    closeIntegration(){ this.integrationDetail=null; this.integrationEdits={}; },
+    async saveIntegration(){ const key=this.integrationDetail.key; this.integrationBusy=true;
+      const r=await this.post('/operations/api/integrations/'+key+'/save',{values:this.integrationEdits,operator:'operator'});
+      this.integrationBusy=false;
+      if(r&&r.error){ alert('Save failed.'); return; }
+      this.integrationEdits={}; await this.openIntegration(key); this.loadTab('integrations'); },
+    async testIntegration(){ const key=this.integrationDetail.key; this.integrationBusy=true;
+      const r=await this.post('/operations/api/integrations/'+key+'/test'); this.integrationBusy=false; this.pollLogs();
+      alert(r&&r.ok?('✓ '+(r.detail||'Connected')):('✗ '+(r.detail||'Failed')));
+      await this.openIntegration(key); this.loadTab('integrations'); },
+    async integrationAction(action){ const key=this.integrationDetail.key;
+      const r=await this.post('/operations/api/integrations/'+key+'/action/'+action); this.pollLogs();
+      if(r&&r.redirect){ window.open(r.redirect,'_blank'); return; }
+      alert(r&&r.ok?'✓ Done':'✗ '+((r&&r.detail)||'Failed')); await this.openIntegration(key); },
     async decide(sku,action){
       if(action==='reject'&&!confirm('Reject '+sku+'?')) return;
       const r=await this.post('/operations/api/approvals/'+encodeURIComponent(sku)+'/decision',{action,operator:'operator'});

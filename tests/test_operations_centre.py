@@ -280,6 +280,43 @@ def test_channel_connection_tests(client, monkeypatch):
     assert r["facebook"]["configured"] is False           # not set → clean report
 
 
+def test_integrations_dashboard(client):
+    d = client.get("/operations/api/integrations").json()
+    assert set(d["categories"]) == {"AI", "Commerce", "Marketing", "Production"}
+    assert "summary" in d and "encryption" in d
+
+
+def test_integration_detail_and_save_and_test(client):
+    # Save credentials via the API, then a fake tester confirms the connection.
+    r = client.post("/operations/api/integrations/shopify/save",
+                    json={"values": {"store_domain": "x.myshopify.com",
+                                     "admin_token": "tok1234567890"}, "operator": "jony"})
+    assert r.status_code == 200 and r.json()["configured"] is True
+    # Inject a passing tester and test.
+    client.app.state.integrations._testers["shopify"] = \
+        lambda c, res, db: {"ok": True, "configured": True, "detail": "Connected to X"}
+    t = client.post("/operations/api/integrations/shopify/test").json()
+    assert t["ok"] is True and t["health"] == "healthy"
+    # Detail shows masked secret + the audit events.
+    detail = client.get("/operations/api/integrations/shopify").json()
+    tok = {f["key"]: f["value"] for f in detail["fields"]}["admin_token"]
+    assert tok != "tok1234567890" and "…" in tok
+    assert any(e["kind"] == "credential_update" for e in detail["events"])
+    # Reveal returns the raw secret.
+    revealed = client.get("/operations/api/integrations/shopify?reveal=1").json()
+    assert {f["key"]: f["value"] for f in revealed["fields"]}["admin_token"] == "tok1234567890"
+
+
+def test_integration_save_rejects_bad_field(client):
+    r = client.post("/operations/api/integrations/shopify/save",
+                    json={"values": {"nope": "x"}})
+    assert r.status_code == 400
+
+
+def test_integration_unknown_key_404(client):
+    assert client.get("/operations/api/integrations/nonsense").status_code == 404
+
+
 def test_business_settings_validation_rejects_out_of_range(client):
     r = client.post("/operations/api/business-settings",
                     json={"changes": {"auto_approval_threshold": 5}})  # > 1.0
@@ -363,7 +400,7 @@ def test_environment_awareness_endpoint(client, tmp_path):
     for k in ("environment", "branch", "commit", "git_status",
               "database_version", "application_version"):
         assert k in e
-    assert e["database_version"] == 42
+    assert e["database_version"] == 43
 
 
 def test_download_fetches_only(client, tmp_path):

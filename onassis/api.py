@@ -77,6 +77,11 @@ def create_app(config: Config | None = None) -> FastAPI:
     """
     config = config or load_config()
     db = Database(config.db_path)
+    # Overlay operator-saved integration credentials (Integration Manager) onto
+    # the live config BEFORE connectors are built, so they use the latest keys.
+    from onassis.integrations import IntegrationManager, apply_integration_overrides
+
+    apply_integration_overrides(config, db)
     # One product-first workflow (the Daily Cycle). Everything the API exposes
     # reuses the cycle's own module instances, so there is a single shared set
     # and a single behaviour — no separate content-first path.
@@ -172,6 +177,7 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     from onassis.deployment import DeploymentService
     app.state.deployment = DeploymentService(config, db)
+    app.state.integrations = IntegrationManager(config, db)
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""

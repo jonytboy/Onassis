@@ -106,6 +106,23 @@ class GelatoConnector:
         """Fulfilment also needs a public print-file base URL for Gelato to fetch."""
         return self.is_configured and bool(self._client or self.file_base_url)
 
+    def test_connection(self) -> dict[str, Any]:
+        """Validate API access by reading the Gelato product catalogue (read-only)."""
+        if not self.cfg.get("api_key"):
+            return {"ok": False, "configured": False,
+                    "detail": "Set GELATO_API_KEY (+ GELATO_FILE_BASE_URL to fulfil)."}
+        try:
+            import httpx
+
+            resp = httpx.get("https://product.gelatoapis.com/v3/catalogs",
+                             headers={"X-API-KEY": self.cfg.get("api_key")}, timeout=15.0)
+            if resp.status_code >= 400:
+                return {"ok": False, "configured": True,
+                        "detail": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+            return {"ok": True, "configured": True, "detail": "Gelato API reachable"}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "configured": True, "detail": str(exc)}
+
     @property
     def client(self) -> Any:
         if self._client is None:
