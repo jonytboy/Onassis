@@ -1,0 +1,105 @@
+"""Tests for the Channel Distributor (Sprint 41) — IG/FB/Blog/Email, fakes."""
+
+from __future__ import annotations
+
+from onassis.distribution import ChannelDistributor
+
+
+class FakeFacebook:
+    can_publish = True
+    def __init__(self): self.calls = 0
+    def post(self, body, link=None):
+        self.calls += 1
+        return {"ok": True, "ref": "fb1"}
+
+
+class FakeInstagram:
+    can_publish = True
+    def __init__(self): self.calls = 0
+    def post(self, caption, image_url=None):
+        self.calls += 1
+        if not image_url:
+            return {"ok": False, "skipped": True, "reason": "no image url"}
+        return {"ok": True, "ref": "ig1"}
+
+
+class FakeEmail:
+    can_publish = True
+    def __init__(self): self.calls = 0
+    def send(self, subject, body, to=None):
+        self.calls += 1
+        return {"ok": True, "ref": "em1"}
+
+
+class FakeShopifyBlog:
+    can_publish = True
+    def publish_article(self, payload):
+        return {"article": {"id": 42}}
+
+
+def _distributor(config, db, **kw):
+    return ChannelDistributor(config, db, instagram=FakeInstagram(), facebook=FakeFacebook(),
+                              email=FakeEmail(), shopify=FakeShopifyBlog(), **kw)
+
+
+def _seed(db, channel, payload, url="https://etsy.com/listing/1"):
+    return db.insert_marketing_asset({"campaign_id": 1, "product_key": "mug",
+                                      "listing_id": "1", "listing_url": url,
+                                      "channel": channel, "payload": payload})
+
+
+def _enable_fb(db):
+    db.set_setting("business.facebook_enabled", True)
+
+
+def test_distributes_all_channels(config, db):
+    config.shopify = {"blog_id": 7}
+    _enable_fb(db)
+    _seed(db, "facebook", {"post": {"body": "hi", "link": "u"}})
+    _seed(db, "instagram", {"captions": ["cap"], "image_url": "http://img/x.jpg"})
+    _seed(db, "email", {"subject": "s", "body": "b"})
+    _seed(db, "blog", {"title": "t", "body": "b", "keywords": ["k"]})
+
+    r = _distributor(config, db).distribute()
+    assert r["processed"] == 4 and r["posted"] == 4 and r["failed"] == 0
+    # Every asset is now marked delivered.
+    assert db.list_pending_marketing_assets(channels=["facebook", "instagram", "blog", "email"]) == []
+    posted = db.count_marketing_assets_by_status("posted")
+    assert posted == 4
+
+
+def test_distribution_is_idempotent(config, db):
+    config.shopify = {"blog_id": 7}
+    _seed(db, "email", {"subject": "s", "body": "b"})
+    dist = _distributor(config, db)
+    dist.distribute()
+    again = dist.distribute()
+    assert again["processed"] == 0        # nothing re-sent
+
+
+def test_instagram_without_image_is_skipped_not_failed(config, db):
+    _seed(db, "instagram", {"captions": ["cap"]})   # no image_url
+    r = _distributor(config, db).distribute()
+    assert r["skipped"] == 1 and r["failed"] == 0
+    asset = db.list_marketing_assets(channel="instagram")[0]
+    assert asset["status"] == "skipped"
+
+
+def test_facebook_disabled_in_settings_is_skipped(config, db):
+    # facebook_enabled defaults False in Business Settings.
+    _seed(db, "facebook", {"post": {"body": "hi", "link": "u"}})
+    r = _distributor(config, db).distribute()
+    assert r["skipped"] == 1
+    asset = db.list_marketing_assets(channel="facebook")[0]
+    assert "disabled" in (asset["delivery_error"] or "")
+
+
+def test_unconfigured_channels_skip_safely(config, db):
+    config.shopify = {}
+    # Real (unconfigured) connectors → safe no-op skips, nothing crashes.
+    _seed(db, "blog", {"title": "t", "body": "b"})
+    _seed(db, "email", {"subject": "s", "body": "b"})
+    dist = ChannelDistributor(config, db)   # real gated connectors
+    r = dist.distribute()
+    assert r["processed"] == 2 and r["posted"] == 0
+    assert r["skipped"] == 2 and r["failed"] == 0

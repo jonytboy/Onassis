@@ -31,7 +31,7 @@ log = get_logger(__name__)
 # Bump whenever the schema changes (new table / column). Surfaced in the
 # Operations Centre "Environment" panel so an operator can see at a glance
 # whether the running database matches the code they expect.
-SCHEMA_VERSION = 41
+SCHEMA_VERSION = 42
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS briefs (
@@ -709,7 +709,12 @@ class Database:
                                         ("orders", "shipping_address", "TEXT"),
                                         ("pin_schedule", "image_path", "TEXT"),
                                         ("pin_schedule", "impressions", "INTEGER DEFAULT 0"),
-                                        ("pin_schedule", "clicks", "INTEGER DEFAULT 0")):
+                                        ("pin_schedule", "clicks", "INTEGER DEFAULT 0"),
+                                        # Sprint 41: channel delivery tracking.
+                                        ("marketing_assets", "status", "TEXT DEFAULT 'pending'"),
+                                        ("marketing_assets", "delivered_at", "TEXT"),
+                                        ("marketing_assets", "delivery_ref", "TEXT"),
+                                        ("marketing_assets", "delivery_error", "TEXT")):
                 try:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
                 except sqlite3.OperationalError:
@@ -2651,6 +2656,47 @@ class Database:
             params.append(channel)
         with self._connect() as conn:
             return int(conn.execute(sql, params).fetchone()[0])
+
+    def list_pending_marketing_assets(self, *, channel: str | None = None,
+                                      channels: list[str] | None = None,
+                                      limit: int = 100) -> list[dict[str, Any]]:
+        """Assets not yet delivered to their channel (Sprint 41 distribution).
+        ``pending`` or NULL status counts as undelivered."""
+        sql = ("SELECT * FROM marketing_assets "
+               "WHERE (status IS NULL OR status = 'pending')")
+        params: list[Any] = []
+        if channel is not None:
+            sql += " AND channel = ?"
+            params.append(channel)
+        if channels:
+            sql += " AND channel IN (%s)" % ",".join("?" * len(channels))
+            params.extend(channels)
+        sql += " ORDER BY id ASC LIMIT ?"
+        params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        out = []
+        for r in rows:
+            data = dict(r)
+            data["payload"] = json.loads(data.get("payload") or "{}")
+            out.append(data)
+        return out
+
+    def set_marketing_asset_delivery(self, asset_id: int, status: str, *,
+                                     ref: str | None = None,
+                                     error: str | None = None) -> None:
+        """Record the outcome of a channel delivery (posted/failed/skipped)."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE marketing_assets SET status = ?, delivered_at = ?, "
+                "delivery_ref = ?, delivery_error = ? WHERE id = ?",
+                (status, _utcnow() if status == "posted" else None, ref, error, asset_id))
+
+    def count_marketing_assets_by_status(self, status: str) -> int:
+        with self._connect() as conn:
+            return int(conn.execute(
+                "SELECT COUNT(*) FROM marketing_assets WHERE status = ?",
+                (status,)).fetchone()[0])
 
     # --- Traffic: pin schedule --------------------------------------
 

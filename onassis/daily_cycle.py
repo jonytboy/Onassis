@@ -63,8 +63,10 @@ from onassis.learning import LearningEngine
 from onassis.listing_factory import ListingFactory
 from onassis.logger import get_logger
 from onassis.market_intelligence import MarketIntelligence
+from onassis.distribution import ChannelDistributor
 from onassis.marketing import MarketingEngine
 from onassis.opportunities import OpportunityEngine
+from onassis.shopify_publisher import ShopifyPublisher
 from onassis.optimiser import ProductOptimiser
 from onassis.orchestrator import Orchestrator
 from onassis.portfolio import PortfolioManager
@@ -114,6 +116,10 @@ class DailyCycle:
         self.etsy_intelligence = EtsyIntelligence(config, db)
         self.marketing = MarketingEngine(config, db)
         self.traffic = TrafficEngine(config, db, pinterest=self.pinterest)
+        # Sprint 41 — commerce reach: Shopify as a second sales channel, and
+        # distribution of the IG/FB/Blog/Email marketing assets.
+        self.shopify = ShopifyPublisher(config, db)
+        self.distribution = ChannelDistributor(config, db)
         self.dashboard = CEODashboard(config, db)
         # Campaign/Brain/Compliance are owned by the orchestrator — reuse them.
         self.campaigns = self.orchestrator.campaigns
@@ -492,6 +498,21 @@ class DailyCycle:
                 published += 1
                 first_draft_at = first_draft_at or datetime.now(timezone.utc).isoformat()
 
+                # Publish to Shopify at the same time (second sales channel).
+                # Safe no-op until Shopify is credentialled; never blocks the
+                # Etsy draft — a Shopify failure is isolated and recorded.
+                try:
+                    shop_dir = self._product_images_dir(cid, key)
+                    shop = self.shopify.publish(cid, key, pkg.get("listing", {}),
+                                                images_dir=shop_dir)
+                    rec["shopify"] = shop.get("status")
+                    if shop.get("status") not in ("draft", "live", "skipped", "not_configured"):
+                        log.warning("[stream] Shopify publish for %s: %s",
+                                    name, shop.get("reason"))
+                except Exception as exc:  # never let Shopify break the Etsy flow
+                    rec["shopify"] = "failed"
+                    log.warning("[stream] Shopify publish crashed for %s: %s", name, exc)
+
                 # Financial Protection has final authority: never take a product
                 # LIVE below protected profitability. A rejected product stays a
                 # draft (not lost), the reason is audited, and the CEO is alerted.
@@ -579,18 +600,27 @@ class DailyCycle:
         cid = ctx.get("campaign_id")
         sched = self.traffic.schedule(campaign_id=cid)
         dist = self.traffic.distribute()
+        # Distribute the rest of the marketing kit (Instagram / Facebook / Blog /
+        # Email) — safe no-op per channel until each is credentialled.
+        channels = self.distribution.distribute()
         metrics = self.traffic.import_metrics()   # impressions/clicks -> attributed
         funnel = self.traffic.snapshot()
         posted = int(dist.get("posted", 0) or 0)
         scheduled = int(sched.get("scheduled", 0) or 0)
         ctx["promotion"] = {"posted": posted, "scheduled": scheduled,
                             "impressions": metrics.get("impressions", 0),
-                            "clicks": metrics.get("clicks", 0)}
+                            "clicks": metrics.get("clicks", 0),
+                            "channels_posted": channels.get("posted", 0)}
+        ctx["distribution"] = channels
         ctx["funnel"] = funnel
-        return {"status": "ok" if (scheduled or posted) else "skipped",
+        return {"status": "ok" if (scheduled or posted or channels.get("processed")) else "skipped",
                 "detail": {"pins_scheduled": scheduled, "pins_posted": posted,
                            "queued": int(dist.get("queued", 0) or 0),
                            "season": sched.get("season"),
+                           "channels": {"processed": channels.get("processed", 0),
+                                        "posted": channels.get("posted", 0),
+                                        "skipped": channels.get("skipped", 0),
+                                        "failed": channels.get("failed", 0)},
                            "impressions": metrics.get("impressions", 0),
                            "clicks": metrics.get("clicks", 0), "funnel": funnel}}
 
@@ -638,6 +668,17 @@ class DailyCycle:
         if not path.exists():
             return None
         return json.loads(path.read_text(encoding="utf-8"))
+
+    def _product_images_dir(self, campaign_id: int, product_key: str):
+        """The gallery-images folder for a product's package (for Shopify upload)."""
+        from pathlib import Path
+
+        from onassis.config import ROOT_DIR
+
+        base = Path((self.config.listing or {}).get("exports_dir", "exports"))
+        if not base.is_absolute():
+            base = ROOT_DIR / base
+        return base / str(campaign_id) / product_key / "images"
 
     def _live_products(self, ctx: dict[str, Any]) -> list[tuple[str, str]]:
         go_live = self._go_live_result(ctx)

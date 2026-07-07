@@ -96,6 +96,10 @@ class Config:
     gelato: dict[str, Any] = field(default_factory=dict)
     protection: dict[str, Any] = field(default_factory=dict)
     security: dict[str, Any] = field(default_factory=dict)
+    # Sprint 41 — commerce reach: a second sales channel + social/email/blog.
+    shopify: dict[str, Any] = field(default_factory=dict)
+    meta: dict[str, Any] = field(default_factory=dict)
+    email: dict[str, Any] = field(default_factory=dict)
 
     # secrets / future integrations
     anthropic_api_key: str | None = None
@@ -172,6 +176,36 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         **gelato,
         "api_key": _env("GELATO_API_KEY", gelato.get("api_key")),
         "file_base_url": _env("GELATO_FILE_BASE_URL", gelato.get("file_base_url")),
+    }
+    # Shopify — second sales channel (products published alongside Etsy).
+    shopify = raw.get("shopify", {})
+    shopify = {
+        **shopify,
+        "store_domain": _env("SHOPIFY_STORE_DOMAIN", shopify.get("store_domain")),
+        "admin_token": _env("SHOPIFY_ADMIN_TOKEN", shopify.get("admin_token")),
+        "api_version": _env("SHOPIFY_API_VERSION", shopify.get("api_version", "2024-10")),
+        "location_id": _env("SHOPIFY_LOCATION_ID", shopify.get("location_id")),
+    }
+    # Meta (Instagram + Facebook publishing via the Graph API).
+    meta = raw.get("meta", {})
+    meta = {
+        **meta,
+        "page_access_token": _env("META_PAGE_ACCESS_TOKEN", meta.get("page_access_token")),
+        "facebook_page_id": _env("FACEBOOK_PAGE_ID", meta.get("facebook_page_id")),
+        "instagram_user_id": _env("INSTAGRAM_USER_ID", meta.get("instagram_user_id")),
+        "api_version": _env("META_API_VERSION", meta.get("api_version", "v21.0")),
+    }
+    # Email newsletter (SMTP).
+    email = raw.get("email", {})
+    email = {
+        **email,
+        "smtp_host": _env("SMTP_HOST", email.get("smtp_host")),
+        "smtp_port": int(_env("SMTP_PORT", email.get("smtp_port", 587))),
+        "smtp_user": _env("SMTP_USER", email.get("smtp_user")),
+        "smtp_password": _env("SMTP_PASSWORD", email.get("smtp_password")),
+        "from_address": _env("EMAIL_FROM", email.get("from_address")),
+        "to_address": _env("EMAIL_TO", email.get("to_address")),
+        "use_tls": bool(email.get("use_tls", True)),
     }
     # Financial protection: only the CORE commercial controls come from the env;
     # all fee/estimation/business logic stays in the YAML `protection` section.
@@ -269,5 +303,8 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         gelato=gelato,
         protection=protection,
         security=security,
+        shopify=shopify,
+        meta=meta,
+        email=email,
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
     )

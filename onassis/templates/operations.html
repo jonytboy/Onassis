@@ -286,6 +286,27 @@
         <div class="stat"><div class="k">Clicks</div><div class="v sm" x-text="marketing?.funnel?.clicks"></div></div>
         <div class="stat"><div class="k">Visits → Sales</div><div class="v sm"><span x-text="marketing?.funnel?.visits"></span> → <span x-text="marketing?.funnel?.sales"></span></div></div>
       </div>
+
+      <h2 style="margin-top:18px">Channel distribution</h2>
+      <div class="grid">
+        <div class="stat"><div class="k">Delivered</div><div class="v" x-text="marketing?.delivery?.posted"></div></div>
+        <div class="stat"><div class="k">Pending</div><div class="v" x-text="marketing?.delivery?.pending"></div></div>
+        <div class="stat"><div class="k">Skipped</div><div class="v sm" x-text="marketing?.delivery?.skipped"></div></div>
+        <div class="stat"><div class="k">Failed</div><div class="v sm" x-text="marketing?.delivery?.failed"></div></div>
+      </div>
+      <div class="cols" style="margin-top:12px">
+        <template x-for="(ready,ch) in (marketing?.channel_ready||{})" :key="ch">
+          <div class="stat"><div class="k" x-text="ch"></div>
+            <div class="v sm"><span class="led" :class="ready?'green':'grey'"></span> <span x-text="ready?'connected':'not connected'"></span></div></div>
+        </template>
+      </div>
+
+      <h2 style="margin-top:18px">Sales channels</h2>
+      <div class="grid">
+        <div class="stat"><div class="k">Etsy</div><div class="v sm"><span class="led" :class="status?.lights?.etsy?.status||'grey'"></span> primary</div></div>
+        <div class="stat"><div class="k">Shopify</div><div class="v sm"><span class="led" :class="marketing?.shopify?.configured?'green':'grey'"></span>
+          <span x-text="marketing?.shopify?.configured?(marketing.shopify.products+' products'):'not connected'"></span></div></div>
+      </div>
     </div>
   </div>
 

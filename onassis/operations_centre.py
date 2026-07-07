@@ -620,11 +620,25 @@ def build_operations_router(get_state) -> APIRouter:
         _require_operator(request)
         s = request.app.state
         funnel = s.daily.traffic.funnel()
+        dist = s.daily.distribution
+        delivery = {
+            "posted": s.db.count_marketing_assets_by_status("posted"),
+            "pending": len(s.db.list_pending_marketing_assets(limit=1000)),
+            "failed": s.db.count_marketing_assets_by_status("failed"),
+            "skipped": s.db.count_marketing_assets_by_status("skipped"),
+        }
+        channel_ready = {ch: dist.can_distribute(ch)
+                         for ch in ("instagram", "facebook", "blog", "email")}
+        shopify_pubs = [p for p in s.db.list_publications() if p.get("platform") == "shopify"]
         return {
             "channels": {ch: s.db.count_marketing_assets(channel=ch)
                          for ch in ("pinterest", "instagram", "facebook", "blog", "email")},
             "pins_scheduled": len(s.db.list_pin_schedule(status="scheduled")),
             "pins_posted": len(s.db.list_pin_schedule(status="posted")),
+            "delivery": delivery,
+            "channel_ready": channel_ready,
+            "shopify": {"configured": s.daily.shopify.can_publish,
+                        "products": len(shopify_pubs)},
             "funnel": funnel,
             "keywords": s.daily.etsy_intelligence.keyword_performance(20),
         }
