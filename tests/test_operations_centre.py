@@ -475,7 +475,7 @@ def test_environment_awareness_endpoint(client, tmp_path):
     for k in ("environment", "branch", "commit", "git_status",
               "database_version", "application_version"):
         assert k in e
-    assert e["database_version"] == 44
+    assert e["database_version"] == 45
 
 
 def test_download_fetches_only(client, tmp_path):

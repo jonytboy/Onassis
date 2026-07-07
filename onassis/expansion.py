@@ -65,6 +65,9 @@ class RevenueExpansionEngine:
         # The REAL Etsy fee model (incl. Offsite Ads) drives profit forecasts.
         self.fee_model = FeeModel.from_config(config)
         self.weights = {**_DEFAULT_WEIGHTS, **(self.cfg.get("weights") or {})}
+        # Category-diversity guard (Sprint 42): keep apparel represented even as
+        # the learning loop favours what already sells. Off unless enabled.
+        self.balance_categories = bool(self.cfg.get("balance_categories", False))
         self.ceo = CEOAgent(config, db)
 
     # --- Catalogue --------------------------------------------------
@@ -200,6 +203,11 @@ class RevenueExpansionEngine:
             chosen, mode = ceo_ok[:count], "cold_start"
         else:
             chosen, mode = strict[: self.max_variants], "threshold"
+        # Category-diversity guard: rescue under-represented categories (apparel)
+        # from the wider CEO-approved pool. No-op when already diverse.
+        if self.balance_categories and len(chosen) >= 2:
+            from onassis.collections import balance_selection
+            chosen = balance_selection(chosen, ceo_ok)
         chosen_keys = {s["product_key"] for s in chosen}
 
         launched: list[dict[str, Any]] = []
@@ -219,6 +227,7 @@ class RevenueExpansionEngine:
             "Expansion plan for campaign #%s: launched %d/%d product(s) (%s, threshold %.0f).",
             campaign_id, len(launched), len(scored), mode, self.threshold,
         )
+        from onassis.collections import describe_collection
         return {
             "campaign_id": campaign_id,
             "opportunity_id": opp_id,
@@ -229,6 +238,10 @@ class RevenueExpansionEngine:
             "skipped_unavailable": self._unavailable(),
             "launched": launched,
             "scored": scored,
+            # The launched set as a branded collection (Sprint 42, Obj 9).
+            "collection": describe_collection(
+                launched, opportunity,
+                campaign if isinstance(campaign, dict) else None),
         }
 
     def _launch_reason(self, s: dict[str, Any], mode: str) -> str:

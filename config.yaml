@@ -352,6 +352,9 @@ expansion:
   min_variants: 3                # guarantee at least this many CEO-approved variants
   max_variants: 5                # never launch more than this per design
   cold_start: true               # relax the threshold to reach min_variants (CEO still gates)
+  # Keep a balanced collection: rescue apparel (and overall category diversity)
+  # when the learning loop pushes it out of the top-N (Sprint 42, Obj 8/10).
+  balance_categories: true
   # Profit forecasts use the global `fees` model (real Etsy fees incl. Offsite
   # Ads). The profit sub-score is calibrated to an achievable post-fee POD margin.
   profit_target_margin: 0.45     # a product hitting this NET margin scores 100 on profit

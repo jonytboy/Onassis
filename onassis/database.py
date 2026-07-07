@@ -31,7 +31,7 @@ log = get_logger(__name__)
 # Bump whenever the schema changes (new table / column). Surfaced in the
 # Operations Centre "Environment" panel so an operator can see at a glance
 # whether the running database matches the code they expect.
-SCHEMA_VERSION = 44
+SCHEMA_VERSION = 45
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS briefs (
@@ -680,6 +680,20 @@ CREATE TABLE IF NOT EXISTS integration_events (
     detail       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_integration_events ON integration_events(integration, id);
+
+-- Marketing learning (Sprint 42 Phase 5): a snapshot of each channel's measured
+-- effectiveness per run, so the marketing loop can compare over time and improve
+-- (generate → launch → measure → compare → learn → improve → launch again).
+CREATE TABLE IF NOT EXISTS marketing_learnings (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at    TEXT    NOT NULL,
+    snapshot_date TEXT    NOT NULL,
+    channel       TEXT    NOT NULL,
+    clicks        INTEGER NOT NULL DEFAULT 0,
+    sales         INTEGER NOT NULL DEFAULT 0,
+    effectiveness REAL    NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_marketing_learnings ON marketing_learnings(channel, id);
 """
 
 
@@ -1808,6 +1822,31 @@ class Database:
         with self._connect() as conn:
             row = conn.execute(sql, params).fetchone()
         return dict(row) if row else None
+
+    # --- Marketing learning snapshots (Sprint 42 Phase 5) -----------
+
+    def insert_marketing_learnings(self, snapshot_date: str,
+                                   rows: list[dict[str, Any]]) -> int:
+        data = [(_utcnow(), snapshot_date, r["channel"], int(r.get("clicks", 0) or 0),
+                 int(r.get("sales", 0) or 0), float(r.get("effectiveness", 0) or 0))
+                for r in rows]
+        with self._connect() as conn:
+            conn.executemany(
+                "INSERT INTO marketing_learnings "
+                "(created_at, snapshot_date, channel, clicks, sales, effectiveness) "
+                "VALUES (?, ?, ?, ?, ?, ?)", data)
+        return len(data)
+
+    def previous_marketing_effectiveness(self, before_date: str) -> dict[str, float]:
+        """The most recent effectiveness per channel recorded before a date."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT channel, effectiveness FROM marketing_learnings m "
+                "WHERE snapshot_date < ? AND id = ("
+                "  SELECT MAX(id) FROM marketing_learnings WHERE channel = m.channel "
+                "  AND snapshot_date < ?) ",
+                (before_date, before_date)).fetchall()
+        return {r["channel"]: float(r["effectiveness"]) for r in rows}
 
     def get_last_deployment(self, action: str | None = None) -> dict[str, Any] | None:
         sql = "SELECT * FROM deployments"

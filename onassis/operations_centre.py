@@ -834,6 +834,11 @@ def build_operations_router(get_state) -> APIRouter:
             f"CMO scheduled {r.get('scheduled', 0)} marketing asset(s).")
         return r
 
+    @router.get("/api/marketing/learning")
+    def api_marketing_learning(request: Request) -> Any:
+        _require_operator(request)
+        return request.app.state.marketing_learning.digest()
+
     # --- Commercial Intelligence (Sprint 42 Phase 1) ---
     @router.get("/api/commercial")
     def api_commercial(request: Request) -> Any:

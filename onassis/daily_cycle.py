@@ -121,7 +121,9 @@ class DailyCycle:
         self.shopify = ShopifyPublisher(config, db)
         self.distribution = ChannelDistributor(config, db)
         from onassis.cmo import CMOManager
+        from onassis.marketing_learning import MarketingLearning
         self.cmo = CMOManager(config, db)
+        self.marketing_learning = MarketingLearning(config, db)
         self.dashboard = CEODashboard(config, db)
         # Campaign/Brain/Compliance are owned by the orchestrator — reuse them.
         self.campaigns = self.orchestrator.campaigns
@@ -608,6 +610,9 @@ class DailyCycle:
         channels = self.distribution.distribute()
         metrics = self.traffic.import_metrics()   # impressions/clicks -> attributed
         funnel = self.traffic.snapshot()
+        # Marketing learning loop: record channel effectiveness so next run can
+        # compare and improve (Sprint 42 Phase 5).
+        self.marketing_learning.record()
         posted = int(dist.get("posted", 0) or 0)
         scheduled = int(sched.get("scheduled", 0) or 0)
         ctx["promotion"] = {"posted": posted, "scheduled": scheduled,
