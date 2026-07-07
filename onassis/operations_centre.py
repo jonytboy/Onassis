@@ -818,6 +818,22 @@ def build_operations_router(get_state) -> APIRouter:
                                       if isinstance(getattr(config, k), dict)),
         }
 
+    # --- CMO: strategy + campaign calendar (Sprint 42 Phase 3) ---
+    @router.get("/api/cmo")
+    def api_cmo(request: Request) -> Any:
+        _require_operator(request)
+        cmo = request.app.state.cmo
+        return {"strategy": cmo.strategy(), "calendar": cmo.calendar_view(),
+                "budget": cmo.budget_allocation(100.0)}
+
+    @router.post("/api/cmo/schedule")
+    def api_cmo_schedule(request: Request) -> Any:
+        _require_operator(request)
+        r = request.app.state.cmo.schedule_pending()
+        get_state(request.app).add_log(
+            f"CMO scheduled {r.get('scheduled', 0)} marketing asset(s).")
+        return r
+
     # --- Commercial Intelligence (Sprint 42 Phase 1) ---
     @router.get("/api/commercial")
     def api_commercial(request: Request) -> Any:

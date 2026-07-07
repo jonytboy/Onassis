@@ -391,6 +391,20 @@
         <div class="stat"><div class="k">Visits → Sales</div><div class="v sm"><span x-text="marketing?.funnel?.visits"></span> → <span x-text="marketing?.funnel?.sales"></span></div></div>
       </div>
 
+      <h2 style="margin-top:18px" x-show="cmo">Campaign calendar (CMO)</h2>
+      <div class="cols" x-show="cmo" style="grid-template-columns:repeat(7,1fr);gap:6px">
+        <template x-for="d in (cmo?.calendar||[])" :key="d.date">
+          <div class="stat" style="padding:8px">
+            <div class="k" x-text="d.weekday.slice(0,3)+' '+d.date.slice(5)"></div>
+            <div class="v sm" x-text="d.channel"></div>
+            <div class="note" x-show="d.assets?.length" x-text="d.assets.length+' scheduled'"></div>
+          </div>
+        </template>
+      </div>
+      <div class="note" x-show="cmo">Budget split:
+        <template x-for="(v,ch) in (cmo?.budget||{})" :key="ch"><span class="mono" x-text="ch+' '+money(v)+'  '"></span></template>
+      </div>
+
       <h2 style="margin-top:18px">Channel distribution</h2>
       <div class="grid">
         <div class="stat"><div class="k">Delivered</div><div class="v" x-text="marketing?.delivery?.posted"></div></div>
@@ -796,7 +810,7 @@ function ops(){
     environment:null, deployRun:null, preview:null, validation:null, _deployPoll:null,
     productDetail:null, channelTests:null, testingChannels:false,
     integrations:null, integrationDetail:null, integrationEdits:{}, integrationBusy:false,
-    commercial:null, commercialProducts:null,
+    commercial:null, commercialProducts:null, cmo:null,
     productSearch:'', productFilter:'all', productHealth:null, toast:'',
     productFilters:[['all','All'],['awaiting_approval','Awaiting Approval'],['ready_to_publish','Ready to Publish'],['draft_created','Draft Created'],['live','Live'],['failed','Failed'],['etsy','On Etsy'],['shopify','On Shopify'],['both','Etsy + Shopify'],['archived','Archived']],
     get running(){ return this.run?.status==='running'; },
@@ -847,7 +861,8 @@ function ops(){
       else if(t==='products'){ const d=await this.get('/operations/api/products?filter='+this.productFilter);
         this.products=d.products; this.productSummary=d.summary;
         this.productHealth=await this.get('/operations/api/production-health'); }
-      else if(t==='marketing') this.marketing=await this.get('/operations/api/marketing');
+      else if(t==='marketing'){ this.marketing=await this.get('/operations/api/marketing');
+        this.cmo=await this.get('/operations/api/cmo'); }
       else if(t==='approvals') this.approvals=await this.get('/operations/api/approvals');
       else if(t==='integrations') this.integrations=await this.get('/operations/api/integrations');
       else if(t==='system'){ this.system=await this.get('/operations/api/system');

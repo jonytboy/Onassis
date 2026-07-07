@@ -280,6 +280,17 @@ def test_channel_connection_tests(client, monkeypatch):
     assert r["facebook"]["configured"] is False           # not set → clean report
 
 
+def test_cmo_endpoints(client):
+    c = client.get("/operations/api/cmo").json()
+    assert "strategy" in c and "calendar" in c and "budget" in c
+    assert len(c["calendar"]) == 14
+    db = client.app.state.db
+    db.insert_marketing_asset({"campaign_id": 1, "product_key": "mug", "channel": "email",
+                               "payload": {"subject": "s", "body": "b"}})
+    r = client.post("/operations/api/cmo/schedule").json()
+    assert r["scheduled"] == 1
+
+
 def test_commercial_dashboard_endpoints(client):
     c = client.get("/operations/api/commercial").json()
     assert "ceo" in c and "channels" in c and "attribution" in c
@@ -464,7 +475,7 @@ def test_environment_awareness_endpoint(client, tmp_path):
     for k in ("environment", "branch", "commit", "git_status",
               "database_version", "application_version"):
         assert k in e
-    assert e["database_version"] == 43
+    assert e["database_version"] == 44
 
 
 def test_download_fetches_only(client, tmp_path):

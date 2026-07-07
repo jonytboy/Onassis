@@ -68,9 +68,14 @@ class ChannelDistributor:
 
     # --- Distribute -------------------------------------------------
 
-    def distribute(self, limit: int = 100) -> dict[str, Any]:
-        """Deliver every undelivered IG/FB/Blog/Email asset. Idempotent."""
-        assets = self.db.list_pending_marketing_assets(channels=CHANNELS, limit=limit)
+    def distribute(self, limit: int = 100, due_on: str | None = None) -> dict[str, Any]:
+        """Deliver every undelivered IG/FB/Blog/Email asset that is due today or
+        earlier (or unscheduled). Idempotent."""
+        from datetime import datetime, timezone
+
+        due_on = due_on or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        assets = self.db.list_pending_marketing_assets(
+            channels=CHANNELS, due_on=due_on, limit=limit)
         counts = {"posted": 0, "failed": 0, "skipped": 0}
         by_channel: dict[str, dict[str, int]] = {c: {"posted": 0, "failed": 0, "skipped": 0}
                                                  for c in CHANNELS}

@@ -31,7 +31,7 @@ log = get_logger(__name__)
 # Bump whenever the schema changes (new table / column). Surfaced in the
 # Operations Centre "Environment" panel so an operator can see at a glance
 # whether the running database matches the code they expect.
-SCHEMA_VERSION = 43
+SCHEMA_VERSION = 44
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS briefs (
@@ -727,7 +727,9 @@ class Database:
                                         ("marketing_assets", "status", "TEXT DEFAULT 'pending'"),
                                         ("marketing_assets", "delivered_at", "TEXT"),
                                         ("marketing_assets", "delivery_ref", "TEXT"),
-                                        ("marketing_assets", "delivery_error", "TEXT")):
+                                        ("marketing_assets", "delivery_error", "TEXT"),
+                                        # Sprint 42 Phase 3: campaign calendar.
+                                        ("marketing_assets", "scheduled_date", "TEXT")):
                 try:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
                 except sqlite3.OperationalError:
@@ -2728,9 +2730,12 @@ class Database:
 
     def list_pending_marketing_assets(self, *, channel: str | None = None,
                                       channels: list[str] | None = None,
+                                      due_on: str | None = None,
                                       limit: int = 100) -> list[dict[str, Any]]:
         """Assets not yet delivered to their channel (Sprint 41 distribution).
-        ``pending`` or NULL status counts as undelivered."""
+        ``pending`` or NULL status counts as undelivered. With ``due_on`` (a
+        YYYY-MM-DD), only assets scheduled on/before that date (or unscheduled)
+        are returned — the campaign calendar (Sprint 42)."""
         sql = ("SELECT * FROM marketing_assets "
                "WHERE (status IS NULL OR status = 'pending')")
         params: list[Any] = []
@@ -2740,6 +2745,9 @@ class Database:
         if channels:
             sql += " AND channel IN (%s)" % ",".join("?" * len(channels))
             params.extend(channels)
+        if due_on is not None:
+            sql += " AND (scheduled_date IS NULL OR scheduled_date <= ?)"
+            params.append(due_on)
         sql += " ORDER BY id ASC LIMIT ?"
         params.append(limit)
         with self._connect() as conn:
@@ -2766,6 +2774,31 @@ class Database:
             return int(conn.execute(
                 "SELECT COUNT(*) FROM marketing_assets WHERE status = ?",
                 (status,)).fetchone()[0])
+
+    def schedule_marketing_asset(self, asset_id: int, date: str) -> None:
+        with self._connect() as conn:
+            conn.execute("UPDATE marketing_assets SET scheduled_date = ? WHERE id = ?",
+                         (date, asset_id))
+
+    def list_scheduled_marketing(self, *, on_or_after: str | None = None,
+                                 limit: int = 200) -> list[dict[str, Any]]:
+        """Scheduled (undelivered) assets for the campaign calendar view."""
+        sql = ("SELECT * FROM marketing_assets WHERE scheduled_date IS NOT NULL "
+               "AND (status IS NULL OR status = 'pending')")
+        params: list[Any] = []
+        if on_or_after is not None:
+            sql += " AND scheduled_date >= ?"
+            params.append(on_or_after)
+        sql += " ORDER BY scheduled_date ASC, id ASC LIMIT ?"
+        params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["payload"] = json.loads(d.get("payload") or "{}")
+            out.append(d)
+        return out
 
     def reset_failed_marketing_assets(self, channel: str | None = None) -> int:
         """Re-queue failed deliveries for another attempt (Sprint 42 retry)."""

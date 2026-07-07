@@ -29,7 +29,7 @@ from onassis.logger import get_logger
 
 log = get_logger(__name__)
 
-CHANNELS = ["pinterest", "instagram", "facebook", "blog", "email"]
+CHANNELS = ["pinterest", "instagram", "facebook", "tiktok", "blog", "email"]
 
 
 def _slug(text: str) -> str:
@@ -73,6 +73,7 @@ class MarketingEngine:
             "pinterest": self._pinterest(ctx),
             "instagram": self._instagram(ctx),
             "facebook": self._facebook(ctx),
+            "tiktok": self._tiktok(ctx),
             "blog": self._blog(ctx),
             "email": self._email(ctx),
         }
@@ -177,6 +178,31 @@ class MarketingEngine:
          ["A Slower Morning", "Everyday Rituals", "Bringing It Home", "Make It Yours"]),
     ]
 
+    def _tiktok(self, c: dict[str, Any]) -> dict[str, Any]:
+        """A TikTok kit — future-ready for AI video generation (Sprint 42, Obj 3)."""
+        hook = f"POV: you found the perfect {c['title_short'].lower()} ✨"
+        script = [
+            {"beat": 1, "shot": "Close-up reveal", "line": hook},
+            {"beat": 2, "shot": "In-use / lifestyle",
+             "line": f"Made for {c['audience']} who love {c['theme']}."},
+            {"beat": 3, "shot": "Detail pan", "line": c["hook"]},
+            {"beat": 4, "shot": "Call to action",
+             "line": "Link in bio to shop it on Etsy."},
+        ]
+        return {
+            "hook": hook,
+            "script": script,
+            "voiceover": " ".join(b["line"] for b in script),
+            "caption": f"{c['title_short']} — {c['blurb']} 🛒 Etsy (link in bio)",
+            "hashtags": [*self.hashtags, "#TikTokMadeMeBuyIt", "#SmallBusiness"],
+            "ai_video_prompt": (f"A warm, sunlit {c['theme']} scene showcasing "
+                                f"{c['title_short']}; slow cinematic push-in, natural "
+                                f"light, Mediterranean palette, cosy and aspirational."),
+            "image_sequence": [f"{c['title_short']} — {kw}" for kw in c["keywords"][:4]],
+            "music_suggestion": "Warm acoustic / lo-fi Mediterranean instrumental",
+            "link": c["url"],
+        }
+
     def _blog(self, c: dict[str, Any]) -> dict[str, Any]:
         articles = []
         for slug_key, title_tpl, headings in self._BLOG_ANGLES:
@@ -250,6 +276,7 @@ class MarketingEngine:
             all(p["link"] == url for p in kit["pinterest"]["pins"]),
             kit["instagram"]["link"] == url,
             kit["facebook"]["post"]["link"] == url,
+            kit["tiktok"]["link"] == url,
             kit["blog"]["cta_link"] == url,
             kit["email"]["cta_link"] == url,
         ]

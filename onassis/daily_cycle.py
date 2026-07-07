@@ -120,6 +120,8 @@ class DailyCycle:
         # distribution of the IG/FB/Blog/Email marketing assets.
         self.shopify = ShopifyPublisher(config, db)
         self.distribution = ChannelDistributor(config, db)
+        from onassis.cmo import CMOManager
+        self.cmo = CMOManager(config, db)
         self.dashboard = CEODashboard(config, db)
         # Campaign/Brain/Compliance are owned by the orchestrator — reuse them.
         self.campaigns = self.orchestrator.campaigns
@@ -600,8 +602,9 @@ class DailyCycle:
         cid = ctx.get("campaign_id")
         sched = self.traffic.schedule(campaign_id=cid)
         dist = self.traffic.distribute()
-        # Distribute the rest of the marketing kit (Instagram / Facebook / Blog /
-        # Email) — safe no-op per channel until each is credentialled.
+        # The CMO schedules new marketing assets across the campaign calendar,
+        # then distribute ships only what is due today (Sprint 42).
+        self.cmo.schedule_pending()
         channels = self.distribution.distribute()
         metrics = self.traffic.import_metrics()   # impressions/clicks -> attributed
         funnel = self.traffic.snapshot()
