@@ -36,6 +36,15 @@ def test_five_pins_across_multiple_aspect_ratios(config):
         assert p["board"]
 
 
+def test_blog_generates_multiple_seo_articles(config):
+    blog = _engine(config).build(_LISTING, listing_id="555")["blog"]
+    assert blog["article_count"] >= 3
+    angles = {a["angle"] for a in blog["articles"]}
+    assert {"launch", "gift_guide"} <= angles
+    for a in blog["articles"]:
+        assert a["title"] and a["body"] and a["cta_link"].endswith("/555")
+
+
 def test_every_asset_links_back_to_etsy(config):
     url = "https://www.etsy.com/listing/999"
     kit = _engine(config).build(_LISTING, listing_url=url)

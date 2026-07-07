@@ -2767,6 +2767,16 @@ class Database:
                 "SELECT COUNT(*) FROM marketing_assets WHERE status = ?",
                 (status,)).fetchone()[0])
 
+    def reset_failed_marketing_assets(self, channel: str | None = None) -> int:
+        """Re-queue failed deliveries for another attempt (Sprint 42 retry)."""
+        sql = "UPDATE marketing_assets SET status = 'pending', delivery_error = NULL WHERE status = 'failed'"
+        params: list[Any] = []
+        if channel is not None:
+            sql += " AND channel = ?"
+            params.append(channel)
+        with self._connect() as conn:
+            return conn.execute(sql, params).rowcount
+
     # --- Traffic: pin schedule --------------------------------------
 
     def insert_pin_schedule(self, pin: dict[str, Any]) -> int | None:

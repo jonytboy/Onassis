@@ -715,6 +715,15 @@ def build_operations_router(get_state) -> APIRouter:
             f"{r['failed']} failed.")
         return r
 
+    @router.post("/api/channels/retry")
+    def api_channels_retry(request: Request, payload: dict | None = None) -> Any:
+        _require_operator(request)
+        channel = (payload or {}).get("channel")
+        r = request.app.state.daily.distribution.retry_failed(channel)
+        get_state(request.app).add_log(
+            f"Retried {r.get('requeued', 0)} failed delivery(ies): {r['posted']} posted.")
+        return r
+
     # --- Integration Manager (Sprint 41.1) ---
     @router.get("/api/integrations")
     def api_integrations(request: Request) -> Any:

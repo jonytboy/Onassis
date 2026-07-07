@@ -165,29 +165,40 @@ class MarketingEngine:
         }
         return {"post": {"body": post, "link": c["url"]}, "boost": boost}
 
+    # Angles that turn one product into several SEO assets (Sprint 42, Obj 3).
+    _BLOG_ANGLES = [
+        ("launch", "{title}: {theme} for Your Home",
+         ["Introducing {title}", "Why {theme} Works", "How to Style It", "Shop the Piece"]),
+        ("gift_guide", "The Best {theme} Gifts — Featuring {title}",
+         ["A Thoughtful Gift", "Who It's For", "Why It Delights", "Where to Buy"]),
+        ("interior", "Styling {title} in a {theme} Home",
+         ["Setting the Scene", "Pairings & Palettes", "The Finishing Touch", "Get the Look"]),
+        ("lifestyle", "Living the {theme} Life with {title}",
+         ["A Slower Morning", "Everyday Rituals", "Bringing It Home", "Make It Yours"]),
+    ]
+
     def _blog(self, c: dict[str, Any]) -> dict[str, Any]:
-        title = f"{c['title_short']}: {c['theme'].title()} for Your Home"
-        sections = [
-            {"heading": "Introduction",
-             "body": f"{c['hook']} {c['blurb']} Designed for {c['audience']}."},
-            {"heading": f"Why {c['theme'].title()} Works",
-             "body": (f"{c['title_short']} brings {c['theme']} into everyday life. "
-                      f"{c['use']} It pairs beautifully with a considered, "
-                      f"{c['brand']} aesthetic.")},
-            {"heading": "How to Style It",
-             "body": ("Keep the palette calm and natural, let the piece lead, and "
-                      "build the room around it. Less, but better.")},
-            {"heading": "Shop the Piece",
-             "body": (f"Ready to make it yours? {c['title_short']} is available now "
-                      f"on Etsy: {c['url']}.")},
-        ]
-        body = "\n\n".join(f"## {s['heading']}\n{s['body']}" for s in sections)
-        return {
-            "title": title, "slug": _slug(title),
-            "meta_description": f"{c['blurb']} Shop {c['title_short']} on Etsy."[:160],
-            "keywords": c["keywords"], "sections": sections,
-            "body": body, "word_count": len(body.split()), "cta_link": c["url"],
-        }
+        articles = []
+        for slug_key, title_tpl, headings in self._BLOG_ANGLES:
+            title = title_tpl.format(title=c["title_short"], theme=c["theme"].title())
+            sections = [{
+                "heading": h,
+                "body": (f"{c['hook']} {c['blurb']} {c['use']} "
+                         f"{c['title_short']} for {c['audience']} who love {c['theme']}. "
+                         f"Shop it on Etsy: {c['url']}.").strip(),
+            } for h in headings]
+            body = "\n\n".join(f"## {s['heading']}\n{s['body']}" for s in sections)
+            articles.append({
+                "angle": slug_key, "title": title, "slug": _slug(title),
+                "meta_description": f"{c['blurb']} Shop {c['title_short']} on Etsy."[:160],
+                "keywords": c["keywords"], "sections": sections,
+                "body": body, "word_count": len(body.split()), "cta_link": c["url"],
+            })
+        primary = articles[0]
+        # Keep the primary article's fields at the top level (back-compat) plus
+        # the full set of SEO articles this product generates.
+        return {**primary, "articles": articles, "article_count": len(articles),
+                "cta_link": c["url"]}
 
     def _email(self, c: dict[str, Any]) -> dict[str, Any]:
         subject = f"New: {c['title_short']} ✨"

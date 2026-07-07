@@ -33,8 +33,11 @@ class FakeEmail:
 
 class FakeShopifyBlog:
     can_publish = True
+    def __init__(self): self.published = []
     def publish_article(self, payload):
-        return {"article": {"id": 42}}
+        self.published.append(payload.get("title"))
+        return {"ok": True, "id": str(len(self.published)),
+                "url": f"https://shop/blogs/news/{len(self.published)}"}
 
 
 def _distributor(config, db, **kw):
@@ -106,6 +109,39 @@ def test_unconfigured_channels_skip_safely(config, db):
 
 
 # --- Sprint 41.1: Business Settings toggles are operational controls ---
+
+def test_blog_publishes_multiple_articles_with_urls(config, db):
+    config.shopify = {"blog_id": 7}
+    shop = FakeShopifyBlog()
+    _seed(db, "blog", {"cta_link": "u", "articles": [
+        {"title": "Launch"}, {"title": "Gift Guide"}, {"title": "Lifestyle"}]})
+    dist = ChannelDistributor(config, db, instagram=FakeInstagram(), facebook=FakeFacebook(),
+                              email=FakeEmail(), shopify=shop)
+    r = dist.distribute()
+    assert r["posted"] == 1 and len(shop.published) == 3      # all 3 SEO articles
+    asset = db.list_marketing_assets(channel="blog")[0]
+    assert asset["status"] == "posted" and "https://shop/blogs" in asset["delivery_ref"]
+
+
+def test_failed_delivery_can_be_retried(config, db):
+    _seed(db, "email", {"subject": "s", "body": "b"})
+    # First run with an email connector that fails -> recorded failed (not skipped).
+
+    class BoomEmail:
+        can_publish = True
+        def send(self, subject, body, to=None):
+            raise RuntimeError("smtp down")
+    d1 = ChannelDistributor(config, db, instagram=FakeInstagram(), facebook=FakeFacebook(),
+                            email=BoomEmail(), shopify=FakeShopifyBlog())
+    assert d1.distribute()["failed"] == 1
+    assert db.list_marketing_assets(channel="email")[0]["status"] == "failed"
+    # Retry with a working connector -> re-queued and delivered.
+    d2 = ChannelDistributor(config, db, instagram=FakeInstagram(), facebook=FakeFacebook(),
+                            email=FakeEmail(), shopify=FakeShopifyBlog())
+    r = d2.retry_failed()
+    assert r["requeued"] == 1 and r["posted"] == 1
+    assert db.list_marketing_assets(channel="email")[0]["status"] == "posted"
+
 
 def test_marketing_off_skips_every_channel(config, db):
     config.shopify = {"blog_id": 7}

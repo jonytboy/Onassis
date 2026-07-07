@@ -157,16 +157,26 @@ class ShopifyConnector:
         return [{"id": str(b.get("id")), "title": b.get("title", "")} for b in blogs]
 
     def publish_article(self, article: dict[str, Any]) -> dict[str, Any]:
-        """Publish a blog article to the store's blog. ``article`` needs a
-        ``title`` and ``body`` (HTML/markdown); ``blog_id`` falls back to config."""
+        """Publish a blog article to the store's blog and return a verifiable
+        result ``{ok, id, handle, url}``. ``article`` needs a ``title`` and
+        ``body``; ``blog_id`` falls back to config."""
         blog_id = article.get("blog_id") or self.cfg.get("blog_id")
         if not blog_id:
-            raise RuntimeError("No Shopify blog_id configured for article publishing.")
-        return self._c().create_article(str(blog_id), {
+            raise RuntimeError("No Shopify blog selected — pick one on the "
+                               "Integrations page (Shopify → list blogs).")
+        resp = self._c().create_article(str(blog_id), {
             "article": {"title": article.get("title") or "New post",
                         "body_html": article.get("body") or "",
                         "tags": ", ".join(article.get("keywords") or []),
                         "published": True}})
+        art = (resp or {}).get("article") or {}
+        art_id = art.get("id")
+        handle = art.get("handle") or ""
+        domain = self.cfg.get("store_domain") or ""
+        url = art.get("url") or (
+            f"https://{domain}/blogs/{blog_id}/{handle}" if (domain and handle) else "")
+        return {"ok": bool(art_id), "id": str(art_id) if art_id else "",
+                "handle": handle, "url": url}
 
 
 class ShopifyAdminClient:

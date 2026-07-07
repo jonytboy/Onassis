@@ -87,6 +87,15 @@ class ChannelDistributor:
                      len(assets), counts["posted"], counts["skipped"], counts["failed"])
         return {"processed": len(assets), **counts, "by_channel": by_channel}
 
+    def retry_failed(self, channel: str | None = None) -> dict[str, Any]:
+        """Re-queue and re-send failed deliveries — a failure is never silently
+        dropped; it can always be retried."""
+        requeued = self.db.reset_failed_marketing_assets(channel)
+        result = self.distribute() if requeued else {"processed": 0, "posted": 0,
+                                                     "skipped": 0, "failed": 0}
+        result["requeued"] = requeued
+        return result
+
     def _dispatch(self, asset: dict[str, Any]) -> dict[str, Any]:
         channel = asset["channel"]
         payload = asset.get("payload") or {}
@@ -119,6 +128,13 @@ class ChannelDistributor:
         if not self.can_distribute("blog"):
             return {"ok": False, "skipped": True,
                     "reason": "No Shopify blog configured for articles."}
-        res = self.shopify.publish_article(payload)
-        article = (res or {}).get("article") or {}
-        return {"ok": True, "ref": str(article.get("id", ""))}
+        # One product can generate multiple SEO articles (launch, gift guide,
+        # lifestyle, …). Publish each and record their URLs.
+        articles = payload.get("articles") or [payload]
+        refs = []
+        for a in articles:
+            res = self.shopify.publish_article(a)
+            if not res.get("ok"):
+                return {"ok": False, "reason": "Shopify returned no article id."}
+            refs.append(res.get("url") or res.get("id"))
+        return {"ok": True, "ref": " | ".join(r for r in refs if r)}
