@@ -45,6 +45,25 @@ class EmailSender:
         ref = self._t().send(sender=sender, to=recipient, subject=subject, body=body)
         return {"ok": True, "ref": str(ref or recipient)}
 
+    def test_connection(self) -> dict[str, Any]:
+        """Connect + authenticate to the SMTP server without sending anything."""
+        if not self.can_publish:
+            return {"ok": False, "configured": False,
+                    "detail": "Set SMTP_HOST + EMAIL_FROM + EMAIL_TO."}
+        try:
+            self._t().test()
+            return {"ok": True, "configured": True,
+                    "detail": f"SMTP {self.cfg.get('smtp_host')} reachable"}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "configured": True, "detail": str(exc)}
+
+    def send_test(self) -> dict[str, Any]:
+        """Send a validation email to the configured recipient."""
+        return self.send(
+            "ONASSIS test email ✓",
+            "This is a test email from your ONASSIS Operations Centre.\n\n"
+            "If you can read this, SMTP is configured correctly.")
+
 
 class SMTPTransport:
     """Sends a plain-text email via SMTP. Injectable for tests."""
@@ -75,3 +94,15 @@ class SMTPTransport:
                 smtp.login(self.user, self.password or "")
             smtp.send_message(msg)
         return msg["Message-ID"] or to
+
+    def test(self) -> bool:
+        """Open the SMTP connection (+ TLS/login) and hang up — no message sent."""
+        import smtplib
+
+        with smtplib.SMTP(self.host, self.port, timeout=self.timeout) as smtp:
+            if self.use_tls:
+                smtp.starttls()
+            if self.user:
+                smtp.login(self.user, self.password or "")
+            smtp.noop()
+        return True

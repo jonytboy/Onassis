@@ -643,6 +643,72 @@ def build_operations_router(get_state) -> APIRouter:
             "keywords": s.daily.etsy_intelligence.keyword_performance(20),
         }
 
+    # --- Channels: readiness + connection tests (Sprint 41.1) ---
+    @router.get("/api/channels")
+    def api_channels(request: Request) -> Any:
+        _require_operator(request)
+        s = request.app.state
+        d = s.daily.distribution
+        return {"channels": [
+            {"key": "etsy", "label": "Etsy", "kind": "sales",
+             "configured": bool(getattr(s.daily.etsy, "is_configured", False)),
+             "env": "ETSY_CLIENT_ID / ETSY_ACCESS_TOKEN"},
+            {"key": "shopify", "label": "Shopify", "kind": "sales",
+             "configured": s.daily.shopify.can_publish,
+             "env": "SHOPIFY_STORE_DOMAIN / SHOPIFY_ADMIN_TOKEN"},
+            {"key": "pinterest", "label": "Pinterest", "kind": "marketing",
+             "configured": bool(getattr(s.daily.pinterest, "can_publish", False)),
+             "env": "PINTEREST_ACCESS_TOKEN / PINTEREST_BOARD_ID"},
+            {"key": "facebook", "label": "Facebook", "kind": "marketing",
+             "configured": d.facebook.can_publish, "testable": True,
+             "env": "META_PAGE_ACCESS_TOKEN / FACEBOOK_PAGE_ID"},
+            {"key": "instagram", "label": "Instagram", "kind": "marketing",
+             "configured": d.instagram.can_publish, "testable": True,
+             "env": "META_PAGE_ACCESS_TOKEN / INSTAGRAM_USER_ID"},
+            {"key": "email", "label": "Email", "kind": "marketing",
+             "configured": d.email.can_publish, "testable": True,
+             "env": "SMTP_HOST / EMAIL_FROM / EMAIL_TO"},
+            {"key": "blog", "label": "Blog", "kind": "marketing",
+             "configured": d.can_distribute("blog"),
+             "env": "SHOPIFY_* + shopify.blog_id"},
+        ]}
+
+    @router.post("/api/channels/test")
+    def api_channels_test(request: Request) -> Any:
+        _require_operator(request)
+        s = request.app.state
+        d = s.daily.distribution
+        state = get_state(request.app)
+        state.add_log("Testing channel connections…")
+        results = {
+            "shopify": s.daily.shopify.connector.test_connection(),
+            "facebook": d.facebook.test_connection(),
+            "instagram": d.instagram.test_connection(),
+            "email": d.email.test_connection(),
+        }
+        for ch, r in results.items():
+            state.add_log(f"  {ch}: {'OK' if r.get('ok') else r.get('detail')}",
+                          "info" if r.get("ok") else "warn")
+        return results
+
+    @router.post("/api/channels/email/test-send")
+    def api_channels_email_test(request: Request) -> Any:
+        _require_operator(request)
+        r = request.app.state.daily.distribution.email.send_test()
+        get_state(request.app).add_log(
+            f"Test email: {'sent' if r.get('ok') else r.get('reason')}",
+            "info" if r.get("ok") else "warn")
+        return r
+
+    @router.post("/api/channels/distribute")
+    def api_channels_distribute(request: Request) -> Any:
+        _require_operator(request)
+        r = request.app.state.daily.distribution.distribute()
+        get_state(request.app).add_log(
+            f"Distribution run: {r['posted']} posted, {r['skipped']} skipped, "
+            f"{r['failed']} failed.")
+        return r
+
     # --- Approval queue (auto / needs-review / blocked) ---
     @router.get("/api/approvals")
     def api_approvals(request: Request) -> Any:
@@ -777,6 +843,64 @@ def _product_row(state: Any, p: dict[str, Any], ctx: dict[str, Any]) -> dict[str
     }
 
 
+def _pub_label(pub: dict[str, Any] | None, *, live_word: str = "Live") -> dict[str, Any]:
+    """Map a publication row to a channel status cell."""
+    if not pub:
+        return {"status": "not_created", "label": "—"}
+    st = (pub.get("status") or "").lower()
+    lid = pub.get("listing_id")
+    if st in ("draft", "published") and is_valid_listing_id(lid):
+        return {"status": "draft", "label": "Draft Created" if st == "draft" else live_word,
+                "ref": str(lid)}
+    if st == "live" and is_valid_listing_id(lid):
+        return {"status": "live", "label": live_word, "ref": str(lid)}
+    if st == "failed":
+        return {"status": "failed", "label": "Failed"}
+    return {"status": st or "unknown", "label": (st or "unknown").title()}
+
+
+def _delivery_label(asset: dict[str, Any] | None, *, sent_word: str = "Posted") -> dict[str, Any]:
+    if not asset:
+        return {"status": "not_created", "label": "—"}
+    st = (asset.get("status") or "pending").lower()
+    return {
+        "posted": {"status": "posted", "label": sent_word, "ref": asset.get("delivery_ref")},
+        "skipped": {"status": "skipped", "label": "Skipped",
+                    "ref": asset.get("delivery_error")},
+        "failed": {"status": "failed", "label": "Failed", "ref": asset.get("delivery_error")},
+        "pending": {"status": "pending", "label": "Generated"},
+    }.get(st, {"status": st, "label": st.title()})
+
+
+def _product_channels(state: Any, product: dict[str, Any]) -> list[dict[str, Any]]:
+    """The per-product Sales Channels matrix — one glance shows where a product
+    exists: Etsy · Shopify · Pinterest · Facebook · Instagram · Email · Blog."""
+    db = state.db
+    cid = product.get("campaign_id")
+    key = product.get("product_key")
+    sku = product.get("sku")
+    etsy = db.get_latest_publication(cid, "etsy", product_id=sku) if cid else None
+    shopify = db.get_latest_publication(cid, "shopify", product_id=sku) if cid else None
+    pins = db.list_pin_schedule(product_key=key) if key else []
+    posted_pins = [p for p in pins if p.get("status") == "posted"]
+    pin_cell = ({"status": "posted", "label": f"Posted ({len(posted_pins)})"} if posted_pins
+                else ({"status": "pending", "label": f"Scheduled ({len(pins)})"} if pins
+                      else {"status": "not_created", "label": "—"}))
+    latest_asset: dict[str, dict[str, Any]] = {}
+    for a in db.list_marketing_assets(product_key=key) if key else []:
+        latest_asset.setdefault(a["channel"], a)   # list is newest-first
+    rows = [
+        {"channel": "Etsy", **_pub_label(etsy)},
+        {"channel": "Shopify", **_pub_label(shopify, live_word="Published")},
+        {"channel": "Pinterest", **pin_cell},
+        {"channel": "Facebook", **_delivery_label(latest_asset.get("facebook"))},
+        {"channel": "Instagram", **_delivery_label(latest_asset.get("instagram"))},
+        {"channel": "Email", **_delivery_label(latest_asset.get("email"), sent_word="Sent")},
+        {"channel": "Blog", **_delivery_label(latest_asset.get("blog"), sent_word="Published")},
+    ]
+    return rows
+
+
 def _products(state: Any, filter_bucket: str | None = None) -> list[dict[str, Any]]:
     ctx = _product_context(state)
     rows = [_product_row(state, p, ctx) for p in state.db.list_products()]
@@ -835,6 +959,7 @@ def _product_detail(state: Any, sku: str) -> dict[str, Any] | None:
     return {
         "product": product,
         "row": row,
+        "channels": _product_channels(state, product),
         "score": scores[0] if scores else None,
         "ceo_reasoning": (scores[0].get("reasoning") if scores else "") or "",
         "compliance": compliance,

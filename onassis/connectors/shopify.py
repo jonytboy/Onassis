@@ -52,6 +52,18 @@ class ShopifyConnector:
                 api_version=self.cfg.get("api_version", "2024-10"))
         return self._client
 
+    def test_connection(self) -> dict[str, Any]:
+        """Read-only auth check — confirms the store + token work (GET shop.json)."""
+        if not self.can_publish:
+            return {"ok": False, "configured": False,
+                    "detail": "Set SHOPIFY_STORE_DOMAIN + SHOPIFY_ADMIN_TOKEN."}
+        try:
+            shop = (self._c().get_shop() or {}).get("shop", {})
+            return {"ok": True, "configured": True,
+                    "detail": f"Connected to {shop.get('name') or self.cfg.get('store_domain')}"}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "configured": True, "detail": str(exc)}
+
     # --- Product publishing -----------------------------------------
 
     @staticmethod
@@ -152,6 +164,9 @@ class ShopifyAdminClient:
     def _headers(self) -> dict[str, str]:
         return {"X-Shopify-Access-Token": self.admin_token or "",
                 "Content-Type": "application/json"}
+
+    def get_shop(self) -> dict[str, Any]:
+        return self._request("GET", "/shop.json", None)
 
     def create_product(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/products.json", payload)

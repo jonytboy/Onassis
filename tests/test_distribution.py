@@ -103,3 +103,31 @@ def test_unconfigured_channels_skip_safely(config, db):
     r = dist.distribute()
     assert r["processed"] == 2 and r["posted"] == 0
     assert r["skipped"] == 2 and r["failed"] == 0
+
+
+# --- Sprint 41.1: Business Settings toggles are operational controls ---
+
+def test_marketing_off_skips_every_channel(config, db):
+    config.shopify = {"blog_id": 7}
+    db.set_setting("business.marketing_enabled", False)
+    for ch in ("instagram", "email", "blog"):
+        _seed(db, ch, {"captions": ["c"], "subject": "s", "body": "b", "title": "t"})
+    r = _distributor(config, db).distribute()
+    assert r["posted"] == 0 and r["skipped"] == 3
+
+
+def test_facebook_toggle_off_then_on(config, db):
+    _seed(db, "facebook", {"post": {"body": "hi", "link": "u"}})
+    # OFF (default) → skipped, nothing posted.
+    fb = FakeFacebook()
+    d1 = ChannelDistributor(config, db, instagram=FakeInstagram(), facebook=fb,
+                            email=FakeEmail(), shopify=FakeShopifyBlog())
+    assert d1.distribute()["skipped"] == 1 and fb.calls == 0
+    # ON → posted.
+    db.set_setting("business.facebook_enabled", True)
+    _seed(db, "facebook", {"post": {"body": "hi2", "link": "u"}})
+    fb2 = FakeFacebook()
+    d2 = ChannelDistributor(config, db, instagram=FakeInstagram(), facebook=fb2,
+                            email=FakeEmail(), shopify=FakeShopifyBlog())
+    r = d2.distribute()
+    assert r["posted"] == 1 and fb2.calls == 1

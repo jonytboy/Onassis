@@ -248,7 +248,7 @@
       <table><thead><tr><th>Campaign</th><th>Product</th><th>Type</th><th>Approval</th><th>Etsy status</th><th>Marketing</th><th>Views</th><th>Sales</th><th>Revenue</th><th>Profit</th><th>Updated</th><th>Operator</th></tr></thead>
       <tbody>
         <template x-for="p in filteredProducts()" :key="p.sku">
-          <tr>
+          <tr @click="openProduct(p.sku)" style="cursor:pointer">
             <td class="muted" x-text="p.campaign||'—'"></td>
             <td x-text="p.name"></td>
             <td class="muted" x-text="p.type"></td>
@@ -266,6 +266,32 @@
         </template>
         <tr x-show="!products.length"><td colspan="12" class="muted">No products in this view.</td></tr>
       </tbody></table>
+      </div>
+      <div class="note">Click a product to see where it exists across every channel.</div>
+    </div>
+
+    <!-- Product detail drawer with the Sales Channels matrix -->
+    <div class="panel" x-show="productDetail" style="border-color:var(--accent)">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <h2 x-text="productDetail?.row?.name || productDetail?.product?.sku"></h2>
+        <button class="btn small" @click="closeProduct()">Close ✕</button>
+      </div>
+      <div class="note" x-text="'SKU '+(productDetail?.product?.sku||'')+' · '+(productDetail?.row?.status_label||'')"></div>
+
+      <h2 style="margin-top:14px">Sales Channels</h2>
+      <table><thead><tr><th>Channel</th><th>Status</th><th>Reference</th></tr></thead><tbody>
+        <template x-for="c in (productDetail?.channels||[])" :key="c.channel">
+          <tr>
+            <td x-text="c.channel"></td>
+            <td><span class="pill" :class="channelPill(c.status)" x-text="c.label"></span></td>
+            <td class="mono muted" x-text="c.ref||''"></td>
+          </tr>
+        </template>
+      </tbody></table>
+
+      <div class="cols" style="margin-top:14px">
+        <div class="stat"><div class="k">CEO rationale</div><div class="v sm" style="font-weight:400" x-text="productDetail?.ceo_reasoning||'—'"></div></div>
+        <div class="stat"><div class="k">Compliance</div><div class="v sm" x-text="productDetail?.compliance?.verdict||'—'"></div></div>
       </div>
     </div>
   </div>
@@ -307,6 +333,21 @@
         <div class="stat"><div class="k">Shopify</div><div class="v sm"><span class="led" :class="marketing?.shopify?.configured?'green':'grey'"></span>
           <span x-text="marketing?.shopify?.configured?(marketing.shopify.products+' products'):'not connected'"></span></div></div>
       </div>
+
+      <h2 style="margin-top:18px">Channel connections</h2>
+      <div class="secondary" style="grid-template-columns:repeat(3,1fr);margin-bottom:10px">
+        <button class="btn small primary" @click="testChannels()" :disabled="testingChannels" x-text="testingChannels?'Testing…':'Test Connections'"></button>
+        <button class="btn small" @click="sendTestEmail()">Send Test Email</button>
+        <button class="btn small" @click="distributeNow()">Distribute Now</button>
+      </div>
+      <table x-show="channelTests"><thead><tr><th>Channel</th><th>Result</th><th>Detail</th></tr></thead><tbody>
+        <template x-for="(r,ch) in (channelTests||{})" :key="ch">
+          <tr><td x-text="ch"></td>
+            <td><span class="pill" :class="r.ok?'ok':(r.configured?'failed':'grey')" x-text="r.ok?'connected':(r.configured?'error':'not configured')"></span></td>
+            <td class="muted" x-text="r.detail"></td></tr>
+        </template>
+      </tbody></table>
+      <div class="note">Connection tests are read-only. Set each channel's credentials in <span class="mono">.env</span>, then Test Connections to confirm before going live.</div>
     </div>
   </div>
 
@@ -591,6 +632,7 @@ function ops(){
     settings:null, savingSettings:false,
     updates:null, health:null, deployHistory:[], deploying:false, showNotes:false, showLog:null,
     environment:null, deployRun:null, preview:null, validation:null, _deployPoll:null,
+    productDetail:null, channelTests:null, testingChannels:false,
     productSearch:'', productFilter:'all',
     productFilters:[['all','All'],['awaiting_approval','Awaiting Approval'],['ready_to_publish','Ready to Publish'],['draft_created','Draft Created'],['live','Live'],['failed','Failed'],['archived','Archived']],
     get running(){ return this.run?.status==='running'; },
@@ -675,6 +717,13 @@ function ops(){
       const r=await this.post('/operations/api/updates/rollback',{operator:'operator',to_commit:commit});
       this.pollLogs(); if(r&&!r.ok) alert('Rollback failed:\n'+(r.error||'')); this.loadTab('system'); },
     setFilter(f){ this.productFilter=f; this.loadTab('products'); },
+    async openProduct(sku){ try{ this.productDetail=await this.get('/operations/api/products/'+encodeURIComponent(sku)); }catch(e){ this.productDetail=null; } },
+    closeProduct(){ this.productDetail=null; },
+    channelPill(status){ return {live:'ok',draft:'needs_review',posted:'ok',pending:'needs_review',skipped:'grey',failed:'failed',not_created:'grey'}[status]||'grey'; },
+    async testChannels(){ this.testingChannels=true; this.channelTests=await this.post('/operations/api/channels/test'); this.testingChannels=false; this.pollLogs(); },
+    async sendTestEmail(){ const r=await this.post('/operations/api/channels/email/test-send'); this.pollLogs(); alert(r&&r.ok?'Test email sent.':'Not sent: '+((r&&(r.reason||r.detail))||'unknown')); },
+    async distributeNow(){ const r=await this.post('/operations/api/channels/distribute'); this.pollLogs(); this.loadTab('marketing');
+      alert('Distribution: '+((r&&r.posted)||0)+' posted, '+((r&&r.skipped)||0)+' skipped, '+((r&&r.failed)||0)+' failed.'); },
     async decide(sku,action){
       if(action==='reject'&&!confirm('Reject '+sku+'?')) return;
       const r=await this.post('/operations/api/approvals/'+encodeURIComponent(sku)+'/decision',{action,operator:'operator'});

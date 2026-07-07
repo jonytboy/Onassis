@@ -2732,7 +2732,8 @@ class Database:
         return {r["pin_key"] for r in rows}
 
     def list_pin_schedule(self, *, scheduled_date: str | None = None,
-                          status: str | None = None) -> list[dict[str, Any]]:
+                          status: str | None = None,
+                          product_key: str | None = None) -> list[dict[str, Any]]:
         sql = "SELECT * FROM pin_schedule"
         clauses: list[str] = []
         params: list[Any] = []
@@ -2742,6 +2743,9 @@ class Database:
         if status is not None:
             clauses.append("status = ?")
             params.append(status)
+        if product_key is not None:
+            clauses.append("product_key = ?")
+            params.append(product_key)
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY id"

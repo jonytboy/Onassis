@@ -235,6 +235,51 @@ def test_business_settings_get_and_update(client):
     assert again["products_per_campaign"] == 5
 
 
+def test_product_sales_channels_matrix(client):
+    db = client.app.state.db
+    cid, sku = _seed_launched_product(db, key="mug", draft=True)   # Etsy draft
+    db.insert_publication({"platform": "shopify", "product_id": sku, "campaign_id": cid,
+                           "listing_id": "99001", "mode": "live", "status": "live"})
+    db.insert_marketing_asset({"campaign_id": cid, "product_key": "mug", "channel": "facebook",
+                               "payload": {}})
+    db.insert_marketing_asset({"campaign_id": cid, "product_key": "mug", "channel": "email",
+                               "payload": {}})
+    # Mark deliveries.
+    fb = db.list_marketing_assets(channel="facebook")[0]
+    em = db.list_marketing_assets(channel="email")[0]
+    db.set_marketing_asset_delivery(fb["id"], "posted", ref="fb1")
+    db.set_marketing_asset_delivery(em["id"], "skipped", error="disabled")
+
+    detail = client.get(f"/operations/api/products/{sku}").json()
+    channels = {c["channel"]: c for c in detail["channels"]}
+    assert channels["Etsy"]["label"] == "Draft Created"
+    assert channels["Shopify"]["label"] == "Published"
+    assert channels["Facebook"]["label"] == "Posted"
+    assert channels["Email"]["label"] == "Skipped"
+    assert channels["Instagram"]["label"] == "—"          # never created
+
+
+def test_channels_readiness_endpoint(client):
+    chans = {c["key"]: c for c in client.get("/operations/api/channels").json()["channels"]}
+    assert set(chans) >= {"etsy", "shopify", "facebook", "instagram", "email", "blog", "pinterest"}
+    # Nothing credentialled in the test config.
+    assert chans["shopify"]["configured"] is False
+
+
+def test_channel_connection_tests(client, monkeypatch):
+    # Inject fakes so the "test connection" calls never hit the network.
+    s = client.app.state
+    s.daily.shopify.connector._client = type("C", (), {
+        "get_shop": lambda self: {"shop": {"name": "My Store"}}})()
+    s.daily.shopify.connector.cfg = {"store_domain": "x.myshopify.com", "admin_token": "t"}
+    s.daily.distribution.email._transport = type("T", (), {"test": lambda self: True})()
+    s.daily.distribution.email.cfg = {"smtp_host": "smtp.x", "from_address": "a@x", "to_address": "b@x"}
+    r = client.post("/operations/api/channels/test").json()
+    assert r["shopify"]["ok"] is True and "My Store" in r["shopify"]["detail"]
+    assert r["email"]["ok"] is True
+    assert r["facebook"]["configured"] is False           # not set → clean report
+
+
 def test_business_settings_validation_rejects_out_of_range(client):
     r = client.post("/operations/api/business-settings",
                     json={"changes": {"auto_approval_threshold": 5}})  # > 1.0

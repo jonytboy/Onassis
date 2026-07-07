@@ -50,6 +50,17 @@ class FacebookPublisher(_MetaBase):
         res = self._c().page_feed(self.cfg.get("facebook_page_id"), message, link)
         return {"ok": True, "ref": str(res.get("id", ""))}
 
+    def test_connection(self) -> dict[str, Any]:
+        if not self.can_publish:
+            return {"ok": False, "configured": False,
+                    "detail": "Set META_PAGE_ACCESS_TOKEN + FACEBOOK_PAGE_ID."}
+        try:
+            node = self._c().get_node(self.cfg.get("facebook_page_id"), "name")
+            return {"ok": True, "configured": True,
+                    "detail": f"Connected to page {node.get('name', '')}".strip()}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "configured": True, "detail": str(exc)}
+
 
 class InstagramPublisher(_MetaBase):
     name = "instagram"
@@ -76,6 +87,17 @@ class InstagramPublisher(_MetaBase):
         res = client.ig_publish_media(ig_user, creation_id)
         return {"ok": True, "ref": str(res.get("id", ""))}
 
+    def test_connection(self) -> dict[str, Any]:
+        if not self.can_publish:
+            return {"ok": False, "configured": False,
+                    "detail": "Set META_PAGE_ACCESS_TOKEN + INSTAGRAM_USER_ID."}
+        try:
+            node = self._c().get_node(self.cfg.get("instagram_user_id"), "username")
+            return {"ok": True, "configured": True,
+                    "detail": f"Connected to @{node.get('username', '')}".strip()}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "configured": True, "detail": str(exc)}
+
 
 class MetaGraphClient:
     """Minimal Meta Graph API client (Facebook + Instagram). Injectable."""
@@ -101,6 +123,16 @@ class MetaGraphClient:
     def ig_publish_media(self, ig_user_id: str, creation_id: str) -> dict[str, Any]:
         return self._post(f"/{ig_user_id}/media_publish", {
             "creation_id": creation_id, "access_token": self.access_token})
+
+    def get_node(self, node_id: str, fields: str) -> dict[str, Any]:
+        import httpx
+
+        resp = httpx.get(f"{self.base}/{node_id}",
+                         params={"fields": fields, "access_token": self.access_token},
+                         timeout=self.timeout)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Meta GET /{node_id} HTTP {resp.status_code}: {resp.text}")
+        return resp.json()
 
     def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         import httpx
