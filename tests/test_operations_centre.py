@@ -37,7 +37,7 @@ def test_status_board_has_all_traffic_lights(client):
     s = client.get("/operations/api/status").json()
     lights = s["lights"]
     for k in ("environment", "server", "service", "api", "disk", "memory", "database",
-              "anthropic", "openai", "etsy", "gelato", "pinterest", "facebook",
+              "anthropic", "openai", "etsy", "shopify", "gelato", "pinterest", "facebook",
               "instagram", "https"):
         assert k in lights and lights[k]["status"] in {"green", "amber", "red", "grey"}
     assert s["overall"]["status"] in {"green", "amber", "red"}

@@ -446,8 +446,8 @@
       <h2 style="margin-top:18px">Sales channels</h2>
       <div class="grid">
         <div class="stat"><div class="k">Etsy</div><div class="v sm"><span class="led" :class="status?.lights?.etsy?.status||'grey'"></span> primary</div></div>
-        <div class="stat"><div class="k">Shopify</div><div class="v sm"><span class="led" :class="marketing?.shopify?.configured?'green':'grey'"></span>
-          <span x-text="marketing?.shopify?.configured?(marketing.shopify.products+' products'):'not connected'"></span></div></div>
+        <div class="stat"><div class="k">Shopify</div><div class="v sm"><span class="led" :class="status?.lights?.shopify?.status||'grey'"></span>
+          <span x-text="marketing?.shopify?.configured?(marketing.shopify.products+' products'):(status?.lights?.shopify?.detail||'not connected')"></span></div></div>
       </div>
 
       <h2 style="margin-top:18px">Channel connections</h2>

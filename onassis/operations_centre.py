@@ -253,6 +253,9 @@ def build_status(app_state: Any, state: OperationsState, request: Request) -> di
     etsy_cfg = bool((config.etsy or {}).get("api_key"))
     gelato_cfg = bool((config.gelato or {}).get("api_key"))
     pin_cfg = bool((config.pinterest or {}).get("access_token"))
+    shopify_conn = getattr(getattr(app_state.daily, "shopify", None), "connector", None)
+    shopify_cfg = bool((config.shopify or {}).get("client_id")
+                       or (config.shopify or {}).get("admin_token"))
 
     lights = {
         "environment": _light("green" if env == "production" else "amber",
@@ -270,6 +273,8 @@ def build_status(app_state: Any, state: OperationsState, request: Request) -> di
         "openai": _cred_light(bool((config.image or {}).get("api_key")),
                               bool((config.image or {}).get("api_key")), "OpenAI"),
         "etsy": _cred_light(etsy_cfg, bool(getattr(etsy, "is_configured", False)), "Etsy"),
+        "shopify": _cred_light(shopify_cfg, bool(getattr(shopify_conn, "is_configured", False)),
+                               "Shopify"),
         "gelato": _cred_light(gelato_cfg, bool(getattr(gelato, "can_fulfil", False)), "Gelato"),
         "pinterest": _cred_light(pin_cfg, bool(getattr(pinterest, "can_publish", False)),
                                  "Pinterest"),
