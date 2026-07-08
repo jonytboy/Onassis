@@ -335,6 +335,31 @@ def test_production_health_symmetric_channel_panels(client):
     assert chans["etsy"]["blog_articles"] is None     # Etsy has no blog channel
 
 
+def test_publish_builds_missing_listing_package_on_demand(client, monkeypatch):
+    """Sprint 42.1 — a launched product with no package builds one on publish
+    instead of failing 'No listing package found — build it first'."""
+    from onassis import operations_centre as oc
+    db = client.app.state.db
+    state = client.app.state
+    cid, sku = _seed_launched_product(db, key="mug")           # launched, no package
+    calls = {"n": 0}
+
+    def _fake_export(campaign_id, spec, design_package=None):
+        calls["n"] += 1
+        folder = oc._exports_dir(state) / str(campaign_id) / spec["product_key"]
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "listing.json").write_text(
+            '{"title": "Mug", "product_id": "%d-mug"}' % campaign_id, encoding="utf-8")
+        return {"status": "ready"}
+
+    monkeypatch.setattr(state.daily.listing_factory, "export_product", _fake_export)
+    r = oc._ensure_listing_package(state, cid, "mug")
+    assert r["ok"] is True and r["built"] is True and calls["n"] == 1
+    # Idempotent: the package now exists, so no second build.
+    r2 = oc._ensure_listing_package(state, cid, "mug")
+    assert r2["ok"] is True and r2["built"] is False and calls["n"] == 1
+
+
 def test_approval_card_falls_back_to_design_artwork_preview(client, tmp_path):
     """Sprint 42.1 Obj 1 — an awaiting product with no per-product listing
     package still shows a preview: the design master artwork."""

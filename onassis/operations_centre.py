@@ -1001,11 +1001,50 @@ def _product_row(state: Any, p: dict[str, Any], ctx: dict[str, Any]) -> dict[str
     }
 
 
+def _ensure_listing_package(state: Any, campaign_id: int, product_key: str) -> dict[str, Any]:
+    """Build the per-product listing package on demand if it isn't on disk yet.
+
+    The daily cycle only builds packages for a capped number of products per day
+    (``portfolio.max_new_listings_per_day``), so a CEO-launched product an
+    operator wants to publish *now* may have no package. Building here (real
+    artwork + gallery + listing.json, exactly as the cycle does) turns
+    "No listing package found — build it first" into a working publish, and
+    produces the mock-ups that power the card preview. Idempotent: a no-op when
+    the package already exists."""
+    daily = state.daily
+    folder = _exports_dir(state) / str(campaign_id) / str(product_key)
+    if (folder / "listing.json").exists():
+        return {"ok": True, "built": False}
+    scores = [s for s in state.db.list_product_scores(campaign_id)
+              if s.get("product_key") == product_key]
+    if not scores:
+        return {"ok": False, "reason": "No CEO-approved product score to build a listing from."}
+    spec = scores[0]
+    design_package = None
+    opp = spec.get("opportunity_id")
+    if opp:
+        try:
+            design_package = daily.design.get_package(opp)
+        except Exception:  # design read is best-effort; the factory has fallbacks
+            design_package = None
+    try:
+        pkg = daily.listing_factory.export_product(campaign_id, spec,
+                                                   design_package=design_package)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "reason": f"Listing build failed: {exc}"}
+    if pkg.get("status") != "ready":
+        return {"ok": False, "reason": pkg.get("reason") or "Listing build did not complete."}
+    return {"ok": True, "built": True}
+
+
 def _publish_shopify(state: Any, campaign_id: int, product_key: str) -> dict[str, Any]:
     """Publish a single product to Shopify from its listing package (with help)."""
     from onassis.failure_help import annotate
 
     daily = state.daily
+    built = _ensure_listing_package(state, campaign_id, product_key)
+    if not built["ok"]:
+        return annotate({"status": "failed", "reason": built["reason"]})
     listing = daily._listing_json(campaign_id, product_key)
     if not listing:
         return annotate({"status": "failed", "reason": "No listing package to publish."})
@@ -1015,9 +1054,17 @@ def _publish_shopify(state: Any, campaign_id: int, product_key: str) -> dict[str
 
 
 def _publish_all_channels(state: Any, campaign_id: int, product_key: str) -> dict[str, Any]:
-    """Publish a product to Etsy and Shopify together; each is independent."""
+    """Publish a product to Etsy and Shopify together; each is independent.
+
+    Builds the listing package first if the product doesn't have one yet, so an
+    operator can publish a launched product straight from the Approval Workspace."""
     from onassis.failure_help import annotate
 
+    built = _ensure_listing_package(state, campaign_id, product_key)
+    if not built["ok"]:
+        reason = f"Could not prepare listing package: {built['reason']}"
+        fail = annotate({"status": "failed", "reason": reason})
+        return {"etsy": fail, "shopify": fail}
     etsy = annotate(state.daily.publisher.publish(campaign_id, product_key=product_key))
     shopify = _publish_shopify(state, campaign_id, product_key)
     return {"etsy": etsy, "shopify": shopify}

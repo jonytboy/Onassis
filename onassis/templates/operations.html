@@ -513,7 +513,7 @@
       <template x-for="c in (approvals?.ready||[])" :key="c.sku">
         <div class="stat" style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
           <div><div class="v sm" x-text="c.listing_title"></div><div class="note" x-text="c.type+' · approved by '+(c.operator||'—')"></div></div>
-          <button class="btn small primary" @click="decide(c.sku,'approve_and_publish')">Publish to Etsy</button>
+          <button class="btn small primary" @click="decide(c.sku,'approve_and_publish')">Publish (Etsy + Shopify)</button>
         </div>
       </template>
 
