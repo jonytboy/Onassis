@@ -36,6 +36,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from onassis.business_settings import BusinessSettings
+from onassis.collections import collection_name
 from onassis.config import ROOT_DIR
 from onassis.logger import get_logger
 from onassis.product_status import (
@@ -964,6 +965,7 @@ def _product_row(state: Any, p: dict[str, Any], ctx: dict[str, Any]) -> dict[str
             listing_url = listing.get("url") or ""
 
     campaign = ctx["campaigns"].get(cid, {})
+    collection = collection_name(None, campaign) if campaign.get("name") else ""
     marketing_status = ("live" if marketing else
                         ("pending" if st.status in ("live", "marketing", "tracking")
                          else "none"))
@@ -973,6 +975,7 @@ def _product_row(state: Any, p: dict[str, Any], ctx: dict[str, Any]) -> dict[str
     return {
         "sku": sku, "name": p.get("name") or key, "product_key": key,
         "type": key, "campaign_id": cid, "campaign": campaign.get("name") or "",
+        "collection": collection,
         "status": st.status, "status_label": st.label,
         "reason": st.reason, "retryable": st.retryable,
         "etsy_status": st.label, "listing_id": st.listing_id, "listing_url": listing_url,
@@ -1015,8 +1018,46 @@ def _publish_all_channels(state: Any, campaign_id: int, product_key: str) -> dic
     return {"etsy": etsy, "shopify": shopify}
 
 
+def _channel_stats(pubs: list[dict[str, Any]], *, live_word: str = "Live",
+                   blog_articles: int | None = None) -> dict[str, Any]:
+    """A symmetric per-sales-channel success panel (Sprint 42.1, Obj 3 & 9).
+
+    Both Etsy and Shopify (and any future channel — Amazon, eBay) expose the
+    same shape so the dashboard treats every channel identically."""
+    published = sum(1 for p in pubs if p.get("status") in ("published", "live"))
+    drafts = sum(1 for p in pubs if p.get("status") == "draft")
+    failed = sum(1 for p in pubs if p.get("status") == "failed")
+    ok, fail = published + drafts, failed
+    # Timestamps of successful publishes, oldest→newest, for cadence + last publish.
+    ts = sorted((p.get("created_at") or "") for p in pubs
+                if p.get("status") in ("draft", "published", "live") and p.get("created_at"))
+    avg_secs = None
+    if len(ts) >= 2:
+        gaps = []
+        for a, b in zip(ts, ts[1:]):
+            try:
+                da = datetime.fromisoformat(a.replace("Z", "+00:00"))
+                dbt = datetime.fromisoformat(b.replace("Z", "+00:00"))
+                gaps.append((dbt - da).total_seconds())
+            except (ValueError, TypeError):
+                continue
+        if gaps:
+            avg_secs = round(sum(gaps) / len(gaps))
+    return {
+        "products_published": published,
+        "drafts_created": drafts,
+        "blog_articles": blog_articles,
+        "failed": failed,
+        "retry_queue": failed,          # failed publishes await a retry
+        "success_rate": round(ok / (ok + fail) * 100) if (ok + fail) else None,
+        "last_publish": ts[-1] if ts else None,
+        "avg_publish_interval_secs": avg_secs,
+        "live_word": live_word,
+    }
+
+
 def _production_health(state: Any) -> dict[str, Any]:
-    """The operational heartbeat (Sprint 41.2, Obj 13)."""
+    """The operational heartbeat (Sprint 41.2, Obj 13; Sprint 42.1 Obj 3/9)."""
     db = state.db
     rows = _products(state)
     waiting = sum(1 for r in rows if r["status"] == "awaiting_approval")
@@ -1034,6 +1075,9 @@ def _production_health(state: Any) -> dict[str, Any]:
 
     etsy = [p for p in pubs if p.get("platform") == "etsy"]
     shop = [p for p in pubs if p.get("platform") == "shopify"]
+    # Verified Shopify Blog articles = marketing blog assets actually delivered.
+    blog_published = sum(1 for a in db.list_marketing_assets(channel="blog")
+                         if (a.get("status") or "").lower() == "posted")
     report = {}
     try:
         report = state.report.build() or {}
@@ -1052,6 +1096,12 @@ def _production_health(state: Any) -> dict[str, Any]:
         "marketing_published": db.count_marketing_assets_by_status("posted"),
         "revenue_today": (report.get("revenue") or {}).get("today"),
         "profit_today": (report.get("profit") or {}).get("today_net"),
+        # Symmetric per-channel success panels — Etsy ↔ Shopify (future: Amazon/eBay).
+        "channels": {
+            "etsy": _channel_stats(etsy, live_word="Live"),
+            "shopify": _channel_stats(shop, live_word="Published",
+                                      blog_articles=blog_published),
+        },
     }
 
 
@@ -1104,11 +1154,14 @@ def _product_channels(state: Any, product: dict[str, Any]) -> list[dict[str, Any
     rows = [
         {"channel": "Etsy", **_pub_label(etsy)},
         {"channel": "Shopify", **_pub_label(shopify, live_word="Published")},
+        {"channel": "Shopify Blog", **_delivery_label(latest_asset.get("blog"),
+                                                      sent_word="Published")},
         {"channel": "Pinterest", **pin_cell},
         {"channel": "Facebook", **_delivery_label(latest_asset.get("facebook"))},
         {"channel": "Instagram", **_delivery_label(latest_asset.get("instagram"))},
+        {"channel": "TikTok", **_delivery_label(latest_asset.get("tiktok"),
+                                                sent_word="Posted")},
         {"channel": "Email", **_delivery_label(latest_asset.get("email"), sent_word="Sent")},
-        {"channel": "Blog", **_delivery_label(latest_asset.get("blog"), sent_word="Published")},
     ]
     return rows
 
@@ -1279,9 +1332,13 @@ def _approval_card(state: Any, row: dict[str, Any], ctx: dict[str, Any]) -> dict
                                 "at": pub.get("created_at")})
     # Hero is never blank — fall back to artwork, then a placeholder flag.
     hero = assets["hero_url"] or assets["artwork_url"]
+    # Per-channel status pills for the card (Sprint 42.1, Obj 6).
+    etsy_pub = db.get_latest_publication(cid, "etsy", product_id=row["sku"]) if cid else None
+    etsy_cell = _pub_label(etsy_pub)
     return {
         "sku": row["sku"], "name": row["name"], "type": key or "product",
         "campaign_id": cid, "campaign": row["campaign"] or "",
+        "collection": row.get("collection") or "",
         "status": row["status"], "status_label": row["status_label"],
         "workflow_stage": row["status_label"],
         "hero_url": hero, "has_hero": bool(hero),
@@ -1297,7 +1354,8 @@ def _approval_card(state: Any, row: dict[str, Any], ctx: dict[str, Any]) -> dict
         "compliance_score": (compliance or {}).get("compliance_score"),
         "approval": row["approval"], "operator": row["operator"] or "—",
         "listing_id": row["listing_id"], "listing_url": row["listing_url"],
-        "shopify_status": row["shopify_status"],
+        "etsy_status": etsy_cell["label"], "etsy_state": etsy_cell["status"],
+        "shopify_status": row["shopify_status"], "shopify_state": row["shopify_state"],
         "publish_history": pub_history, "retry_history": retries,
         "last_updated": row["updated_at"],
         "reason": row["reason"] or "", "retryable": row["retryable"],

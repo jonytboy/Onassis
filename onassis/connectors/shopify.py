@@ -158,25 +158,45 @@ class ShopifyConnector:
 
     def publish_article(self, article: dict[str, Any]) -> dict[str, Any]:
         """Publish a blog article to the store's blog and return a verifiable
-        result ``{ok, id, handle, url}``. ``article`` needs a ``title`` and
-        ``body``; ``blog_id`` falls back to config."""
+        result ``{ok, id, handle, url, verified}``. ``article`` needs a
+        ``title`` and ``body``; ``blog_id`` falls back to config.
+
+        After creation the article is fetched back (Sprint 42.1, Obj 5) to
+        confirm it really exists on the store — a created id alone isn't proof
+        of a live post — and to capture the canonical URL. A failed verification
+        is reported (``ok`` stays False), never silently skipped."""
         blog_id = article.get("blog_id") or self.cfg.get("blog_id")
         if not blog_id:
             raise RuntimeError("No Shopify blog selected — pick one on the "
                                "Integrations page (Shopify → list blogs).")
-        resp = self._c().create_article(str(blog_id), {
+        client = self._c()
+        resp = client.create_article(str(blog_id), {
             "article": {"title": article.get("title") or "New post",
                         "body_html": article.get("body") or "",
                         "tags": ", ".join(article.get("keywords") or []),
                         "published": True}})
         art = (resp or {}).get("article") or {}
         art_id = art.get("id")
+        if not art_id:
+            return {"ok": False, "id": "", "handle": "", "url": "",
+                    "verified": False, "error": "Shopify returned no article id."}
+        # Verify the article is retrievable — proof it exists on the store.
+        verified, verify_error = True, ""
+        try:
+            confirmed = (client.get_article(str(blog_id), str(art_id)) or {}).get("article") or {}
+            if confirmed.get("id"):
+                art = {**art, **confirmed}   # canonical fields (url/handle) win
+            else:
+                verified, verify_error = False, "Article not found after publish."
+        except Exception as exc:            # verification is best-effort but reported
+            verified, verify_error = False, f"Verification failed: {exc}"
         handle = art.get("handle") or ""
         domain = self.cfg.get("store_domain") or ""
         url = art.get("url") or (
             f"https://{domain}/blogs/{blog_id}/{handle}" if (domain and handle) else "")
-        return {"ok": bool(art_id), "id": str(art_id) if art_id else "",
-                "handle": handle, "url": url}
+        return {"ok": bool(art_id) and verified, "id": str(art_id),
+                "handle": handle, "url": url, "verified": verified,
+                "error": verify_error}
 
 
 class ShopifyAdminClient:
@@ -231,6 +251,9 @@ class ShopifyAdminClient:
 
     def create_article(self, blog_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post(f"/blogs/{blog_id}/articles.json", payload)
+
+    def get_article(self, blog_id: str, article_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/blogs/{blog_id}/articles/{article_id}.json", None)
 
     # --- HTTP -------------------------------------------------------
 

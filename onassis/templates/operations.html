@@ -299,6 +299,30 @@
         <div class="stat"><div class="k">Profit today</div><div class="v sm" x-text="money(productHealth?.profit_today)"></div></div>
       </div>
     </div>
+    <!-- Symmetric sales-channel scorecards — Etsy ↔ Shopify (future: Amazon/eBay). -->
+    <div class="panel" x-show="productHealth?.channels" style="margin-bottom:12px">
+      <h2>Sales channel scorecards</h2>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px">
+        <template x-for="ch in channelCards()" :key="ch.key">
+          <div class="stat" style="align-items:stretch;text-align:left">
+            <div class="k" style="display:flex;justify-content:space-between;align-items:center">
+              <b x-text="ch.name"></b>
+              <span class="pill" :class="(ch.d.success_rate??101)>=80?'ok':((ch.d.success_rate==null)?'grey':'needs_review')"
+                    x-text="(ch.d.success_rate??'—')+'%'"></span>
+            </div>
+            <div class="grid" style="grid-template-columns:1fr 1fr;gap:6px;margin-top:8px">
+              <div><div class="note">Products Published</div><div class="v sm" x-text="ch.d.products_published"></div></div>
+              <div><div class="note">Drafts Created</div><div class="v sm" x-text="ch.d.drafts_created"></div></div>
+              <div x-show="ch.d.blog_articles!=null"><div class="note">Blog Articles</div><div class="v sm" x-text="ch.d.blog_articles"></div></div>
+              <div><div class="note">Failed</div><div class="v sm" x-text="ch.d.failed"></div></div>
+              <div><div class="note">Retry Queue</div><div class="v sm" x-text="ch.d.retry_queue"></div></div>
+              <div><div class="note">Last Publish</div><div class="v sm" x-text="when(ch.d.last_publish)"></div></div>
+              <div><div class="note">Avg Publish Time</div><div class="v sm" x-text="dur(ch.d.avg_publish_interval_secs)"></div></div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
     <div class="panel" x-show="productSummary" style="margin-bottom:12px">
       <h2>Publish summary — real state, not "completed"</h2>
       <div class="grid">
@@ -455,13 +479,20 @@
         <template x-for="c in (approvals?.queue||[])" :key="c.sku">
           <div class="panel" style="margin:0">
             <div style="display:flex;gap:12px">
+              <!-- Hero is never blank: mockup → artwork → "Generating preview…" placeholder. -->
               <img x-show="c.hero_url" :src="c.hero_url" alt="" style="width:88px;height:88px;object-fit:cover;border-radius:8px;background:#222">
+              <div x-show="!c.hero_url" style="width:88px;height:88px;border-radius:8px;background:#222;display:flex;align-items:center;justify-content:center;text-align:center;font-size:10px;color:#888;padding:6px">Generating preview…</div>
               <div style="flex:1;min-width:0">
+                <div class="note" x-show="c.collection" style="text-transform:uppercase;letter-spacing:.04em;font-size:10px;color:#c9a56a" x-text="c.collection"></div>
                 <div class="v sm" x-text="c.listing_title"></div>
-                <div class="note"><span x-text="c.type"></span> · confidence <b x-text="pct(c.confidence)"></b> · SEO <span x-text="c.seo_score??'—'"></span></div>
+                <div class="note"><span x-text="c.type"></span> · confidence <b x-text="conf(c.confidence)"></b> · SEO <span x-text="c.seo_score??'—'"></span></div>
                 <div class="note">Compliance: <span class="pill" :class="c.compliance==='APPROVE'?'ok':'failed'" x-text="c.compliance"></span></div>
                 <div class="note" x-show="c.status==='failed'" style="color:#ff8a8a" x-text="'Failed: '+(c.reason||'')"></div>
               </div>
+            </div>
+            <div class="secondary" style="grid-template-columns:1fr 1fr;margin-top:10px;gap:6px">
+              <div class="note">Etsy: <span class="pill" :class="channelPill(c.etsy_state)" x-text="c.etsy_status"></span></div>
+              <div class="note">Shopify: <span class="pill" :class="channelPill(c.shopify_state)" x-text="c.shopify_status"></span></div>
             </div>
             <div class="note" style="margin-top:8px" x-text="c.ceo_rationale"></div>
             <div class="secondary" style="grid-template-columns:repeat(2,1fr);margin-top:10px">
@@ -826,6 +857,10 @@ function ops(){
     stageProgress(){ const st=this.run?.stages||[]; const done=st.filter(x=>x.status!=='pending'&&x.status!=='running').length; return done+'/'+st.length; },
     money(v){ if(v==null) return '—'; return '£'+Number(v).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); },
     pct(v){ if(v==null) return '—'; return (Number(v)*100).toFixed(1)+'%'; },
+    conf(v){ return v==null ? 'Calculating…' : (Number(v)*100).toFixed(1)+'%'; },
+    when(iso){ if(!iso) return '—'; const d=new Date(iso); return isNaN(d)?'—':d.toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}); },
+    dur(s){ if(s==null) return '—'; s=Number(s); if(s<90) return Math.round(s)+'s'; if(s<5400) return Math.round(s/60)+'m'; if(s<172800) return Math.round(s/3600)+'h'; return Math.round(s/86400)+'d'; },
+    channelCards(){ const c=this.productHealth?.channels||{}; const order=[['etsy','Etsy'],['shopify','Shopify']]; return order.filter(([k])=>c[k]).map(([k,name])=>({key:k,name,d:c[k]})); },
     filteredProducts(){ const q=this.productSearch.toLowerCase(); return !q?this.products:this.products.filter(p=>(p.name||'').toLowerCase().includes(q)||(p.status||'').includes(q)); },
     saveKey(){ localStorage.setItem('onassis_ops_key',this.key); this.refreshAll(); },
     scrollLog(){ const c=this.$refs.console; if(c) c.scrollTop=c.scrollHeight; },

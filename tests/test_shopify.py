@@ -39,7 +39,15 @@ class FakeAdminClient:
 
     def create_article(self, blog_id, payload):
         self.articles.append((blog_id, payload))
-        return {"article": {"id": 555}}
+        if self.no_id:
+            return {"article": {}}
+        return {"article": {"id": 555, "handle": "linen-throw-story"}}
+
+    def get_article(self, blog_id, article_id):
+        if getattr(self, "verify_missing", False):
+            return {"article": {}}
+        return {"article": {"id": int(article_id), "handle": "linen-throw-story",
+                            "url": f"https://shop.myshopify.com/blogs/{blog_id}/linen-throw-story"}}
 
 
 def _configured(config):
@@ -98,6 +106,26 @@ def test_list_blogs(config):
                                            {"id": 2, "title": "Journal"}]}
     blogs = ShopifyConnector(config, client=client).list_blogs()
     assert blogs == [{"id": "1", "title": "News"}, {"id": "2", "title": "Journal"}]
+
+
+def test_publish_article_verifies_and_returns_url(config):
+    _configured(config)
+    config.shopify["blog_id"] = 7
+    conn = ShopifyConnector(config, client=FakeAdminClient())
+    res = conn.publish_article({"title": "A Mediterranean Morning", "body": "…"})
+    assert res["ok"] and res["verified"] is True
+    assert res["id"] == "555"
+    assert res["url"] == "https://shop.myshopify.com/blogs/7/linen-throw-story"
+
+
+def test_publish_article_fails_when_unverifiable(config):
+    _configured(config)
+    config.shopify["blog_id"] = 7
+    client = FakeAdminClient()
+    client.verify_missing = True                # created, but not retrievable
+    res = ShopifyConnector(config, client=client).publish_article({"title": "x", "body": "y"})
+    assert res["ok"] is False and res["verified"] is False
+    assert "not found" in res["error"].lower()
 
 
 # --- Publisher (records a shopify publication) -----------------------

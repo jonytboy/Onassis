@@ -313,6 +313,40 @@ def test_production_health_dashboard(client):
     assert h["published_today"] >= 1
 
 
+def test_production_health_symmetric_channel_panels(client):
+    """Sprint 42.1 Obj 3/9 — Etsy and Shopify expose the same scorecard shape."""
+    db = client.app.state.db
+    cid, sku = _seed_launched_product(db, key="mug", draft=True)   # Etsy draft
+    db.insert_publication({"platform": "shopify", "product_id": sku, "campaign_id": cid,
+                           "listing_id": "99001", "mode": "live", "status": "live"})
+    db.insert_marketing_asset({"campaign_id": cid, "product_key": "mug", "channel": "blog",
+                               "payload": {}})
+    blog = db.list_marketing_assets(channel="blog")[0]
+    db.set_marketing_asset_delivery(blog["id"], "posted", ref="https://shop/blogs/1/x")
+    h = client.get("/operations/api/production-health").json()
+    chans = h["channels"]
+    # Symmetric shape — both channels carry the same keys.
+    fields = {"products_published", "drafts_created", "blog_articles", "failed",
+              "retry_queue", "success_rate", "last_publish", "avg_publish_interval_secs"}
+    assert fields <= set(chans["etsy"]) and fields <= set(chans["shopify"])
+    assert chans["etsy"]["drafts_created"] == 1
+    assert chans["shopify"]["products_published"] == 1
+    assert chans["shopify"]["blog_articles"] == 1     # verified Shopify Blog article
+    assert chans["etsy"]["blog_articles"] is None     # Etsy has no blog channel
+
+
+def test_approval_card_has_collection_and_channel_states(client):
+    """Sprint 42.1 Obj 6/8 — cards carry collection name + per-channel pills."""
+    db = client.app.state.db
+    cid, sku = _seed_launched_product(db, key="mug")   # awaiting decision
+    card = next(c for c in client.get("/operations/api/approvals").json()["queue"]
+                if c["sku"] == sku)
+    assert card["collection"] == "Salt Air Collection"
+    assert card["confidence"] is not None              # 88 → calculated, not "Calculating…"
+    assert card["etsy_state"] == "not_created" and card["shopify_state"] == "not_created"
+    assert "hero_url" in card and "has_hero" in card
+
+
 def test_reconcile_endpoint_repairs(client):
     db = client.app.state.db
     db.insert_publication({"platform": "etsy", "product_id": "1-x", "campaign_id": 1,

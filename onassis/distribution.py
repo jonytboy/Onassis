@@ -140,6 +140,8 @@ class ChannelDistributor:
         for a in articles:
             res = self.shopify.publish_article(a)
             if not res.get("ok"):
-                return {"ok": False, "reason": "Shopify returned no article id."}
+                # Never silently skip — report why (unverified / no id).
+                reason = res.get("error") or "Shopify returned no article id."
+                return {"ok": False, "reason": reason}
             refs.append(res.get("url") or res.get("id"))
         return {"ok": True, "ref": " | ".join(r for r in refs if r)}
