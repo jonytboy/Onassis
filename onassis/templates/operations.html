@@ -888,6 +888,15 @@ function ops(){
     async runBusiness(){ await this.post('/operations/api/run-business'); this.refreshRun(); this.pollLogs(); },
     async control(a){ if(a==='rollback'&&!confirm('Roll back to the previous deploy and restart?')) return;
       const r=await this.post('/operations/api/control/'+a); this.refreshStatus();
+      if(a==='restart'){
+        if(r?.restarted) alert('Service is restarting now — the page will reconnect in a few seconds.');
+        else if(r?.pending) alert('Restart REQUESTED but not executed automatically.\n\n'+(r.detail||'')+
+          '\n\nThe privileged restart bridge is not completing the request on this host. To finish now, run on the server:\n\n    sudo systemctl restart onassis\n\n'+
+          'To make future restarts automatic, install the systemd restart bridge (ONASSIS_RESTART_SPOOL + root path unit) or set ONASSIS_ALLOW_RESTART=1.');
+        else if(r?.ok===false) alert('Restart failed — see the live log.\n\n'+(r.detail||''));
+        else alert('Restart returned an unexpected result — see the live log.');
+        return;
+      }
       if(r&&r.mode===undefined&&r.ok===false) alert(a+' failed — see the live log.'); },
     async loadTab(t){ try{
       if(t==='business') this.business=await this.get('/operations/api/business');
