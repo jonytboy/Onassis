@@ -294,6 +294,45 @@ def test_restart_bridge_writes_request_not_shell(config, db, tmp_path, monkeypat
     assert not any("systemctl" in " ".join(c) for c in g.calls)
 
 
+def test_restart_self_reexec_fallback_when_allowed_and_no_systemctl(
+        config, db, tmp_path, monkeypatch):
+    # No spool → no bridge; opt-in via ONASSIS_ALLOW_RESTART; no systemctl on PATH.
+    monkeypatch.delenv("ONASSIS_RESTART_SPOOL", raising=False)
+    monkeypatch.setenv("ONASSIS_ALLOW_RESTART", "1")
+    import onassis.deployment as dep
+    monkeypatch.setattr(dep.shutil, "which", lambda _n: None)
+    fired = {}
+
+    class _FakeTimer:                       # never actually re-exec the test runner
+        def __init__(self, delay, fn):
+            fired["scheduled"] = True
+        def start(self):
+            fired["started"] = True
+
+    monkeypatch.setattr(dep.threading, "Timer", _FakeTimer)
+    s = DeploymentService(config, db, runner=FakeGit(), root=tmp_path)
+    r = s.restart()
+    assert r["restarted"] is True and r.get("self_reexec") is True
+    assert fired.get("started") is True     # a re-exec was actually scheduled
+
+
+def test_restart_direct_systemctl_when_permitted(config, db, tmp_path, monkeypatch):
+    monkeypatch.delenv("ONASSIS_RESTART_SPOOL", raising=False)
+    monkeypatch.setenv("ONASSIS_ALLOW_RESTART", "1")
+    import onassis.deployment as dep
+    monkeypatch.setattr(dep.shutil, "which", lambda _n: "/usr/bin/systemctl")
+    calls = []
+
+    def _runner(cmd, timeout):
+        calls.append(cmd)
+        return (0, "", "")                  # systemctl restart succeeds
+
+    s = DeploymentService(config, db, runner=_runner, root=tmp_path)
+    r = s.restart()
+    assert r["restarted"] is True and "systemctl" in r["detail"]
+    assert any(c[:3] == ["sudo", "-n", "systemctl"] for c in calls)   # non-interactive
+
+
 def test_restart_bridge_result_clears_marker(config, db, tmp_path, monkeypatch):
     spool = tmp_path / "spool"
     monkeypatch.setenv("ONASSIS_RESTART_SPOOL", str(spool))

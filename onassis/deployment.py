@@ -334,18 +334,48 @@ class DeploymentService:
             self._set_restart_required(True)
             return {"ok": True, "restarted": False, "pending": True, "token": token,
                     "detail": "restart requested via systemd bridge"}
-        # Fallback (simple single-host setups): direct restart, opt-in only.
-        if os.environ.get("ONASSIS_ALLOW_RESTART") and shutil.which("systemctl"):
+        # Fallback (simple single-host setups): opt-in via ONASSIS_ALLOW_RESTART.
+        # Try a non-interactive systemctl first; if that isn't possible, re-exec
+        # this very process so the button still restarts the running code.
+        if os.environ.get("ONASSIS_ALLOW_RESTART"):
             service = self._service_name()
-            rc, _, err = self._run(["sudo", "systemctl", "restart", service], 60)
-            if rc == 0:
-                self._set_restart_required(False)
-            return {"ok": rc == 0, "restarted": rc == 0,
-                    "detail": f"{service}: {'restarted' if rc == 0 else err}"}
+            if shutil.which("systemctl"):
+                # ``sudo -n`` never prompts — it fails fast if we lack rights,
+                # so we can fall through to a self-restart instead of hanging.
+                rc, _, err = self._run(["sudo", "-n", "systemctl", "restart", service], 60)
+                if rc == 0:
+                    self._set_restart_required(False)
+                    return {"ok": True, "restarted": True,
+                            "detail": f"{service}: restarted via systemctl"}
+            # No systemctl / no sudo rights → re-exec ourselves.
+            return self._self_reexec()
         # Dev / no restart mechanism: defer and flag it.
         self._set_restart_required(True)
         return {"ok": True, "restarted": False, "pending": True,
                 "detail": "restart deferred to service manager"}
+
+    def _self_reexec(self) -> dict:
+        """Restart by replacing this process image with a fresh one (no root,
+        no service manager needed). Scheduled on a short timer so the HTTP
+        response returns before the process is replaced. Any process manager
+        with Restart= will also recover us if the re-exec ever fails to bind."""
+        argv = [sys.executable, *sys.argv]
+
+        def _go() -> None:
+            try:
+                sys.stdout.flush()
+                sys.stderr.flush()
+            except Exception:
+                pass
+            try:
+                os.execv(sys.executable, argv)
+            except Exception:  # last resort — exit so a process manager restarts us
+                os._exit(3)
+
+        threading.Timer(1.0, _go).start()
+        self._set_restart_required(False)
+        return {"ok": True, "restarted": True, "self_reexec": True,
+                "detail": "restarting in-process (re-exec) — reconnect in a few seconds"}
 
     def _health(self) -> dict:
         if self._health_hook is not None:
