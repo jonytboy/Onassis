@@ -1260,10 +1260,16 @@ def _exports_dir(state: Any) -> Path:
     return base
 
 
-def _package_assets(state: Any, campaign_id: Any, product_key: str | None) -> dict[str, Any]:
+def _package_assets(state: Any, campaign_id: Any, product_key: str | None,
+                    opportunity_id: str | None = None) -> dict[str, Any]:
     """Resolve a product package's real artwork/mock-up/listing assets to
     /exports URLs (best-effort — missing files degrade to empty, so this is
-    offline-safe). Powers the Approval Workspace cards and Detail Drawer."""
+    offline-safe). Powers the Approval Workspace cards and Detail Drawer.
+
+    Hero fallback chain (Sprint 42.1, Obj 1): primary mock-up → per-product
+    master artwork → **design master artwork** (produced at the Artwork stage,
+    before a product is published, so awaiting-approval cards still get a real
+    preview instead of the placeholder) → empty (UI shows "Generating preview…")."""
     out: dict[str, Any] = {"has_artwork": False, "has_mockups": False,
                            "artwork_url": "", "hero_url": "", "mockups": [],
                            "listing_title": "", "seo_score": None,
@@ -1294,6 +1300,15 @@ def _package_assets(state: Any, campaign_id: Any, product_key: str | None) -> di
         out["hero_url"] = mockups[0] if mockups else out["artwork_url"]
     else:
         out["hero_url"] = out["artwork_url"]
+    # Pre-publish fallback: the design master artwork (exports/opportunities/<id>/).
+    if not out["hero_url"] and opportunity_id:
+        subdir = (state.config.design or {}).get("subdir", "opportunities")
+        design_master = _exports_dir(state) / subdir / str(opportunity_id) / "master_artwork.png"
+        if design_master.exists():
+            url = f"/exports/{subdir}/{opportunity_id}/master_artwork.png"
+            out["artwork_url"] = out["artwork_url"] or url
+            out["hero_url"] = url
+            out["has_artwork"] = True
     return out
 
 
@@ -1316,9 +1331,9 @@ def _approval_card(state: Any, row: dict[str, Any], ctx: dict[str, Any]) -> dict
     db = state.db
     cid = row["campaign_id"]
     key = row["product_key"]
-    assets = _package_assets(state, cid, key)
     scores = [sc for sc in db.list_product_scores(cid) if sc.get("product_key") == key]
     score = scores[0] if scores else {}
+    assets = _package_assets(state, cid, key, opportunity_id=score.get("opportunity_id"))
     compliance = db.get_compliance_for_campaign(cid) if cid else None
     # Real confidence only — never a spurious 0% when nothing was calculated.
     raw_conf = score.get("composite_score")

@@ -335,6 +335,30 @@ def test_production_health_symmetric_channel_panels(client):
     assert chans["etsy"]["blog_articles"] is None     # Etsy has no blog channel
 
 
+def test_approval_card_falls_back_to_design_artwork_preview(client, tmp_path):
+    """Sprint 42.1 Obj 1 — an awaiting product with no per-product listing
+    package still shows a preview: the design master artwork."""
+    db = client.app.state.db
+    opp = "OPP-abc12345"
+    brief_id = db.insert_brief({"brief_date": "2026-07-01", "theme": "Salt", "keywords": []})
+    cid = db.insert_campaign({"name": "Salt Air", "brief_id": brief_id})
+    db.insert_compliance_report({"campaign_id": cid, "verdict": "APPROVE",
+                                 "reasoning": "ok", "compliance_score": 92})
+    sku = f"{cid}-mug"
+    db.insert_product({"sku": sku, "name": "mug", "campaign_id": cid, "product_key": "mug"})
+    db.insert_product_score({"campaign_id": cid, "product_key": "mug", "product_name": "mug",
+                             "launched": 1, "composite_score": 88, "opportunity_id": opp,
+                             "ceo_verdict": "APPROVE", "reasoning": "Strong."})
+    # Write the design master artwork where the Artwork stage would put it.
+    exports = tmp_path / "exports" / "opportunities" / opp
+    exports.mkdir(parents=True, exist_ok=True)
+    (exports / "master_artwork.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    card = next(c for c in client.get("/operations/api/approvals").json()["queue"]
+                if c["sku"] == sku)
+    assert card["has_hero"] is True
+    assert card["hero_url"] == f"/exports/opportunities/{opp}/master_artwork.png"
+
+
 def test_approval_card_has_collection_and_channel_states(client):
     """Sprint 42.1 Obj 6/8 — cards carry collection name + per-channel pills."""
     db = client.app.state.db
