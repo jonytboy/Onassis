@@ -66,7 +66,7 @@ STAGES: list[tuple[str, str]] = [
     ("Generate Master Artwork", "Artwork"),
     ("Create Product Campaign", "Campaign"),
     ("Expand Products", "Product Set"),
-    ("Publish Products", "Listing + Etsy Draft + Gallery"),
+    ("Publish Products", "Publish (Etsy + Shopify) + Gallery"),
     ("Generate Marketing Content", "Marketing (Pin/IG/FB/Blog/Email)"),
     ("Promote on Pinterest", "Traffic (Pinterest)"),
     ("Daily Report", "Daily Report"),
