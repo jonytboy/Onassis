@@ -429,6 +429,15 @@ class DailyCycle:
             "products_scored": plan["products_scored"],
             "launched": [s["product_key"] for s in plan["launched"]]}}
 
+    def _daily_listing_cap(self) -> int:
+        """The effective daily new-listing cap: the operator's Business Setting
+        if set, otherwise the config default."""
+        try:
+            from onassis.business_settings import BusinessSettings
+            return int(BusinessSettings(self.db, self.config).get("max_campaigns_per_day"))
+        except Exception:  # fall back to raw config on any lookup problem
+            return int((self.config.portfolio or {}).get("max_new_listings_per_day", 2))
+
     def _stream_products(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """Stream each approved product to a live Etsy draft, independently.
 
@@ -449,7 +458,9 @@ class DailyCycle:
             return {"status": "skipped", "detail": "no approved products to publish"}
 
         # Portfolio guard — never flood Etsy. Cap NEW live/draft listings per day.
-        cap = int((self.config.portfolio or {}).get("max_new_listings_per_day", 2))
+        # Honour the operator's Business Setting (DB override) over the config
+        # default, so raising "Max Campaigns / Day" in the UI actually takes effect.
+        cap = int(self._daily_listing_cap())
         already = self.db.count_new_listings_today()
         remaining = max(0, cap - already)
         capped = 0

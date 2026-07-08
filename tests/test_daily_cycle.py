@@ -56,6 +56,13 @@ _DESIGN = {
 
 # --- Dry run (fully offline; observation + decision only) -----------
 
+def test_daily_listing_cap_honours_business_setting(config, db):
+    cycle = DailyCycle(config, db)
+    assert isinstance(cycle._daily_listing_cap(), int)   # config default
+    db.set_setting("business.max_campaigns_per_day", 25)  # operator raises it in the UI
+    assert cycle._daily_listing_cap() == 25
+
+
 def test_dry_run_executes_all_stages_without_side_effects(config, db):
     cycle = DailyCycle(config, db)
     summary = cycle.run(mode="dry_run")
