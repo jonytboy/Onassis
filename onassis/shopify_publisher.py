@@ -42,6 +42,19 @@ class ShopifyPublisher:
         if not self.connector.can_publish:
             return {"status": "not_configured",
                     "reason": "Shopify credentials are not set."}
+        # Mockup Quality Gate (P1): the same hard rule as Etsy — require at least
+        # one real, quality-passed mockup; never publish placeholder/fallback art.
+        from onassis.mockup_gate import evaluate_listing as _eval_mockups
+        mq = _eval_mockups(listing)
+        if not mq["ok"]:
+            reason = f"{mq['message']} {mq['reason']}".strip()
+            pub = {"platform": PLATFORM, "product_id": sku, "campaign_id": campaign_id,
+                   "listing_id": None, "mode": "draft", "status": "failed", "attempts": 0,
+                   "failure_reason": reason}
+            pub["id"] = self.db.insert_publication(pub)
+            log.warning("Mockup gate blocked Shopify publish for %s: %s", sku, reason)
+            return {"status": "failed", "reason": reason, "mockup_quality": mq,
+                    "mockup_blocked": True, "publication": pub}
         existing = self.db.get_active_publication(campaign_id, PLATFORM, product_id=sku)
         if existing:
             return {"status": "skipped", "reason": "Already on Shopify.",

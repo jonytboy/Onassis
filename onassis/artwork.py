@@ -367,9 +367,22 @@ class ArtworkStudio:
         best: tuple[bytes, dict[str, Any]] | None = None
         for attempt in range(1, self.max_attempts + 1):
             spec.variant = attempt - 1
-            data = self._generate(spec)
+            data, gen = self._generate(spec)
             verdict = self.review.evaluate(data, spec)
             verdict["attempts"] = attempt
+            # Provenance travels with every image (P1): provider/model/prompt and
+            # whether a fallback placeholder was substituted for a real generation.
+            verdict.update(provider=gen["provider"], model=gen["model"],
+                           prompt=spec.prompt, fallback_used=gen["fallback_used"],
+                           generation_ok=gen["generation_ok"],
+                           generation_error=gen["generation_error"])
+            # A fallback/placeholder image is NEVER a real product mockup — it must
+            # never be treated as publishable, however "clean" it renders.
+            if gen["fallback_used"]:
+                verdict["accepted"] = False
+                verdict["reasons"] = [*verdict.get("reasons", []),
+                                      "placeholder/fallback image — real image "
+                                      "generation failed; not publishable"]
             if verdict["accepted"]:
                 return self._finalise(data, spec), verdict
             if best is None or verdict["score"] > best[1]["score"]:
@@ -393,24 +406,34 @@ class ArtworkStudio:
                         spec.kind, spec.scene, exc)
             return data
 
-    def _generate(self, spec: ImageSpec) -> bytes:
-        """Generate one image. A successful backend image is returned verbatim —
-        it is never replaced. Only a genuine backend failure (an exception) can
-        fall back, the exact exception is always surfaced, and substitution is
-        opt-out via ``image.fallback_to_local``."""
+    def _generate(self, spec: ImageSpec) -> tuple[bytes, dict[str, Any]]:
+        """Generate one image, returning ``(bytes, provenance)``. A successful
+        backend image is returned verbatim — it is never replaced. Only a genuine
+        backend failure (an exception) can fall back; the exact exception is
+        always surfaced, and the returned provenance records ``fallback_used`` so
+        the placeholder can never be published (Mockup Quality Gate, P1)."""
+        meta = {"provider": self._backend.name,
+                "model": getattr(self._backend, "model", "") or "",
+                "fallback_used": False, "generation_ok": True, "generation_error": ""}
         try:
-            return self._backend.generate(spec)
+            return self._backend.generate(spec), meta
         except Exception as exc:
             if self._backend.name == "local":
                 raise  # the dev renderer failing is a real bug — don't mask it
             # Surface the EXACT exception (full traceback) — never silent.
             log.error("Image backend '%s' FAILED for %s/%s: %s",
                       self._backend.name, spec.kind, spec.scene, exc, exc_info=True)
+            meta["generation_ok"] = False
+            meta["generation_error"] = str(exc)
             if not self.fallback_to_local:
                 raise
             log.error("Substituting the DEV local renderer for this image "
-                      "(image.fallback_to_local=true) — set it false to fail loudly.")
-            return self._fallback.generate(spec)
+                      "(image.fallback_to_local=true) — this image is a PLACEHOLDER "
+                      "and is not publishable.")
+            data = self._fallback.generate(spec)
+            meta["provider"] = self._fallback.name
+            meta["fallback_used"] = True
+            return data, meta
 
     # --- Master design assets ---------------------------------------
 
@@ -480,7 +503,13 @@ class ArtworkStudio:
                    else self._alt(brief, product_type, scene))
             manifest.append({"order": order, "filename": filename, "kind": kind,
                              "scene": scene, "alt_text": alt, "review": qc,
-                             "source": self.backend_name})
+                             "source": qc.get("provider") or self.backend_name,
+                             "provider": qc.get("provider") or self.backend_name,
+                             "model": qc.get("model", ""),
+                             "prompt": qc.get("prompt", spec.prompt),
+                             "fallback_used": bool(qc.get("fallback_used")),
+                             "generation_ok": bool(qc.get("generation_ok", True)),
+                             "quality_pass": bool(qc.get("accepted"))})
         log.info("Built %d commercial image(s) for %s at %s.",
                  len(manifest), product_key, images_dir)
         return manifest

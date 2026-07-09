@@ -580,7 +580,15 @@ copyrighted characters, no third-party logos.
         images = [
             {"order": m["order"], "mockup_type": m["scene"], "filename": m["filename"],
              "alt_text": m["alt_text"], "source": m["source"],
-             "quality_score": m["review"]["score"]}
+             "quality_score": m["review"]["score"],
+             # Generation provenance per image (Mockup Quality Gate, P1).
+             "provider": m.get("provider") or m["source"],
+             "model": m.get("model", ""),
+             "prompt": m.get("prompt", ""),
+             "fallback_used": bool(m.get("fallback_used")),
+             "generation_ok": bool(m.get("generation_ok", True)),
+             "quality_pass": bool(m.get("quality_pass",
+                                        m["review"].get("accepted", False)))}
             for m in gallery
         ]
         image_order = [img["filename"] for img in images]
@@ -588,6 +596,9 @@ copyrighted characters, no third-party logos.
         listing["image_order"] = image_order
         listing["mockup_manifest"] = images
         listing["artwork_backend"] = master["backend"]
+        # Hard mockup-quality summary the publishers and UI read (P1).
+        from onassis.mockup_gate import evaluate_listing as _eval_mockups
+        listing["mockup_quality"] = _eval_mockups(listing)
         listing["file_manifest"] = [
             "listing.json", "manifest.json", "master_artwork.png", "print_file.png",
             *[f"images/{f}" for f in image_order],

@@ -494,11 +494,21 @@
               <div class="note">Etsy: <span class="pill" :class="channelPill(c.etsy_state)" x-text="c.etsy_status"></span></div>
               <div class="note">Shopify: <span class="pill" :class="channelPill(c.shopify_state)" x-text="c.shopify_status"></span></div>
             </div>
+            <!-- Mockup Quality Gate status (P1) -->
+            <div class="note" style="margin-top:6px" x-show="c.mockup_status && c.mockup_status!=='ok'">
+              <span class="pill failed" x-show="c.mockup_status==='failed'">Mockup quality failed</span>
+              <span class="pill grey" x-show="c.mockup_status==='none'">No mockups yet</span>
+              <span x-show="c.mockup_reason" style="color:#ff8a8a" x-text="' '+c.mockup_reason"></span>
+            </div>
+            <div class="note" style="margin-top:6px" x-show="c.mockup_status==='ok'">
+              <span class="pill ok">Mockup ✓</span>
+            </div>
             <div class="note" style="margin-top:8px" x-text="c.ceo_rationale"></div>
             <div class="secondary" style="grid-template-columns:repeat(2,1fr);margin-top:10px">
               <button class="btn small primary" x-show="c.actions.includes('approve')" @click="decide(c.sku,'approve')">Approve</button>
               <button class="btn small primary" x-show="c.actions.includes('approve_and_publish')" @click="decide(c.sku,'approve_and_publish')">Approve &amp; Publish</button>
               <button class="btn small" x-show="c.actions.includes('retry')" @click="decide(c.sku,'retry')">Retry</button>
+              <button class="btn small" :disabled="regenerating===c.sku" @click="regenerateMockups(c.sku)" x-text="regenerating===c.sku?'Regenerating…':'Regenerate Mockups'"></button>
               <button class="btn small" @click="decide(c.sku,'reject')">Reject</button>
               <a class="btn small" x-show="c.artwork_url" :href="c.artwork_url" target="_blank">View Artwork</a>
               <a class="btn small" x-show="c.mockups?.length" :href="c.mockups[0]" target="_blank">View Mockups</a>
@@ -839,7 +849,7 @@ function ops(){
     settings:null, savingSettings:false,
     updates:null, health:null, deployHistory:[], deploying:false, showNotes:false, showLog:null,
     environment:null, deployRun:null, preview:null, validation:null, _deployPoll:null,
-    productDetail:null, channelTests:null, testingChannels:false,
+    productDetail:null, channelTests:null, testingChannels:false, regenerating:null,
     integrations:null, integrationDetail:null, integrationEdits:{}, integrationBusy:false,
     commercial:null, commercialProducts:null, cmo:null,
     productSearch:'', productFilter:'all', productHealth:null, toast:'',
@@ -975,11 +985,24 @@ function ops(){
       const r=await this.post('/operations/api/approvals/'+encodeURIComponent(sku)+'/decision',{action,operator:'operator'});
       if(r&&r.error){ alert('Action failed ('+r.error+').'); return; }
       if(r&&r.published&&r.published.etsy){
-        const e=r.published.etsy.status, s=r.published.shopify?.status;
-        this.showToast('Published '+sku+' — Etsy: '+e+(s?(', Shopify: '+s):''));
-        if(r.published.etsy.help&&r.published.etsy.status!=='draft') alert('Etsy: '+r.published.etsy.help.cause+'\n→ '+r.published.etsy.help.suggestion);
+        const e=r.published.etsy, s=r.published.shopify;
+        // Mockup Quality Gate block (P1) — clear operator message, offer regenerate.
+        if(e.mockup_blocked||s?.mockup_blocked){
+          alert((e.mockup_blocked?e.reason:s.reason)+'\n\nUse "Regenerate Mockups" on the card, then publish again.');
+          this.loadTab('approvals'); this.pollLogs(); return;
+        }
+        this.showToast('Published '+sku+' — Etsy: '+e.status+(s?.status?(', Shopify: '+s.status):''));
+        if(e.help&&e.status!=='draft') alert('Etsy: '+e.help.cause+'\n→ '+e.help.suggestion);
       } else this.showToast(action.replace(/_/g,' ')+' → '+sku);
       this.loadTab('approvals'); this.pollLogs(); },
+    async regenerateMockups(sku){
+      this.regenerating=sku;
+      try{
+        const r=await this.post('/operations/api/approvals/'+encodeURIComponent(sku)+'/decision',{action:'regenerate_mockups',operator:'operator'});
+        const res=r&&r.result||{};
+        if(res.ok) this.showToast('Mockups regenerated for '+sku+' ('+res.passing+'/'+res.total+' passed).');
+        else alert('Mockup regeneration for '+sku+' did not pass:\n'+(res.reason||'unknown')+'\n\nTry again, or check the image backend (OpenAI key / credit / rate limit).');
+      } finally { this.regenerating=null; this.loadTab('approvals'); this.pollLogs(); } },
     async reconcileNow(){ const r=await this.post('/operations/api/system/reconcile');
       this.showToast('Self-healing: '+((r&&r.repaired)||0)+' issue(s) repaired.'); this.pollLogs(); },
     async saveSettings(){ this.savingSettings=true;

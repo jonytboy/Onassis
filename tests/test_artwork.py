@@ -251,9 +251,11 @@ def test_backend_failure_falls_back_to_local(tmp_path):
     studio = _small_studio()
     studio._backend = _BoomBackend()
     result = studio.generate_master(_brief(), tmp_path)
-    # The local fallback produced a real, QC-passing file despite the failure.
+    # A file is still produced (continuity), but the fallback placeholder is
+    # tagged and is NOT accepted — so the Mockup Quality Gate blocks publishing.
     assert (tmp_path / "master_artwork.png").stat().st_size > 0
-    assert result["master_review"]["accepted"] is True
+    assert result["master_review"]["fallback_used"] is True
+    assert result["master_review"]["accepted"] is False
 
 
 # --- Backend selection ----------------------------------------------

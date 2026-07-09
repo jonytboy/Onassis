@@ -168,6 +168,33 @@ def test_publish_uploads_every_generated_image(config, db, tmp_path):
         "gallery_00.jpg", "gallery_01.jpg", "gallery_02.jpg"}
 
 
+def test_mockup_gate_blocks_publish_when_all_images_are_fallback(config, db, tmp_path):
+    """P1 — a listing whose gallery is only placeholder/fallback images is
+    blocked before any Etsy call, with the operator message."""
+    import json
+
+    config.listing = {"exports_dir": str(tmp_path / "exports")}
+    config.publishing = {"enabled_modes": ["draft"], "max_retries": 3}
+    pub = PublisherService(config, db, draft_client=UploadingDraftClient())
+    cid = _approved_campaign(db)
+    _launch(db, cid, "ceramic_mug")
+    folder = tmp_path / "exports" / str(cid) / "ceramic_mug"
+    (folder / "images").mkdir(parents=True, exist_ok=True)
+    (folder / "images" / "hero.jpg").write_bytes(b"\xff\xd8\xff\xe0x" * 40)
+    (folder / "listing.json").write_text(json.dumps({
+        "campaign_id": cid, "product_id": f"{cid}-ceramic_mug", "product_key": "ceramic_mug",
+        "title": "Mug", "description": "d", "tags": ["a"], "price": 22.0, "quantity": 50,
+        "images": [{"order": 1, "filename": "hero.jpg", "alt_text": "x",
+                    "quality_pass": True, "fallback_used": True, "generation_ok": False}],
+    }))
+    result = pub.publish(cid, mode="draft", product_key="ceramic_mug")
+    assert result["status"] == "failed" and result["mockup_blocked"] is True
+    assert "Regenerate mockups" in result["reason"]
+    # Nothing was drafted on Etsy.
+    stored = [p for p in db.list_publications() if p["platform"] == "etsy"][0]
+    assert stored["status"] == "failed" and stored["listing_id"] is None
+
+
 def test_image_upload_failure_does_not_fail_the_draft(config, db, tmp_path):
     config.listing = {"exports_dir": str(tmp_path / "exports")}
     config.publishing = {"enabled_modes": ["draft"], "max_retries": 3}

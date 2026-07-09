@@ -490,6 +490,14 @@ def build_operations_router(get_state) -> APIRouter:
             get_state(request.app).add_log(
                 f"Shopify publish {sku} -> {result.get('status')}.")
             return {"sku": sku, "channel": "shopify", "published": result}
+        if action == "regenerate_mockups":
+            get_state(request.app).add_log(f"Regenerating mockups for {sku}…")
+            result = _regenerate_mockups(s, cid, key)
+            get_state(request.app).add_log(
+                f"Mockups for {sku}: {result.get('mockup_status', 'failed')} "
+                f"({result.get('passing', 0)}/{result.get('total', 0)} passed).",
+                "info" if result.get("ok") else "warn")
+            return {"sku": sku, "action": "regenerate_mockups", "result": result}
         raise HTTPException(status_code=400, detail=f"Unknown approval action '{action}'.")
 
     # --- Business settings (Sprint 40, Objective 7) ---
@@ -1037,6 +1045,30 @@ def _ensure_listing_package(state: Any, campaign_id: int, product_key: str) -> d
     return {"ok": True, "built": True}
 
 
+def _regenerate_mockups(state: Any, campaign_id: int, product_key: str) -> dict[str, Any]:
+    """Rebuild a product's listing package from scratch — new artwork + gallery —
+    so a failed/placeholder mockup can be replaced (P1, Regenerate Mockups).
+
+    Deletes the existing package folder first so the build cannot reuse a stale
+    placeholder, then re-runs the on-demand build and reports the mockup gate."""
+    import shutil as _shutil
+    from onassis.mockup_gate import listing_mockup_status
+
+    folder = _exports_dir(state) / str(campaign_id) / str(product_key)
+    if folder.exists():
+        try:
+            _shutil.rmtree(folder)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "reason": f"Could not clear old package: {exc}"}
+    built = _ensure_listing_package(state, campaign_id, product_key)
+    if not built["ok"]:
+        return {"ok": False, "reason": built["reason"]}
+    listing = state.daily._listing_json(campaign_id, product_key)
+    mq = listing_mockup_status(listing)
+    return {"ok": mq["ok"], "mockup_status": mq["status"], "reason": mq["reason"],
+            "passing": mq.get("passing", 0), "total": mq.get("total", 0)}
+
+
 def _publish_shopify(state: Any, campaign_id: int, product_key: str) -> dict[str, Any]:
     """Publish a single product to Shopify from its listing package (with help)."""
     from onassis.failure_help import annotate
@@ -1320,7 +1352,9 @@ def _package_assets(state: Any, campaign_id: Any, product_key: str | None,
     out: dict[str, Any] = {"has_artwork": False, "has_mockups": False,
                            "artwork_url": "", "hero_url": "", "mockups": [],
                            "listing_title": "", "seo_score": None,
-                           "listing_package_url": ""}
+                           "listing_package_url": "",
+                           "mockup_status": "none", "mockup_ok": False,
+                           "mockup_reason": ""}
     if campaign_id is None or not product_key:
         return out
     folder = _exports_dir(state) / str(campaign_id) / str(product_key)
@@ -1345,6 +1379,12 @@ def _package_assets(state: Any, campaign_id: Any, product_key: str | None,
         out["mockups"] = mockups
         out["has_mockups"] = bool(mockups)
         out["hero_url"] = mockups[0] if mockups else out["artwork_url"]
+        # Mockup Quality Gate status for the card (P1).
+        from onassis.mockup_gate import listing_mockup_status
+        mq = listing_mockup_status(listing)
+        out["mockup_status"] = mq["status"]
+        out["mockup_ok"] = mq["ok"]
+        out["mockup_reason"] = mq["reason"]
     else:
         out["hero_url"] = out["artwork_url"]
     # Pre-publish fallback: the design master artwork (exports/opportunities/<id>/).
@@ -1361,7 +1401,7 @@ def _package_assets(state: Any, campaign_id: Any, product_key: str | None,
 
 # The operator actions each card offers, gated by the product's lifecycle status.
 def _card_actions(status: str) -> list[str]:
-    base = ["view_artwork", "view_mockups", "edit_listing"]
+    base = ["view_artwork", "view_mockups", "edit_listing", "regenerate_mockups"]
     if status == "awaiting_approval":
         return ["approve", "approve_and_publish", "reject", *base]
     if status == "approved":
@@ -1415,6 +1455,8 @@ def _approval_card(state: Any, row: dict[str, Any], ctx: dict[str, Any]) -> dict
         "listing_title": assets["listing_title"] or row["name"] or row["sku"],
         "listing_package_url": assets["listing_package_url"],
         "seo_score": assets["seo_score"],
+        "mockup_status": assets["mockup_status"], "mockup_ok": assets["mockup_ok"],
+        "mockup_reason": assets["mockup_reason"],
         "confidence": confidence,
         "ceo_rationale": (score.get("reasoning") or "").strip() or "—",
         "compliance": (compliance or {}).get("verdict") or "PENDING",

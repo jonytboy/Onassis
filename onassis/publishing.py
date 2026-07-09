@@ -157,6 +157,22 @@ class PublisherService:
             return {"status": "not_configured", "campaign_id": campaign_id,
                     "reason": "Etsy write credentials are not set."}
 
+        # Mockup Quality Gate (P1): never publish a product whose gallery is only
+        # placeholder/fallback images or failed quality — require a real mockup.
+        from onassis.mockup_gate import evaluate_listing as _eval_mockups
+        mq = _eval_mockups(listing)
+        if not mq["ok"]:
+            reason = f"{mq['message']} {mq['reason']}".strip()
+            pub = {"platform": PLATFORM, "product_id": product_id,
+                   "campaign_id": campaign_id, "listing_id": None, "mode": DRAFT,
+                   "status": "failed", "attempts": 0, "failure_reason": reason}
+            pub["id"] = self.db.insert_publication(pub)
+            log.warning("Mockup gate blocked campaign #%s product %s: %s",
+                        campaign_id, product_key, reason)
+            return {"status": "failed", "campaign_id": campaign_id,
+                    "product_key": product_key, "reason": reason,
+                    "mockup_quality": mq, "mockup_blocked": True, "publication": pub}
+
         images_dir = self._listing_folder(campaign_id, product_key) / "images"
         return self._publish_draft(campaign_id, product_id, listing, images_dir)
 
