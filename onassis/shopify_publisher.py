@@ -44,8 +44,8 @@ class ShopifyPublisher:
                     "reason": "Shopify credentials are not set."}
         # Mockup Quality Gate (P1): the same hard rule as Etsy — require at least
         # one real, quality-passed mockup; never publish placeholder/fallback art.
-        from onassis.mockup_gate import evaluate_listing as _eval_mockups
-        mq = _eval_mockups(listing)
+        from onassis.mockup_gate import allow_local_for, evaluate_listing as _eval_mockups
+        mq = _eval_mockups(listing, allow_local=allow_local_for(self.config))
         if not mq["ok"]:
             reason = f"{mq['message']} {mq['reason']}".strip()
             pub = {"platform": PLATFORM, "product_id": sku, "campaign_id": campaign_id,

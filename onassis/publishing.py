@@ -159,8 +159,8 @@ class PublisherService:
 
         # Mockup Quality Gate (P1): never publish a product whose gallery is only
         # placeholder/fallback images or failed quality — require a real mockup.
-        from onassis.mockup_gate import evaluate_listing as _eval_mockups
-        mq = _eval_mockups(listing)
+        from onassis.mockup_gate import allow_local_for, evaluate_listing as _eval_mockups
+        mq = _eval_mockups(listing, allow_local=allow_local_for(self.config))
         if not mq["ok"]:
             reason = f"{mq['message']} {mq['reason']}".strip()
             pub = {"platform": PLATFORM, "product_id": product_id,

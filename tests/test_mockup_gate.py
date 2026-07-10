@@ -52,6 +52,20 @@ def test_legacy_listing_without_metadata_is_not_blocked():
     assert evaluate_listing(listing)["ok"] is True
 
 
+def test_local_dev_mockup_blocked_in_production_only():
+    # A local-rendered mockup (dev placeholder) is fine in dev, blocked in prod.
+    listing = {"images": [_img(provider="local", quality_pass=True, fallback_used=False)]}
+    assert evaluate_listing(listing, allow_local=True)["ok"] is True     # dev/test
+    prod = evaluate_listing(listing, allow_local=False)
+    assert prod["ok"] is False and prod["dev_rendered"] == 1
+    assert "DEV placeholder" in prod["reason"] or "real image model" in prod["reason"]
+
+
+def test_real_openai_mockup_passes_in_production():
+    listing = {"images": [_img(provider="openai", quality_pass=True, fallback_used=False)]}
+    assert evaluate_listing(listing, allow_local=False)["ok"] is True
+
+
 def test_status_word():
     assert listing_mockup_status(None)["status"] == "none"
     blocked = {"images": [_img(quality_pass=True, fallback_used=True)]}

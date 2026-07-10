@@ -1064,7 +1064,8 @@ def _regenerate_mockups(state: Any, campaign_id: int, product_key: str) -> dict[
     if not built["ok"]:
         return {"ok": False, "reason": built["reason"]}
     listing = state.daily._listing_json(campaign_id, product_key)
-    mq = listing_mockup_status(listing)
+    from onassis.mockup_gate import allow_local_for
+    mq = listing_mockup_status(listing, allow_local=allow_local_for(state.config))
     return {"ok": mq["ok"], "mockup_status": mq["status"], "reason": mq["reason"],
             "passing": mq.get("passing", 0), "total": mq.get("total", 0)}
 
@@ -1380,8 +1381,8 @@ def _package_assets(state: Any, campaign_id: Any, product_key: str | None,
         out["has_mockups"] = bool(mockups)
         out["hero_url"] = mockups[0] if mockups else out["artwork_url"]
         # Mockup Quality Gate status for the card (P1).
-        from onassis.mockup_gate import listing_mockup_status
-        mq = listing_mockup_status(listing)
+        from onassis.mockup_gate import allow_local_for, listing_mockup_status
+        mq = listing_mockup_status(listing, allow_local=allow_local_for(state.config))
         out["mockup_status"] = mq["status"]
         out["mockup_ok"] = mq["ok"]
         out["mockup_reason"] = mq["reason"]

@@ -597,8 +597,9 @@ copyrighted characters, no third-party logos.
         listing["mockup_manifest"] = images
         listing["artwork_backend"] = master["backend"]
         # Hard mockup-quality summary the publishers and UI read (P1).
-        from onassis.mockup_gate import evaluate_listing as _eval_mockups
-        listing["mockup_quality"] = _eval_mockups(listing)
+        from onassis.mockup_gate import allow_local_for, evaluate_listing as _eval_mockups
+        listing["mockup_quality"] = _eval_mockups(
+            listing, allow_local=allow_local_for(self.config))
         listing["file_manifest"] = [
             "listing.json", "manifest.json", "master_artwork.png", "print_file.png",
             *[f"images/{f}" for f in image_order],
