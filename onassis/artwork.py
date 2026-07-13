@@ -324,6 +324,19 @@ class ArtworkReview:
 class ArtworkStudio:
     """Produces the real commercial image files for a design and its products."""
 
+    # The DISTINCT premium gallery scenes, priority-ordered (Sprint 42.2, Obj 7).
+    # No scene repeats, so no image is ever rendered twice. gallery_count picks
+    # how many to generate from the top: the first four are the required set
+    # (Hero, Lifestyle, Detail, Secondary/Scale).
+    _GALLERY_SCENES: list[tuple[str, str, str]] = [
+        ("hero.jpg", MOCKUP, "hero"),
+        ("mockup_01.jpg", MOCKUP, "lifestyle"),
+        ("mockup_02.jpg", MOCKUP, "closeup"),
+        ("mockup_03.jpg", MOCKUP, "scale"),
+        ("gallery_01.jpg", GALLERY, "room"),
+        ("gallery_02.jpg", PRODUCT, "hero"),
+    ]
+
     def __init__(self, config: Config, db: Any | None = None,
                  backend: ImageBackend | None = None) -> None:
         self.config = config
@@ -342,7 +355,11 @@ class ArtworkStudio:
         self.master_px = int(self.cfg.get("master_px", 2048))
         self.print_px = int(self.cfg.get("print_px", 3600))  # ~300 DPI over A3-ish
         self.gallery_px = int(self.cfg.get("gallery_px", 1200))
-        self.gallery_count = max(8, min(10, int(self.cfg.get("gallery_count", 9))))
+        # Cost scales with image count (Sprint 42.2, Obj 6/7): generate only the
+        # required DISTINCT premium mockups — never duplicate renders. Tunable
+        # from the minimum saleable set (4) up to the full distinct palette.
+        self.gallery_count = max(4, min(len(self._GALLERY_SCENES),
+                                        int(self.cfg.get("gallery_count", 6))))
 
     @property
     def backend_name(self) -> str:
@@ -534,19 +551,13 @@ class ArtworkStudio:
         return manifest
 
     def _gallery_plan(self) -> list[tuple[str, str, str]]:
-        """(filename, kind, scene) for the ordered commercial gallery."""
-        plan: list[tuple[str, str, str]] = [("hero.jpg", MOCKUP, "hero")]
-        mock_scenes = ["lifestyle", "closeup", "scale"]
-        for i, scene in enumerate(mock_scenes, start=1):
-            plan.append((f"mockup_{i:02d}.jpg", MOCKUP, scene))
-        # Gallery variants (room scene, product-front, extra scenes) to hit target.
-        remaining = self.gallery_count - len(plan)
-        gallery_scenes = ["room", "product", "hero", "lifestyle", "closeup", "room"]
-        for i in range(1, remaining + 1):
-            scene = gallery_scenes[(i - 1) % len(gallery_scenes)]
-            kind = PRODUCT if scene == "product" else GALLERY
-            plan.append((f"gallery_{i:02d}.jpg", kind, "hero" if scene == "product" else scene))
-        return plan
+        """(filename, kind, scene) — the ordered DISTINCT commercial gallery.
+
+        Each entry is a different scene, so no image is rendered twice
+        (Sprint 42.2, Obj 6/7). ``gallery_count`` selects how many of the
+        required premium mockups to generate, cheapest-first coverage:
+        Hero → Lifestyle → Detail → Scale → Room → Product-front."""
+        return list(self._GALLERY_SCENES[:self.gallery_count])
 
     # --- Design context / prompts -----------------------------------
 

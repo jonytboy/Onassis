@@ -313,9 +313,33 @@ def test_gallery_has_hero_mockups_and_gallery_images(factory, db):
     assert any(f.startswith("gallery_") for f in filenames)
 
 
+def test_master_artwork_is_reused_not_regenerated(factory, db, tmp_path):
+    """Sprint 42.2 (Obj 6): when the design's master already exists, it is copied
+    into the product folder instead of paying to render it again."""
+    from pathlib import Path
+
+    design_dir = tmp_path / "design"
+    design_dir.mkdir()
+    (design_dir / "master_artwork.png").write_bytes(b"\x89PNG\r\n\x1a\nMASTER")
+    (design_dir / "print_file.png").write_bytes(b"\x89PNG\r\n\x1a\nPRINT")
+    calls = {"n": 0}
+    orig = factory.studio.generate_master
+    factory.studio.generate_master = lambda *a, **k: calls.__setitem__("n", calls["n"] + 1) or orig(*a, **k)
+
+    folder = tmp_path / "out"
+    folder.mkdir()
+    master = factory._reuse_or_generate_master({"path": str(design_dir)}, folder)
+    assert master["master_review"]["reused"] is True
+    assert calls["n"] == 0                                    # never re-rendered
+    assert (folder / "master_artwork.png").read_bytes().endswith(b"MASTER")
+    # With no design path, it falls back to real generation.
+    factory._reuse_or_generate_master({}, folder)
+    assert calls["n"] == 1
+
+
 def test_alt_text_present_on_every_gallery_image(factory, db):
     cid = _approved_campaign(db)
     images = factory.export(cid)["listing"]["images"]
     assert len(images) == factory.gallery_count
-    assert 8 <= len(images) <= 10
+    assert 4 <= len(images) <= 6                     # lean distinct set (Sprint 42.2)
     assert all(img["alt_text"] for img in images)   # every image has alt text

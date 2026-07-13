@@ -284,7 +284,7 @@ class ListingFactory:
                                f"Still needed changes after {outcome['attempts']} attempt(s)."),
                     "missing": outcome["missing"]}
         pkg = self._write_package(campaign_id, outcome["artifact"], outcome["report"],
-                                  subdir=spec["product_key"])
+                                  subdir=spec["product_key"], design_package=design_package)
         pkg["compliance_attempts"] = outcome["attempts"]
         # Advisories are logged with the product, never a gate.
         pkg["advisories"] = outcome["report"].get("advisories", [])
@@ -540,9 +540,32 @@ copyrighted characters, no third-party logos.
         base = Path(self.cfg.get("exports_dir", "exports"))
         return base if base.is_absolute() else (ROOT_DIR / base)
 
+    def _reuse_or_generate_master(self, design_package: dict[str, Any] | None,
+                                  folder: Path) -> dict[str, Any]:
+        """Reuse the design's already-rendered master artwork + print file when
+        available, instead of re-generating them for every product (Sprint 42.2,
+        Obj 6 — eliminate duplicate rendering). The master is the *design*, which
+        is identical across a campaign's products; only the mock-ups differ."""
+        from pathlib import Path as _Path
+
+        src = _Path((design_package or {}).get("path") or "")
+        src_master, src_print = src / "master_artwork.png", src / "print_file.png"
+        if (src.is_dir() and src_master.exists() and src_print.exists()
+                and src.resolve() != folder.resolve()):
+            import shutil
+            shutil.copy2(src_master, folder / "master_artwork.png")
+            shutil.copy2(src_print, folder / "print_file.png")
+            log.info("Reused design master artwork for %s (no re-render).", folder.name)
+            return {"status": "ready", "backend": self.studio.backend_name,
+                    "path": str(folder), "files": ["master_artwork.png", "print_file.png"],
+                    "master_review": {"accepted": True, "reused": True, "score": 100.0},
+                    "print_review": {"accepted": True, "reused": True, "score": 100.0},
+                    "dpi": 300}
+        return self.studio.generate_master(design_package or {}, folder)
+
     def _write_package(
         self, campaign_id: int, listing: dict[str, Any], review: dict[str, Any],
-        subdir: str | None = None,
+        subdir: str | None = None, design_package: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         folder = self._exports_base() / str(campaign_id)
         if subdir:  # one sub-folder per product for the approved product set
@@ -554,20 +577,23 @@ copyrighted characters, no third-party logos.
         # artwork + print file at the folder root, and an 8-10 image Etsy gallery.
         studio_brief = listing.pop("_studio_brief", {})
         alt_texts = listing.pop("_alt_texts", [])
-        design_package = {"design_brief": studio_brief}
+        # The brief the studio renders from; keep the caller's design_package
+        # (which carries the already-rendered master's ``path``) for reuse.
+        studio_pkg = {"design_brief": studio_brief}
+        reuse_from = {**(design_package or {}), **studio_pkg} if design_package else studio_pkg
         product = {"product_key": listing.get("product_key") or str(campaign_id),
                    "product_name": listing.get("product_name")
                    or listing.get("campaign_name")}
-        master = self.studio.generate_master(design_package, folder)
+        master = self._reuse_or_generate_master(reuse_from, folder)
         gallery = self.studio.build_product_gallery(
-            design_package, product, images_dir, alt_texts=alt_texts)
+            studio_pkg, product, images_dir, alt_texts=alt_texts)
 
         # Win the click: choose the strongest of 4 hero candidates. The winner
         # overwrites hero.jpg (gallery image #1), so the manifest is unchanged.
         if self.thumbnails_enabled:
             try:
                 choice = self.thumbnails.choose(
-                    design_package, {**product, "sku": listing.get("sku")},
+                    studio_pkg, {**product, "sku": listing.get("sku")},
                     images_dir, campaign_id=campaign_id)
                 listing["hero_variant"] = choice["chosen"]
                 listing["hero_candidates"] = [
@@ -624,7 +650,7 @@ copyrighted characters, no third-party logos.
             "tag_count_ok": len(listing["tags"]) == _TAG_COUNT,
             "master_artwork_present": "master_artwork.png" not in missing_production,
             "print_file_present": "print_file.png" not in missing_production,
-            "gallery_size_ok": 8 <= len(images) <= 10,
+            "gallery_size_ok": 4 <= len(images) <= 10,
         }
 
         (folder / "listing.json").write_text(json.dumps(listing, indent=2), encoding="utf-8")

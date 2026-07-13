@@ -541,7 +541,7 @@ image:
   # is then substituted (true) or the image fails loudly (false).
   fallback_to_local: true
   # api_key is read from IMAGE_API_KEY / OPENAI_API_KEY (never hard-code it).
-  gallery_count: 9             # Etsy gallery images per product (8-10)
+  gallery_count: 6             # DISTINCT gallery mockups per product (Sprint 42.2: no duplicate renders; 4-6)
   max_attempts: 3              # QC regenerations for GENUINE quality failures only
   # The model returns its native size (GPT Image = 1024²); the accepted image is
   # the master and is UPSCALED to these targets — never re-requested larger.

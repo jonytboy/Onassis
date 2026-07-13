@@ -194,13 +194,20 @@ def test_print_file_has_transparency(tmp_path):
 
 # --- Product gallery (8-10 real commercial images) ------------------
 
-def test_build_product_gallery_makes_8_to_10_real_images(tmp_path):
+def test_build_product_gallery_makes_distinct_mockups_no_duplicates(tmp_path):
+    """Sprint 42.2 (Obj 6/7): only DISTINCT premium mockups are rendered — no
+    scene is generated twice, so AI image cost isn't wasted on duplicates."""
     studio = _small_studio()
     manifest = studio.build_product_gallery(
         _brief(), {"product_key": "ceramic_mug", "product_name": "Ceramic Mug"},
         tmp_path / "images")
-    assert 8 <= len(manifest) <= 10
+    assert len(manifest) == studio.gallery_count             # exactly the plan
+    assert 4 <= len(manifest) <= 6                            # lean, tunable
     assert manifest[0]["filename"] == "hero.jpg"             # hero leads the gallery
+    # No duplicate renders: every filename is unique, and scenes don't repeat.
+    assert len({m["filename"] for m in manifest}) == len(manifest)
+    scenes = [(m["scene"], m["kind"]) for m in manifest]
+    assert len(set(scenes)) == len(scenes)
     orders = [m["order"] for m in manifest]
     assert orders == sorted(orders) and orders[0] == 1       # ordered for Etsy
     for m in manifest:
