@@ -278,6 +278,51 @@
     </div>
   </div>
 
+  <!-- AI COST (CFO) -->
+  <div x-show="tab==='aicost'">
+    <div class="panel" x-show="cfo" style="margin-bottom:12px">
+      <h2>AI Cost — today (<span x-text="cfo?.dashboard?.date"></span>)</h2>
+      <div class="grid">
+        <div class="stat"><div class="k">AI Spend</div><div class="v" x-text="'$'+(cfo?.dashboard?.ai_spend_today??0).toFixed(2)"></div></div>
+        <div class="stat"><div class="k">Cost / Product</div>
+          <div class="v" x-text="cfo?.dashboard?.cost_per_product!=null?('$'+cfo.dashboard.cost_per_product.toFixed(2)):'—'"></div>
+          <div class="note"><span class="pill" :class="{excellent:'ok',good:'ok',acceptable:'needs_review',investigate:'needs_review',critical:'failed'}[cfo?.dashboard?.cost_per_product_rating]||'grey'" x-text="cfo?.dashboard?.cost_per_product_rating"></span></div></div>
+        <div class="stat"><div class="k">Cost / Published</div><div class="v sm" x-text="cfo?.dashboard?.cost_per_published!=null?('$'+cfo.dashboard.cost_per_published.toFixed(2)):'—'"></div></div>
+        <div class="stat"><div class="k">Cost / Sale</div><div class="v sm" x-text="cfo?.dashboard?.cost_per_sale!=null?('$'+cfo.dashboard.cost_per_sale.toFixed(2)):'—'"></div></div>
+      </div>
+      <h2 style="margin-top:14px">Breakdown</h2>
+      <div class="grid">
+        <template x-for="(v,k) in (cfo?.dashboard?.breakdown||{})" :key="k">
+          <div class="stat"><div class="k" x-text="k"></div><div class="v sm" x-text="'$'+Number(v).toFixed(2)"></div></div>
+        </template>
+      </div>
+    </div>
+    <div class="panel" x-show="cfo?.optimisation" style="margin-bottom:12px">
+      <h2>CFO — optimisation report</h2>
+      <div class="grid">
+        <div class="stat"><div class="k">Largest cost</div><div class="v sm" x-text="cfo?.optimisation?.largest_cost"></div></div>
+        <div class="stat"><div class="k">Avg / product</div><div class="v sm" x-text="cfo?.optimisation?.average_product!=null?('$'+cfo.optimisation.average_product.toFixed(2)):'—'"></div></div>
+        <div class="stat"><div class="k">Est. saving</div><div class="v sm" x-text="'$'+(cfo?.optimisation?.estimated_saving_usd??0).toFixed(2)"></div></div>
+      </div>
+      <template x-for="(r,i) in (cfo?.optimisation?.recommendations||[])" :key="i">
+        <div class="note" style="margin-top:6px">• <span x-text="r.message"></span><span x-show="r.potential_saving_pct" x-text="' (save ~'+r.potential_saving_pct+'%)'"></span></div>
+      </template>
+      <div x-show="!(cfo?.optimisation?.recommendations||[]).length" class="muted">No AI spend recorded yet today.</div>
+    </div>
+    <div class="panel" x-show="cfo?.roai?.length">
+      <h2>Return on AI Investment (ROAI)</h2>
+      <div style="overflow-x:auto">
+      <table><thead><tr><th>Product</th><th>Revenue</th><th>AI $</th><th>Marketing</th><th>Net profit</th><th>ROAI</th></tr></thead><tbody>
+        <template x-for="p in (cfo?.roai||[])" :key="p.sku">
+          <tr><td x-text="p.name"></td><td x-text="money(p.revenue)"></td><td x-text="'$'+p.ai_cost.toFixed(2)"></td>
+            <td x-text="money(p.marketing_cost)"></td><td x-text="money(p.net_profit)"></td>
+            <td><span class="pill" :class="{excellent:'ok',good:'ok',acceptable:'needs_review',marginal:'needs_review',loss:'failed'}[p.roai_rating]||'grey'" x-text="p.roai_rating.replace('_',' ')"></span></td></tr>
+        </template>
+      </tbody></table>
+      </div>
+    </div>
+  </div>
+
   <!-- PRODUCTS -->
   <div x-show="tab==='products'">
     <div class="panel" x-show="productHealth" style="margin-bottom:12px">
@@ -841,6 +886,7 @@ function ops(){
     key: localStorage.getItem('onassis_ops_key') || '',
     tab:'overview',
     tabs:[{id:'overview',label:'Overview'},{id:'business',label:'Business'},{id:'commercial',label:'Commercial'},
+          {id:'aicost',label:'AI Cost'},
           {id:'products',label:'Products'},{id:'marketing',label:'Marketing'},
           {id:'approvals',label:'Approvals'},{id:'integrations',label:'Integrations'},
           {id:'system',label:'System'}],
@@ -851,7 +897,7 @@ function ops(){
     environment:null, deployRun:null, preview:null, validation:null, _deployPoll:null,
     productDetail:null, channelTests:null, testingChannels:false, regenerating:null,
     integrations:null, integrationDetail:null, integrationEdits:{}, integrationBusy:false,
-    commercial:null, commercialProducts:null, cmo:null,
+    commercial:null, commercialProducts:null, cmo:null, cfo:null,
     productSearch:'', productFilter:'all', productHealth:null, toast:'',
     productFilters:[['all','All'],['awaiting_approval','Awaiting Approval'],['ready_to_publish','Ready to Publish'],['draft_created','Draft Created'],['live','Live'],['failed','Failed'],['etsy','On Etsy'],['shopify','On Shopify'],['both','Etsy + Shopify'],['archived','Archived']],
     get running(){ return this.run?.status==='running'; },
@@ -912,6 +958,7 @@ function ops(){
       if(t==='business') this.business=await this.get('/operations/api/business');
       else if(t==='commercial'){ this.commercial=await this.get('/operations/api/commercial');
         this.commercialProducts=(await this.get('/operations/api/commercial/products')).products; }
+      else if(t==='aicost'){ this.cfo=await this.get('/operations/api/cfo'); }
       else if(t==='products'){ const d=await this.get('/operations/api/products?filter='+this.productFilter);
         this.products=d.products; this.productSummary=d.summary;
         this.productHealth=await this.get('/operations/api/production-health'); }

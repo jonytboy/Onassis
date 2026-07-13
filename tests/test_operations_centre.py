@@ -300,6 +300,19 @@ def test_commercial_dashboard_endpoints(client):
     assert isinstance(client.get("/operations/api/commercial/products").json()["products"], list)
 
 
+def test_cfo_ai_cost_endpoint(client):
+    db = client.app.state.db
+    from onassis.ai_accounting import cost_context, record_image, set_recorder
+    set_recorder(db)
+    with cost_context(stage="Generate Master Artwork", product_id="1-mug", campaign_id=1):
+        record_image(provider="openai", model="gpt-image-1", quality="high", images=2)
+    c = client.get("/operations/api/cfo").json()
+    assert "dashboard" in c and "roai" in c and "optimisation" in c
+    assert c["dashboard"]["ai_spend_today"] > 0
+    for k in ("cost_per_product", "cost_per_published", "cost_per_sale", "breakdown"):
+        assert k in c["dashboard"]
+
+
 def test_production_health_dashboard(client):
     db = client.app.state.db
     _seed_launched_product(db, key="mug")                 # awaiting
@@ -558,7 +571,7 @@ def test_environment_awareness_endpoint(client, tmp_path):
     for k in ("environment", "branch", "commit", "git_status",
               "database_version", "application_version"):
         assert k in e
-    assert e["database_version"] == 45
+    assert e["database_version"] == 46
 
 
 def test_download_fetches_only(client, tmp_path):

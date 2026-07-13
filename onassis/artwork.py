@@ -412,14 +412,32 @@ class ArtworkStudio:
         backend failure (an exception) can fall back; the exact exception is
         always surfaced, and the returned provenance records ``fallback_used`` so
         the placeholder can never be published (Mockup Quality Gate, P1)."""
+        import time as _time
+
+        from onassis.ai_accounting import record_image
+
         meta = {"provider": self._backend.name,
                 "model": getattr(self._backend, "model", "") or "",
                 "fallback_used": False, "generation_ok": True, "generation_error": ""}
+        started = _time.monotonic()
         try:
-            return self._backend.generate(spec), meta
+            data = self._backend.generate(spec)
+            # Cost accounting (Sprint 42.2) — the local dev renderer is free.
+            if self._backend.name != "local":
+                record_image(provider=self._backend.name,
+                             model=getattr(self._backend, "model", "") or "",
+                             quality=getattr(self._backend, "quality", "") or "",
+                             images=1, duration_ms=int((_time.monotonic() - started) * 1000),
+                             ok=True)
+            return data, meta
         except Exception as exc:
             if self._backend.name == "local":
                 raise  # the dev renderer failing is a real bug — don't mask it
+            record_image(provider=self._backend.name,
+                         model=getattr(self._backend, "model", "") or "",
+                         quality=getattr(self._backend, "quality", "") or "", images=0,
+                         duration_ms=int((_time.monotonic() - started) * 1000),
+                         ok=False, detail=str(exc)[:200])
             # Surface the EXACT exception (full traceback) — never silent.
             log.error("Image backend '%s' FAILED for %s/%s: %s",
                       self._backend.name, spec.kind, spec.scene, exc, exc_info=True)

@@ -72,6 +72,11 @@ class LLMClient:
         Raises:
             LLMError: on API failure or if no JSON text comes back.
         """
+        import time as _time
+
+        from onassis.ai_accounting import record_llm
+
+        started = _time.monotonic()
         try:
             with self._client.messages.stream(
                 model=self.model,
@@ -86,7 +91,18 @@ class LLMClient:
             ) as stream:
                 message = stream.get_final_message()
         except anthropic.APIError as exc:  # network, auth, rate limit, etc.
+            record_llm(provider="anthropic", model=self.model, input_tokens=0,
+                       output_tokens=0,
+                       duration_ms=int((_time.monotonic() - started) * 1000),
+                       ok=False, detail=str(exc)[:200])
             raise LLMError(f"Anthropic API call failed: {exc}") from exc
+
+        # AI cost accounting (Sprint 42.2) — cost every completion.
+        usage = getattr(message, "usage", None)
+        record_llm(provider="anthropic", model=self.model,
+                   input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
+                   output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+                   duration_ms=int((_time.monotonic() - started) * 1000), ok=True)
 
         # With output_config.format the model returns its JSON in a text block.
         text = next((b.text for b in message.content if b.type == "text"), None)

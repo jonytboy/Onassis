@@ -129,6 +129,9 @@ class DailyCycle:
         self.campaigns = self.orchestrator.campaigns
         self.brain = self.orchestrator.brain
         self.compliance = self.orchestrator.compliance
+        # AI cost accounting (Sprint 42.2): every LLM/image call records its cost.
+        from onassis.ai_accounting import set_recorder
+        set_recorder(db, config)
 
     # --- Entry point ------------------------------------------------
 
@@ -195,7 +198,17 @@ class DailyCycle:
             "funnel": ctx.get("funnel"),
             "dashboard": ctx.get("dashboard"),
             "fulfilment": ctx.get("fulfilment"),
+            # CFO end-of-run AI-spend optimisation report (Sprint 42.2, Obj 12).
+            "ai_optimisation": self._ai_optimisation_report(),
         }
+
+    def _ai_optimisation_report(self) -> dict[str, Any]:
+        try:
+            from onassis.cfo import CFOManager
+            return CFOManager(self.config, self.db).optimisation_report()
+        except Exception as exc:  # never let reporting break the cycle result
+            log.warning("CFO optimisation report failed: %s", exc)
+            return {}
 
     @staticmethod
     def _go_live_result(ctx: dict[str, Any]) -> dict[str, Any]:
@@ -210,11 +223,15 @@ class DailyCycle:
         self, stages: list[dict[str, Any]], name: str,
         fn: Callable[[dict[str, Any]], dict[str, Any]], ctx: dict[str, Any],
     ) -> None:
+        from onassis.ai_accounting import cost_context
+
         t0 = time.monotonic()
         log.info("[daily] %s: start", name)
         status, detail, error = "ok", None, None
         try:
-            result = fn(ctx) or {}
+            # Tag every AI call in this stage with the stage + current campaign.
+            with cost_context(stage=name, campaign_id=ctx.get("campaign_id")):
+                result = fn(ctx) or {}
             status = result.get("status", "ok")
             detail = result.get("detail")
         except Exception as exc:  # continue safely past a failed stage
@@ -487,7 +504,9 @@ class DailyCycle:
                                    "status": "generating"}
             log.info("[stream] Product %d/%d (%s): generating…", i, len(specs), name)
             try:
-                pkg = self.listing_factory.export_product(cid, spec, design_package=design_package)
+                from onassis.ai_accounting import cost_context
+                with cost_context(product_id=f"{cid}-{key}", campaign_id=cid):
+                    pkg = self.listing_factory.export_product(cid, spec, design_package=design_package)
                 if pkg.get("status") != "ready":
                     rec.update(status="failed", stage="listing", reason=pkg.get("reason"))
                     log.warning("[stream] Product %s FAILED at listing: %s", name, pkg.get("reason"))

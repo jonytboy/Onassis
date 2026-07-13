@@ -192,6 +192,8 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.commercial = CommercialIntelligence(config, db)
     app.state.cmo = daily.cmo
     app.state.marketing_learning = daily.marketing_learning
+    from onassis.cfo import CFOManager
+    app.state.cfo = CFOManager(config, db)
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""

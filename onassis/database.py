@@ -31,7 +31,7 @@ log = get_logger(__name__)
 # Bump whenever the schema changes (new table / column). Surfaced in the
 # Operations Centre "Environment" panel so an operator can see at a glance
 # whether the running database matches the code they expect.
-SCHEMA_VERSION = 45
+SCHEMA_VERSION = 46
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS briefs (
@@ -159,6 +159,30 @@ CREATE TABLE IF NOT EXISTS ledger (
 CREATE INDEX IF NOT EXISTS idx_ledger_kind ON ledger(kind);
 CREATE INDEX IF NOT EXISTS idx_ledger_category ON ledger(category);
 CREATE INDEX IF NOT EXISTS idx_ledger_date ON ledger(entry_date);
+
+-- Per-request AI cost accounting (Sprint 42.2). One row per AI API call so no
+-- AI cost is invisible: LLM completions and image generations alike.
+CREATE TABLE IF NOT EXISTS ai_requests (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at    TEXT    NOT NULL,
+    request_date  TEXT    NOT NULL,          -- YYYY-MM-DD, for daily rollups
+    provider      TEXT    NOT NULL,          -- anthropic | openai | ...
+    model         TEXT    NOT NULL,
+    kind          TEXT    NOT NULL,          -- llm | image
+    stage         TEXT,                       -- workflow stage (research, artwork, ...)
+    product_id    TEXT,                       -- sku / product reference (when known)
+    campaign_id   INTEGER,
+    input_tokens  INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    images        INTEGER NOT NULL DEFAULT 0,
+    duration_ms   INTEGER NOT NULL DEFAULT 0,
+    cost_usd      REAL    NOT NULL DEFAULT 0,
+    ok            INTEGER NOT NULL DEFAULT 1,
+    detail        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ai_requests_date ON ai_requests(request_date);
+CREATE INDEX IF NOT EXISTS idx_ai_requests_product ON ai_requests(product_id);
+CREATE INDEX IF NOT EXISTS idx_ai_requests_stage ON ai_requests(stage);
 
 CREATE TABLE IF NOT EXISTS products (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1233,6 +1257,78 @@ class Database:
         return self._sum(
             "kind = 'cost' AND category = 'ai' AND entry_date = ?", (entry_date,)
         )
+
+    # --- AI cost accounting (Sprint 42.2) ---------------------------
+
+    def insert_ai_request(self, req: dict[str, Any]) -> int:
+        """Record one AI API call (LLM completion or image generation)."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO ai_requests
+                    (created_at, request_date, provider, model, kind, stage,
+                     product_id, campaign_id, input_tokens, output_tokens, images,
+                     duration_ms, cost_usd, ok, detail)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (_utcnow(), req.get("request_date") or _utcnow()[:10],
+                 req.get("provider", ""), req.get("model", ""), req.get("kind", "llm"),
+                 req.get("stage"), req.get("product_id"), req.get("campaign_id"),
+                 int(req.get("input_tokens", 0) or 0), int(req.get("output_tokens", 0) or 0),
+                 int(req.get("images", 0) or 0), int(req.get("duration_ms", 0) or 0),
+                 float(req.get("cost_usd", 0.0) or 0.0),
+                 1 if req.get("ok", True) else 0, req.get("detail")))
+            return int(cur.lastrowid)
+
+    def ai_spend_on(self, request_date: str) -> float:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(cost_usd),0) FROM ai_requests WHERE request_date = ?",
+                (request_date,)).fetchone()
+        return float(row[0])
+
+    def ai_cost_by_stage(self, request_date: str | None = None) -> list[dict[str, Any]]:
+        sql = ("SELECT stage, COALESCE(SUM(cost_usd),0) AS cost, COUNT(*) AS n "
+               "FROM ai_requests")
+        params: tuple = ()
+        if request_date:
+            sql += " WHERE request_date = ?"
+            params = (request_date,)
+        sql += " GROUP BY stage ORDER BY cost DESC"
+        with self._connect() as conn:
+            return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+    def ai_cost_by_product(self, product_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT stage, model, kind, cost_usd, input_tokens, output_tokens, "
+                "images, created_at FROM ai_requests WHERE product_id = ? "
+                "ORDER BY id", (product_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def ai_cost_per_product(self, request_date: str | None = None) -> list[dict[str, Any]]:
+        sql = ("SELECT product_id, COALESCE(SUM(cost_usd),0) AS cost, COUNT(*) AS calls "
+               "FROM ai_requests WHERE product_id IS NOT NULL")
+        params: tuple = ()
+        if request_date:
+            sql += " AND request_date = ?"
+            params = (request_date,)
+        sql += " GROUP BY product_id ORDER BY cost DESC"
+        with self._connect() as conn:
+            return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+    def ai_spend_trend(self, days: int = 30) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT request_date, COALESCE(SUM(cost_usd),0) AS cost, COUNT(*) AS calls "
+                "FROM ai_requests GROUP BY request_date ORDER BY request_date DESC LIMIT ?",
+                (int(days),)).fetchall()
+        return [dict(r) for r in rows][::-1]
+
+    def ai_spend_total(self) -> float:
+        with self._connect() as conn:
+            row = conn.execute("SELECT COALESCE(SUM(cost_usd),0) FROM ai_requests").fetchone()
+        return float(row[0])
 
     def net_by_campaign(self) -> list[dict[str, Any]]:
         """Net profit (revenue - cost) grouped by campaign_id."""

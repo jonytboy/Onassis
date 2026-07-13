@@ -866,6 +866,20 @@ def build_operations_router(get_state) -> APIRouter:
         _require_operator(request)
         return {"products": request.app.state.commercial.product_analytics()}
 
+    # --- CFO: AI cost dashboard, ROAI, optimisation (Sprint 42.2) ---
+    @router.get("/api/cfo")
+    def api_cfo(request: Request) -> Any:
+        _require_operator(request)
+        cfo = request.app.state.cfo
+        return {"dashboard": cfo.dashboard(), "roai": cfo.roai(),
+                "optimisation": cfo.optimisation_report()}
+
+    @router.get("/api/cfo/product/{sku}")
+    def api_cfo_product(request: Request, sku: str) -> Any:
+        _require_operator(request)
+        return {"sku": sku,
+                "requests": request.app.state.db.ai_cost_by_product(sku)}
+
     # --- Production health dashboard (Sprint 41.2, Obj 13) ---
     @router.get("/api/production-health")
     def api_production_health(request: Request) -> Any:
@@ -1036,8 +1050,11 @@ def _ensure_listing_package(state: Any, campaign_id: int, product_key: str) -> d
         except Exception:  # design read is best-effort; the factory has fallbacks
             design_package = None
     try:
-        pkg = daily.listing_factory.export_product(campaign_id, spec,
-                                                   design_package=design_package)
+        from onassis.ai_accounting import cost_context
+        with cost_context(product_id=f"{campaign_id}-{product_key}",
+                          campaign_id=campaign_id, stage="Publish Products"):
+            pkg = daily.listing_factory.export_product(campaign_id, spec,
+                                                       design_package=design_package)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "reason": f"Listing build failed: {exc}"}
     if pkg.get("status") != "ready":
