@@ -587,6 +587,7 @@ copyrighted characters, no third-party logos.
              "prompt": m.get("prompt", ""),
              "fallback_used": bool(m.get("fallback_used")),
              "generation_ok": bool(m.get("generation_ok", True)),
+             "generation_error": m.get("generation_error", ""),
              "quality_pass": bool(m.get("quality_pass",
                                         m["review"].get("accepted", False)))}
             for m in gallery

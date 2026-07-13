@@ -79,12 +79,17 @@ def evaluate_listing(listing: dict[str, Any], *, allow_local: bool = True) -> di
         # Legacy / foreign listing — nothing to judge, don't block.
         return {"ok": True, "passing": len(passing), "total": len(images),
                 "fallback": 0, "dev_rendered": 0, "reason": "", "message": ""}
+    # The real upstream error (e.g. an OpenAI billing/limit/auth message), when
+    # one was captured — so the operator sees the true cause, never a swallowed one.
+    gen_error = next((str(i.get("generation_error")) for i in images
+                      if i.get("generation_error")), "")
     ok = len(passing) >= 1
     if ok:
         reason = ""
     elif fallback or failed_gen:
-        reason = ("Mockup generation failed — placeholder images were produced "
-                  "instead of real product mockups.")
+        reason = ("Image generation failed" + (f": {gen_error}" if gen_error else "")
+                  + " — placeholder images were produced instead of real product "
+                    "mockups.")
     elif not allow_local and dev_rendered:
         reason = ("Mockups were produced by the DEV placeholder renderer, not a "
                   "real image model — configure the production image backend "

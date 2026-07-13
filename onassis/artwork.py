@@ -509,6 +509,7 @@ class ArtworkStudio:
                              "prompt": qc.get("prompt", spec.prompt),
                              "fallback_used": bool(qc.get("fallback_used")),
                              "generation_ok": bool(qc.get("generation_ok", True)),
+                             "generation_error": qc.get("generation_error", ""),
                              "quality_pass": bool(qc.get("accepted"))})
         log.info("Built %d commercial image(s) for %s at %s.",
                  len(manifest), product_key, images_dir)
