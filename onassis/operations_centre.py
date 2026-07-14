@@ -880,6 +880,19 @@ def build_operations_router(get_state) -> APIRouter:
         return {"sku": sku,
                 "requests": request.app.state.db.ai_cost_by_product(sku)}
 
+    # --- Catalogue & Portfolio (Sprint 44) ---
+    @router.get("/api/catalogue")
+    def api_catalogue(request: Request) -> Any:
+        _require_operator(request)
+        cm = request.app.state.catalogue
+        return {**cm.catalogue_dashboard(),
+                "retirement_candidates": cm.retirement_candidates()}
+
+    @router.get("/api/collections")
+    def api_collections(request: Request) -> Any:
+        _require_operator(request)
+        return {"collections": request.app.state.catalogue.collection_dashboard()}
+
     # --- Marketing distribution via Make.com (Sprint 43) ---
     @router.get("/api/distribution")
     def api_distribution(request: Request) -> Any:

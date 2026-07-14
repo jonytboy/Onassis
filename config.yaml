@@ -10,7 +10,7 @@ app:
   name: ONASSIS
   # Sprint-based platform version — more operationally meaningful than a semantic
   # version while the platform is moving fast. Bump once per sprint.
-  version: "43.0"
+  version: "44.0"
   environment: development          # overridden by ONASSIS_ENV
 
 logging:
@@ -253,6 +253,24 @@ portfolio:
 #   print files from. The API serves the exports dir directly at /exports, so
 #   this is simply https://<your-server>/exports (swap for a CDN/bucket later
 #   without changing the connector).
+# --- Catalogue & Portfolio (Sprint 44) -------------------------------
+# ONASSIS builds a balanced premium catalogue first (Build mode), then switches
+# to optimisation once every category reaches target. Targets are configurable.
+catalogue:
+  retirement_days: 45            # no views/favourites/sales past this → archive candidate
+  targets:
+    Mugs: 30
+    T-Shirts: 25
+    Hoodies: 15
+    Tea Towels: 15
+    Aprons: 10
+    Olive Boards: 15
+    Cushions: 15
+    Posters: 20
+    Tote Bags: 15
+    Candles: 10
+    Kitchen Accessories: 20
+
 # --- Make.com distribution (Sprint 43) -------------------------------
 # The single marketing distribution engine: ONASSIS posts one complete campaign
 # package per product to this webhook; Make fans it out to every platform.

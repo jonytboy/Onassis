@@ -278,6 +278,52 @@
     </div>
   </div>
 
+  <!-- CATALOGUE (Portfolio Manager) -->
+  <div x-show="tab==='catalogue'">
+    <div class="panel" x-show="catalogue" style="margin-bottom:12px">
+      <h2>Catalogue — <span class="pill" :class="catalogue?.mode==='build'?'needs_review':'ok'" x-text="catalogue?.mode==='build'?'Build Mode':'Optimisation Mode'"></span></h2>
+      <div class="grid">
+        <div class="stat"><div class="k">Overall health</div><div class="v" x-text="(catalogue?.health?.overall??0)+'%'"></div></div>
+        <div class="stat"><div class="k">Category balance</div><div class="v sm" x-text="(catalogue?.health?.category_balance??0)+'%'"></div></div>
+        <div class="stat"><div class="k">Diversity</div><div class="v sm" x-text="(catalogue?.health?.diversity??0)+'%'"></div></div>
+        <div class="stat"><div class="k">Coverage</div><div class="v sm" x-text="(catalogue?.health?.coverage??0)+'%'"></div></div>
+        <div class="stat"><div class="k">Collection completeness</div><div class="v sm" x-text="(catalogue?.health?.collection_completeness??0)+'%'"></div></div>
+        <div class="stat"><div class="k">Total</div><div class="v sm" x-text="(catalogue?.total_current??0)+' / '+(catalogue?.total_target??0)"></div></div>
+      </div>
+      <div class="note" style="margin-top:8px" x-show="(catalogue?.prioritise||[]).length">Prioritise: <b x-text="(catalogue?.prioritise||[]).join(', ')"></b></div>
+      <div class="note" x-show="(catalogue?.suspend||[]).length">Suspend (at target): <span x-text="(catalogue?.suspend||[]).join(', ')"></span></div>
+    </div>
+    <div class="panel" x-show="catalogue" style="margin-bottom:12px">
+      <h2>Category targets</h2>
+      <div style="overflow-x:auto">
+      <table><thead><tr><th>Category</th><th>Target</th><th>Current</th><th>Remaining</th><th>Status</th></tr></thead><tbody>
+        <template x-for="c in (catalogue?.categories||[])" :key="c.category">
+          <tr><td x-text="c.category"></td><td x-text="c.target"></td><td x-text="c.current"></td><td x-text="c.remaining"></td>
+            <td><span class="pill" :class="{complete:'ok',building:'needs_review',priority:'needs_review',critical:'failed'}[c.status]||'grey'" x-text="c.status"></span></td></tr>
+        </template>
+      </tbody></table>
+      </div>
+    </div>
+    <div class="panel" x-show="(collections||[]).length" style="margin-bottom:12px">
+      <h2>Collections</h2>
+      <div style="overflow-x:auto">
+      <table><thead><tr><th>Collection</th><th>Products</th><th>Published</th><th>Categories</th><th>Sales</th><th>Revenue</th><th>Status</th></tr></thead><tbody>
+        <template x-for="c in (collections||[])" :key="c.campaign_id">
+          <tr><td x-text="c.name"></td><td x-text="c.products"></td><td x-text="c.published"></td><td x-text="c.category_count"></td>
+            <td x-text="c.units"></td><td x-text="money(c.revenue)"></td>
+            <td><span class="pill" :class="{selling:'ok',published:'needs_review',building:'grey'}[c.status]||'grey'" x-text="c.status"></span></td></tr>
+        </template>
+      </tbody></table>
+      </div>
+    </div>
+    <div class="panel" x-show="(catalogue?.retirement_candidates||[]).length">
+      <h2>Retirement candidates <span class="note">(no views/favourites/sales — archive, never delete)</span></h2>
+      <template x-for="r in (catalogue?.retirement_candidates||[])" :key="r.sku">
+        <div class="note">• <span x-text="r.name"></span> · <span x-text="r.category"></span> · <span x-text="r.age_days+'d old'"></span></div>
+      </template>
+    </div>
+  </div>
+
   <!-- AI COST (CFO) -->
   <div x-show="tab==='aicost'">
     <div class="panel" x-show="cfo" style="margin-bottom:12px">
@@ -911,7 +957,7 @@ function ops(){
     key: localStorage.getItem('onassis_ops_key') || '',
     tab:'overview',
     tabs:[{id:'overview',label:'Overview'},{id:'business',label:'Business'},{id:'commercial',label:'Commercial'},
-          {id:'aicost',label:'AI Cost'},
+          {id:'catalogue',label:'Catalogue'},{id:'aicost',label:'AI Cost'},
           {id:'products',label:'Products'},{id:'marketing',label:'Marketing'},
           {id:'approvals',label:'Approvals'},{id:'integrations',label:'Integrations'},
           {id:'system',label:'System'}],
@@ -923,6 +969,7 @@ function ops(){
     productDetail:null, channelTests:null, testingChannels:false, regenerating:null,
     integrations:null, integrationDetail:null, integrationEdits:{}, integrationBusy:false,
     commercial:null, commercialProducts:null, cmo:null, cfo:null, distribution:null,
+    catalogue:null, collections:null,
     productSearch:'', productFilter:'all', productHealth:null, toast:'',
     productFilters:[['all','All'],['awaiting_approval','Awaiting Approval'],['ready_to_publish','Ready to Publish'],['draft_created','Draft Created'],['live','Live'],['failed','Failed'],['etsy','On Etsy'],['shopify','On Shopify'],['both','Etsy + Shopify'],['archived','Archived']],
     get running(){ return this.run?.status==='running'; },
@@ -984,6 +1031,8 @@ function ops(){
       else if(t==='commercial'){ this.commercial=await this.get('/operations/api/commercial');
         this.commercialProducts=(await this.get('/operations/api/commercial/products')).products; }
       else if(t==='aicost'){ this.cfo=await this.get('/operations/api/cfo'); }
+      else if(t==='catalogue'){ this.catalogue=await this.get('/operations/api/catalogue');
+        this.collections=(await this.get('/operations/api/collections')).collections; }
       else if(t==='products'){ const d=await this.get('/operations/api/products?filter='+this.productFilter);
         this.products=d.products; this.productSummary=d.summary;
         this.productHealth=await this.get('/operations/api/production-health'); }

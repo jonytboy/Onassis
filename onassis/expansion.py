@@ -166,6 +166,22 @@ class RevenueExpansionEngine:
 
     # --- Launch plan (CEO decides) ----------------------------------
 
+    def _catalogue_reorder(self, ceo_ok: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Move products in saturated (at-target) categories to the back so gaps
+        fill first. Stable within each group; no-op when nothing is saturated."""
+        try:
+            from onassis.catalogue import CatalogueManager, category_of
+            saturated = CatalogueManager(self.config, self.db).saturated_categories()
+        except Exception:  # never let catalogue analysis break expansion
+            return ceo_ok
+        if not saturated:
+            return ceo_ok
+        fresh = [s for s in ceo_ok
+                 if category_of(s["product_key"], s.get("product_name")) not in saturated]
+        full = [s for s in ceo_ok
+                if category_of(s["product_key"], s.get("product_name")) in saturated]
+        return fresh + full
+
     def plan(
         self, campaign: dict[str, Any] | int,
         opportunity: dict[str, Any] | None = None, *, store: bool = True,
@@ -195,6 +211,13 @@ class RevenueExpansionEngine:
             s["_ceo_reasoning"] = decision["reasoning"]
 
         ceo_ok = [s for s in scored if s["ceo_verdict"] == APPROVE]  # composite desc
+        # Catalogue gap selection (Sprint 44): in Build mode, push products whose
+        # category is already at target to the back of the pool so ONASSIS stops
+        # over-producing full categories (mugs/posters/totes) and fills the gaps.
+        # No-op when no category is saturated (a fresh catalogue), so early-stage
+        # selection is unchanged.
+        if self.cfg.get("catalogue_gap_selection", True):
+            ceo_ok = self._catalogue_reorder(ceo_ok)
         strict = [s for s in ceo_ok if s["composite_score"] >= self.threshold]
         if len(strict) >= self.min_variants:
             chosen, mode = strict[: self.max_variants], "threshold"

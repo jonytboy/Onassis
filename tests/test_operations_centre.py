@@ -300,6 +300,18 @@ def test_commercial_dashboard_endpoints(client):
     assert isinstance(client.get("/operations/api/commercial/products").json()["products"], list)
 
 
+def test_catalogue_and_collections_endpoints(client):
+    db = client.app.state.db
+    _seed_launched_product(db, key="ceramic_mug")
+    _seed_launched_product(db, key="premium_tshirt")
+    cat = client.get("/operations/api/catalogue").json()
+    assert cat["mode"] == "build"
+    assert any(c["category"] == "Mugs" for c in cat["categories"])
+    assert "health" in cat and "retirement_candidates" in cat
+    cols = client.get("/operations/api/collections").json()["collections"]
+    assert isinstance(cols, list) and cols and cols[0]["products"] >= 1
+
+
 def test_distribution_endpoints(client):
     db = client.app.state.db
     cid, sku = _seed_launched_product(db, key="mug")
