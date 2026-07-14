@@ -326,6 +326,13 @@
 
   <!-- AI COST (CFO) -->
   <div x-show="tab==='aicost'">
+    <div class="panel" x-show="cfo && Object.keys(cfo?.dashboard?.provider_alerts||{}).length" style="margin-bottom:12px;border:1px solid #ff8a8a">
+      <h2 style="color:#ff8a8a">⚠ AI provider billing alert</h2>
+      <template x-for="(a,p) in (cfo?.dashboard?.provider_alerts||{})" :key="p">
+        <div class="note" style="color:#ff8a8a">• <b x-text="p"></b>: <span x-text="a.message"></span></div>
+      </template>
+      <div class="note" style="margin-top:4px">The business cannot generate content/images until this is resolved. Anthropic → console.anthropic.com · OpenAI → platform.openai.com.</div>
+    </div>
     <div class="panel" x-show="cfo" style="margin-bottom:12px">
       <h2>AI Cost — today (<span x-text="cfo?.dashboard?.date"></span>)</h2>
       <div class="grid">

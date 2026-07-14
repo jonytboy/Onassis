@@ -71,9 +71,12 @@ class CFOManager:
         cost_per_sale = (round(db.ai_spend_total() / sales, 4) if sales else None)
 
         breakdown = self._breakdown(date)
+        from onassis.ai_accounting import provider_alert
+        alerts = {p: provider_alert(db, p) for p in ("anthropic", "openai")}
         return {
             "date": date,
             "ai_spend_today": spend_today,
+            "provider_alerts": {p: a for p, a in alerts.items() if not a["ok"]},
             "products_costed": products_costed,
             "cost_per_product": cost_per_product,
             "cost_per_product_rating": rate_cost(cost_per_product),

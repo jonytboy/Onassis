@@ -44,6 +44,19 @@ def test_status_board_has_all_traffic_lights(client):
     assert "git_commit" in s and "business_mode" in s
 
 
+def test_status_board_flags_ai_billing_failure(client):
+    from onassis.ai_accounting import cost_context, record_llm, set_recorder
+    db = client.app.state.db
+    client.app.state.config.anthropic_api_key = "sk-test"     # configured
+    set_recorder(db)
+    with cost_context(stage="x"):
+        record_llm(provider="anthropic", model="claude-opus-4-8", input_tokens=0,
+                   output_tokens=0, duration_ms=1, ok=False,
+                   detail="Your credit balance is too low to access the Anthropic API")
+    light = client.get("/operations/api/status").json()["lights"]["anthropic"]
+    assert light["status"] == "red" and "credit" in light["detail"].lower()
+
+
 def test_uncredentialled_integrations_are_red_or_grey(client):
     lights = client.get("/operations/api/status").json()["lights"]
     # No Pinterest/Gelato creds in the test config -> red; FB/IG not built -> grey.

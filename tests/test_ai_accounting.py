@@ -38,6 +38,32 @@ def test_failed_call_is_recorded_at_zero_cost(db):
     assert rows[0]["cost_usd"] == 0.0
 
 
+def test_classify_billing_and_credit_errors():
+    from onassis.ai_accounting import classify_ai_error
+    assert classify_ai_error("Billing hard limit has been reached")["kind"] == "billing"
+    assert classify_ai_error("Your credit balance is too low")["kind"] == "credit"
+    assert classify_ai_error("HTTP 401 invalid api key")["kind"] == "auth"
+    assert classify_ai_error("429 rate limit exceeded")["kind"] == "rate_limit"
+    assert classify_ai_error("")["kind"] == "ok"
+
+
+def test_provider_alert_flags_credit_exhaustion(db):
+    from onassis.ai_accounting import provider_alert
+    # A healthy recent call → ok.
+    with cost_context(stage="x"):
+        record_llm(provider="anthropic", model="claude-opus-4-8",
+                   input_tokens=10, output_tokens=10, duration_ms=1)
+    assert provider_alert(db, "anthropic")["ok"] is True
+    # A subsequent failed call with a credit error → not ok, actionable message.
+    with cost_context(stage="x"):
+        record_llm(provider="anthropic", model="claude-opus-4-8", input_tokens=0,
+                   output_tokens=0, duration_ms=1, ok=False,
+                   detail="Your credit balance is too low to access the Anthropic API")
+    alert = provider_alert(db, "anthropic")
+    assert alert["ok"] is False and alert["kind"] == "credit"
+    assert "credit" in alert["message"].lower()
+
+
 def test_cost_targets_rating():
     assert rate_cost(0.50) == "excellent"
     assert rate_cost(1.00) == "good"

@@ -1351,6 +1351,19 @@ class Database:
             row = conn.execute("SELECT COALESCE(SUM(cost_usd),0) FROM ai_requests").fetchone()
         return float(row[0])
 
+    def latest_ai_request(self, provider: str | None = None) -> dict[str, Any] | None:
+        """The most recent AI request (optionally for one provider) — used to
+        surface a provider's live billing/credit health."""
+        sql = "SELECT * FROM ai_requests"
+        params: tuple = ()
+        if provider:
+            sql += " WHERE provider = ?"
+            params = (provider,)
+        sql += " ORDER BY id DESC LIMIT 1"
+        with self._connect() as conn:
+            row = conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
+
     # --- Marketing distribution campaigns (Sprint 43) ----------------
 
     def insert_distribution_campaign(self, c: dict[str, Any]) -> int:

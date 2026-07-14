@@ -169,3 +169,47 @@ def record_llm(**kw: Any) -> float:
 
 def record_image(**kw: Any) -> float:
     return _recorder.record_image(**kw) if _recorder is not None else 0.0
+
+
+# --- Provider billing/credit health (Sprint 44.1) ---------------------
+
+def classify_ai_error(detail: str | None) -> dict[str, str]:
+    """Map a raw AI error message to an operator-facing billing/credit alert.
+    Returns ``{kind, message}`` — ``kind`` is 'ok' when nothing actionable."""
+    text = (detail or "").lower()
+    if not text:
+        return {"kind": "ok", "message": ""}
+    if "billing_hard_limit" in text or "billing hard limit" in text or "billing limit" in text:
+        return {"kind": "billing", "message": "Billing hard limit reached — raise the "
+                "monthly limit / add funds."}
+    if "credit balance is too low" in text or "credit balance" in text or "insufficient" in text:
+        return {"kind": "credit", "message": "Credit balance too low — purchase credits."}
+    if "quota" in text or "exceeded" in text and "rate" not in text:
+        return {"kind": "quota", "message": "Quota exceeded — check the billing plan."}
+    if "429" in text or "rate limit" in text or "rate_limit" in text:
+        return {"kind": "rate_limit", "message": "Rate limited — retrying with backoff."}
+    if "401" in text or "invalid api key" in text or "incorrect api key" in text \
+            or "authentication" in text:
+        return {"kind": "auth", "message": "API key rejected — check the key."}
+    return {"kind": "error", "message": detail[:160]}
+
+
+# A billing/credit/quota/auth problem gates the whole business — flag it red.
+_BLOCKING_KINDS = {"billing", "credit", "quota", "auth"}
+
+
+def provider_alert(db: Any, provider: str) -> dict[str, Any]:
+    """Live health of one AI provider from its most recent recorded request.
+    ``{ok, kind, message, at}`` — ok=False when a billing/credit/auth problem
+    is the latest thing we saw from that provider."""
+    try:
+        row = db.latest_ai_request(provider)
+    except Exception:
+        row = None
+    if not row:
+        return {"ok": True, "kind": "unknown", "message": "", "at": None}
+    if row.get("ok"):
+        return {"ok": True, "kind": "ok", "message": "", "at": row.get("created_at")}
+    cls = classify_ai_error(row.get("detail"))
+    return {"ok": cls["kind"] not in _BLOCKING_KINDS, "kind": cls["kind"],
+            "message": cls["message"], "at": row.get("created_at")}

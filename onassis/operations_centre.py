@@ -218,6 +218,22 @@ def _git_commit() -> str:
         return "unknown"
 
 
+def _ai_provider_light(db: Any, provider: str, label: str, configured: bool) -> dict[str, str]:
+    """A traffic light for an AI provider that reflects its live BILLING health
+    (Sprint 44.1): a billing/credit/auth problem from the most recent call turns
+    it red with the exact reason — no more silent 'completed_with_failures'."""
+    if not configured:
+        return _light("red", label, "not configured")
+    try:
+        from onassis.ai_accounting import provider_alert
+        alert = provider_alert(db, provider)
+    except Exception:
+        alert = {"ok": True, "kind": "ok", "message": ""}
+    if not alert["ok"]:
+        return _light("red", label, f"{label}: {alert['message']}")
+    return _light("green", label, "configured")
+
+
 def _cred_light(configured: bool, ready: bool, label: str,
                 not_built: bool = False) -> dict[str, str]:
     if not_built:
@@ -268,10 +284,10 @@ def build_status(app_state: Any, state: OperationsState, request: Request) -> di
         "memory": _memory_light(),
         "database": _light("green" if db_ok else "red", "Database",
                           "integrity ok" if db_ok else "integrity FAILED"),
-        "anthropic": _cred_light(bool(config.anthropic_api_key), bool(config.anthropic_api_key),
-                                 "Anthropic"),
-        "openai": _cred_light(bool((config.image or {}).get("api_key")),
-                              bool((config.image or {}).get("api_key")), "OpenAI"),
+        "anthropic": _ai_provider_light(db, "anthropic", "Anthropic",
+                                        bool(config.anthropic_api_key)),
+        "openai": _ai_provider_light(db, "openai", "OpenAI",
+                                     bool((config.image or {}).get("api_key"))),
         "etsy": _cred_light(etsy_cfg, bool(getattr(etsy, "is_configured", False)), "Etsy"),
         "shopify": _cred_light(shopify_cfg, bool(getattr(shopify_conn, "is_configured", False)),
                                "Shopify"),
