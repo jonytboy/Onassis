@@ -516,6 +516,19 @@ def build_operations_router(get_state) -> APIRouter:
             return {"sku": sku, "action": "regenerate_mockups", "result": result}
         raise HTTPException(status_code=400, detail=f"Unknown approval action '{action}'.")
 
+    @router.post("/api/approvals/cleanup")
+    def api_approvals_cleanup(request: Request, payload: dict | None = None) -> Any:
+        """Archive all unpublished (incomplete) products — start fresh from a
+        clean queue without deleting anything or spending AI credit."""
+        _require_operator(request)
+        dry = bool((payload or {}).get("dry_run"))
+        result = _cleanup_incomplete_products(request.app.state, dry_run=dry)
+        if not dry:
+            get_state(request.app).add_log(
+                f"Queue cleanup: archived {result['archived']} unpublished product(s).",
+                "warn")
+        return result
+
     # --- Business settings (Sprint 40, Objective 7) ---
     @router.get("/api/business-settings")
     def api_get_business_settings(request: Request) -> Any:
@@ -1131,6 +1144,30 @@ def _ensure_listing_package(state: Any, campaign_id: int, product_key: str) -> d
     if pkg.get("status") != "ready":
         return {"ok": False, "reason": pkg.get("reason") or "Listing build did not complete."}
     return {"ok": True, "built": True}
+
+
+def _cleanup_incomplete_products(state: Any, *, dry_run: bool = False) -> dict[str, Any]:
+    """Archive every ACTIVE product that never actually published — the backlog
+    of incomplete/placeholder products from failed cycles — so the operator can
+    start fresh from a clean queue without burning AI credit trying to complete
+    them. Nothing is deleted (archive = active 0); genuinely published products
+    (a real Etsy/Shopify draft or live listing) are always kept."""
+    db = state.db
+    to_archive: list[dict[str, Any]] = []
+    for p in db.list_products():
+        if not p.get("active", 1):
+            continue
+        sku, cid = p.get("sku"), p.get("campaign_id")
+        etsy = db.get_latest_publication(cid, "etsy", product_id=sku) if cid else None
+        shop = db.get_latest_publication(cid, "shopify", product_id=sku) if cid else None
+        published = any((pub or {}).get("status") in ("draft", "published", "live")
+                        for pub in (etsy, shop))
+        if not published:
+            to_archive.append({"sku": sku, "name": p.get("name") or p.get("product_key")})
+    if not dry_run:
+        for item in to_archive:
+            db.set_product_active(item["sku"], False)
+    return {"archived": len(to_archive), "products": to_archive, "dry_run": dry_run}
 
 
 def _spec_from_product(state: Any, campaign_id: int, product_key: str) -> dict[str, Any] | None:

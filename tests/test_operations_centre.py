@@ -412,6 +412,21 @@ def test_publish_builds_missing_listing_package_on_demand(client, monkeypatch):
     assert r2["ok"] is True and r2["built"] is False and calls["n"] == 1
 
 
+def test_cleanup_archives_unpublished_keeps_published(client):
+    db = client.app.state.db
+    cid, sku_pending = _seed_launched_product(db, key="mug")           # never published
+    cid2, sku_live = _seed_launched_product(db, key="poster", draft=True)  # real Etsy draft
+    # Dry run reports what would be archived, changes nothing.
+    preview = client.post("/operations/api/approvals/cleanup", json={"dry_run": True}).json()
+    assert preview["dry_run"] is True and preview["archived"] >= 1
+    assert all(p.get("active", 1) for p in db.list_products())
+    # Real run archives the unpublished product, keeps the published one.
+    r = client.post("/operations/api/approvals/cleanup", json={}).json()
+    assert r["archived"] >= 1
+    active = {p["sku"]: p for p in db.list_products() if p.get("active", 1)}
+    assert sku_live in active and sku_pending not in active
+
+
 def test_publish_builds_from_product_when_no_ceo_score(client, monkeypatch):
     """An operator-approved product with no CEO score still builds a listing
     (the operator's approval is the gate), instead of 'No CEO-approved score'."""

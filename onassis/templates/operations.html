@@ -593,7 +593,10 @@
   <!-- APPROVALS -->
   <div x-show="tab==='approvals'">
     <div class="panel" x-show="approvals">
-      <h2>Approval workspace — review, approve &amp; publish</h2>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <h2>Approval workspace — review, approve &amp; publish</h2>
+        <button class="btn small danger" @click="cleanupQueue()">Clear pending (archive unpublished)</button>
+      </div>
       <div class="note">Auto-approve confidence threshold: <b x-text="approvals?.confidence_threshold"></b>
         · <span x-text="(approvals?.queue||[]).length"></span> awaiting · <span x-text="(approvals?.ready||[]).length"></span> ready to publish</div>
 
@@ -1165,6 +1168,14 @@ function ops(){
         if(res.ok) this.showToast('Mockups regenerated for '+sku+' ('+res.passing+'/'+res.total+' passed).');
         else alert('Mockup regeneration for '+sku+' did not pass:\n'+(res.reason||'unknown')+'\n\nTry again, or check the image backend (OpenAI key / credit / rate limit).');
       } finally { this.regenerating=null; this.loadTab('approvals'); this.pollLogs(); } },
+    async cleanupQueue(){
+      const preview=await this.post('/operations/api/approvals/cleanup',{dry_run:true});
+      const n=preview?.archived||0;
+      if(!n){ alert('Nothing to archive — no unpublished products in the queue.'); return; }
+      if(!confirm('Archive '+n+' unpublished product(s)? Nothing is deleted — published listings are kept, and this frees the queue so you can start fresh without spending AI credit.')) return;
+      const r=await this.post('/operations/api/approvals/cleanup',{});
+      this.showToast('Archived '+(r?.archived||0)+' unpublished product(s).');
+      this.loadTab('approvals'); this.pollLogs(); },
     async publishAllReady(){
       const skus=(this.approvals?.ready||[]).map(c=>c.sku);
       if(!skus.length||!confirm('Publish all '+skus.length+' approved products to Etsy + Shopify?')) return;
