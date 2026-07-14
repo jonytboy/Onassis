@@ -433,6 +433,26 @@ def test_cleanup_archives_unpublished_keeps_published(client):
     assert sku_pending not in active and sku_fake not in active
 
 
+def test_archived_products_vanish_from_the_approval_workspace(client):
+    """Once a product is archived (active=0) it must disappear from the
+    Approval Workspace — queue/ready/published. Otherwise 'Clear pending'
+    archives the backlog but the operator still sees it, and a second cleanup
+    reports 0 because everything is already inactive (the real-world bug)."""
+    db = client.app.state.db
+    cid, sku = _seed_launched_product(db, key="mug")           # awaiting → queue
+    workspace = client.get("/operations/api/approvals").json()
+    assert any(c["sku"] == sku for c in workspace["queue"])
+    # Archive it exactly as the cleanup does.
+    assert db.set_product_active(sku, False) is True
+    # A second cleanup finds nothing new to archive (already inactive)...
+    r = client.post("/operations/api/approvals/cleanup", json={}).json()
+    assert r["archived"] == 0
+    # ...and the product is GONE from every bucket, not lingering as "ready".
+    after = client.get("/operations/api/approvals").json()
+    all_skus = {c["sku"] for c in after["queue"] + after["ready"] + after["published"]}
+    assert sku not in all_skus
+
+
 def test_publish_builds_from_product_when_no_ceo_score(client, monkeypatch):
     """An operator-approved product with no CEO score still builds a listing
     (the operator's approval is the gate), instead of 'No CEO-approved score'."""

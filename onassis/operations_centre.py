@@ -1641,7 +1641,12 @@ def _approvals(state: Any) -> dict[str, Any]:
         pass
 
     ctx = _product_context(state)
-    rows = [_product_row(state, p, ctx) for p in state.db.list_products()]
+    # Archived products (active=0) are removed from the workspace — the operator
+    # cleared them, so they must vanish from queue/ready/published, not linger.
+    # (The Product Status Engine derives status independently of the active flag,
+    # so without this filter an archived product still shows as "ready".)
+    rows = [_product_row(state, p, ctx)
+            for p in state.db.list_products() if p.get("active", 1)]
     queue, ready, published = [], [], []
     for r in rows:
         if r["status"] in ("awaiting_approval", "failed"):
