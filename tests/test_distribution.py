@@ -123,6 +123,20 @@ def test_blog_publishes_multiple_articles_with_urls(config, db):
     assert asset["status"] == "posted" and "https://shop/blogs" in asset["delivery_ref"]
 
 
+def test_distribute_can_target_only_the_shopify_blog(config, db):
+    """Sprint 44.2 — the Shopify blog publishes directly even when social goes
+    to Make; distribute(channels=['blog']) touches only the blog."""
+    config.shopify = {"blog_id": 7}
+    shop = FakeShopifyBlog()
+    _seed(db, "blog", {"articles": [{"title": "Launch"}]})
+    _seed(db, "facebook", {"post": {"body": "hi"}})       # must NOT be touched
+    dist = ChannelDistributor(config, db, instagram=FakeInstagram(), facebook=FakeFacebook(),
+                              email=FakeEmail(), shopify=shop)
+    r = dist.distribute(channels=["blog"])
+    assert r["processed"] == 1 and r["posted"] == 1 and len(shop.published) == 1
+    assert db.list_marketing_assets(channel="facebook")[0]["status"] != "posted"
+
+
 def test_failed_delivery_can_be_retried(config, db):
     _seed(db, "email", {"subject": "s", "body": "b"})
     # First run with an email connector that fails -> recorded failed (not skipped).

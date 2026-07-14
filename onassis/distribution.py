@@ -68,17 +68,20 @@ class ChannelDistributor:
 
     # --- Distribute -------------------------------------------------
 
-    def distribute(self, limit: int = 100, due_on: str | None = None) -> dict[str, Any]:
+    def distribute(self, limit: int = 100, due_on: str | None = None,
+                   channels: list[str] | None = None) -> dict[str, Any]:
         """Deliver every undelivered IG/FB/Blog/Email asset that is due today or
-        earlier (or unscheduled). Idempotent."""
+        earlier (or unscheduled). Idempotent. ``channels`` restricts to a subset
+        (e.g. ['blog'] to publish only the first-party Shopify blog)."""
         from datetime import datetime, timezone
 
+        chans = channels or CHANNELS
         due_on = due_on or datetime.now(timezone.utc).strftime("%Y-%m-%d")
         assets = self.db.list_pending_marketing_assets(
-            channels=CHANNELS, due_on=due_on, limit=limit)
+            channels=chans, due_on=due_on, limit=limit)
         counts = {"posted": 0, "failed": 0, "skipped": 0}
         by_channel: dict[str, dict[str, int]] = {c: {"posted": 0, "failed": 0, "skipped": 0}
-                                                 for c in CHANNELS}
+                                                 for c in chans}
         for asset in assets:
             outcome = self._dispatch(asset)
             self.db.set_marketing_asset_delivery(
@@ -131,8 +134,12 @@ class ChannelDistributor:
 
     def _publish_blog(self, payload: dict[str, Any]) -> dict[str, Any]:
         if not self.can_distribute("blog"):
-            return {"ok": False, "skipped": True,
-                    "reason": "No Shopify blog configured for articles."}
+            if not self.shopify.can_publish:
+                reason = "Shopify is not connected — cannot publish the blog."
+            else:
+                reason = ("No Shopify blog selected — set the Blog ID on the "
+                          "Integrations → Shopify page (use 'List blogs').")
+            return {"ok": False, "skipped": True, "reason": reason}
         # One product can generate multiple SEO articles (launch, gift guide,
         # lifestyle, …). Publish each and record their URLs.
         articles = payload.get("articles") or [payload]

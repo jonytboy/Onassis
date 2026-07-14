@@ -684,8 +684,13 @@ class DailyCycle:
                 posted += 1
             else:
                 failed += 1
+        # The Shopify Blog is a FIRST-PARTY Shopify action, not a social platform
+        # Make distributes — always publish it directly via ONASSIS (Sprint 44.2).
+        blog = self.distribution.distribute(channels=["blog"])
         return {"processed": len(launched), "posted": posted, "skipped": 0,
-                "failed": failed, "provider": "make"}
+                "failed": failed, "provider": "make",
+                "blog": {"posted": blog.get("posted", 0), "failed": blog.get("failed", 0),
+                         "skipped": blog.get("skipped", 0)}}
 
     def _daily_report(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """Build the daily Revenue / Profit / Best / Worst / Recommendation report."""
