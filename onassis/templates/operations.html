@@ -642,13 +642,46 @@
         <div x-show="!(approvals?.queue||[]).length" class="muted">Nothing awaiting a decision.</div>
       </div>
 
-      <h2 style="margin-top:18px">🟢 Ready to publish (<span x-text="((approvals?.ready||[]).length)"></span>)</h2>
-      <template x-for="c in (approvals?.ready||[])" :key="c.sku">
-        <div class="stat" style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">
-          <div><div class="v sm" x-text="c.listing_title"></div><div class="note" x-text="c.type+' · approved by '+(c.operator||'—')"></div></div>
-          <button class="btn small primary" @click="decide(c.sku,'approve_and_publish')">Publish (Etsy + Shopify)</button>
-        </div>
-      </template>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:18px">
+        <h2>🟢 Ready to publish (<span x-text="((approvals?.ready||[]).length)"></span>)</h2>
+        <button class="btn small primary" x-show="(approvals?.ready||[]).length"
+                :disabled="publishingAll" @click="publishAllReady()"
+                x-text="publishingAll?('Publishing '+publishAllDone+'/'+publishAllTotal+'…'):'Publish All (Etsy + Shopify)'"></button>
+      </div>
+      <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(320px,1fr))">
+        <template x-for="c in (approvals?.ready||[])" :key="c.sku">
+          <div class="panel" style="margin:0">
+            <div style="display:flex;gap:12px">
+              <img x-show="c.hero_url" :src="c.hero_url" alt="" style="width:72px;height:72px;object-fit:cover;border-radius:8px;background:#222">
+              <div x-show="!c.hero_url" style="width:72px;height:72px;border-radius:8px;background:#222;display:flex;align-items:center;justify-content:center;text-align:center;font-size:9px;color:#888;padding:4px">No preview</div>
+              <div style="flex:1;min-width:0">
+                <div class="note" x-show="c.collection" style="text-transform:uppercase;letter-spacing:.04em;font-size:10px;color:#c9a56a" x-text="c.collection"></div>
+                <div class="v sm" x-text="c.listing_title"></div>
+                <div class="note"><span x-text="c.type"></span> · conf <b x-text="conf(c.confidence)"></b> · SEO <span x-text="c.seo_score??'—'"></span></div>
+                <div class="note">approved by <span x-text="c.operator||'—'"></span></div>
+              </div>
+            </div>
+            <div class="note" style="margin-top:6px" x-show="c.mockup_status && c.mockup_status!=='ok'">
+              <span class="pill failed" x-show="c.mockup_status==='failed'">Mockup quality failed</span>
+              <span class="pill grey" x-show="c.mockup_status==='none'">No mockups yet</span>
+              <span x-show="c.mockup_reason" style="color:#ff8a8a" x-text="' '+c.mockup_reason"></span>
+            </div>
+            <div class="secondary" style="grid-template-columns:1fr 1fr;margin-top:6px;gap:6px">
+              <div class="note">Etsy: <span class="pill" :class="channelPill(c.etsy_state)" x-text="c.etsy_status"></span></div>
+              <div class="note">Shopify: <span class="pill" :class="channelPill(c.shopify_state)" x-text="c.shopify_status"></span></div>
+            </div>
+            <div class="secondary" style="grid-template-columns:repeat(2,1fr);margin-top:10px">
+              <button class="btn small primary" @click="decide(c.sku,'approve_and_publish')">Publish (Etsy + Shopify)</button>
+              <button class="btn small" :disabled="regenerating===c.sku" @click="regenerateMockups(c.sku)" x-text="regenerating===c.sku?'Regenerating…':'Regenerate Mockups'"></button>
+              <button class="btn small" @click="decide(c.sku,'reject')">Reject</button>
+              <a class="btn small" x-show="c.artwork_url" :href="c.artwork_url" target="_blank">View Artwork</a>
+              <a class="btn small" x-show="c.mockups?.length" :href="c.mockups[0]" target="_blank">View Mockups</a>
+              <a class="btn small" x-show="c.listing_package_url" :href="c.listing_package_url" target="_blank">Listing Package</a>
+            </div>
+          </div>
+        </template>
+        <div x-show="!(approvals?.ready||[]).length" class="muted">Nothing approved yet.</div>
+      </div>
 
       <div class="cols" style="margin-top:18px">
         <div><h2>🟢 Auto-approved</h2><template x-for="a in (approvals?.auto_approved||[])"><div class="stat" style="margin-bottom:8px"><div class="v sm" x-text="a.subject"></div><div class="note">score <span x-text="a.score"></span></div></div></template></div>
@@ -976,7 +1009,7 @@ function ops(){
     productDetail:null, channelTests:null, testingChannels:false, regenerating:null,
     integrations:null, integrationDetail:null, integrationEdits:{}, integrationBusy:false,
     commercial:null, commercialProducts:null, cmo:null, cfo:null, distribution:null,
-    catalogue:null, collections:null,
+    catalogue:null, collections:null, publishingAll:false, publishAllTotal:0, publishAllDone:0,
     productSearch:'', productFilter:'all', productHealth:null, toast:'',
     productFilters:[['all','All'],['awaiting_approval','Awaiting Approval'],['ready_to_publish','Ready to Publish'],['draft_created','Draft Created'],['live','Live'],['failed','Failed'],['etsy','On Etsy'],['shopify','On Shopify'],['both','Etsy + Shopify'],['archived','Archived']],
     get running(){ return this.run?.status==='running'; },
@@ -1132,6 +1165,22 @@ function ops(){
         if(res.ok) this.showToast('Mockups regenerated for '+sku+' ('+res.passing+'/'+res.total+' passed).');
         else alert('Mockup regeneration for '+sku+' did not pass:\n'+(res.reason||'unknown')+'\n\nTry again, or check the image backend (OpenAI key / credit / rate limit).');
       } finally { this.regenerating=null; this.loadTab('approvals'); this.pollLogs(); } },
+    async publishAllReady(){
+      const skus=(this.approvals?.ready||[]).map(c=>c.sku);
+      if(!skus.length||!confirm('Publish all '+skus.length+' approved products to Etsy + Shopify?')) return;
+      this.publishingAll=true; this.publishAllTotal=skus.length; this.publishAllDone=0;
+      let ok=0, blocked=0, failed=0;
+      for(const sku of skus){
+        try{
+          const r=await this.post('/operations/api/approvals/'+encodeURIComponent(sku)+'/decision',{action:'approve_and_publish',operator:'operator'});
+          const e=r?.published?.etsy;
+          if(e?.mockup_blocked) blocked++; else if(e?.status==='draft'||e?.status==='dry_run') ok++; else failed++;
+        }catch(_){ failed++; }
+        this.publishAllDone++;
+      }
+      this.publishingAll=false;
+      this.showToast('Publish all: '+ok+' published, '+blocked+' blocked (mockups), '+failed+' failed.');
+      this.loadTab('approvals'); this.pollLogs(); },
     async retryCampaign(id){ const r=await this.post('/operations/api/distribution/'+id+'/retry');
       this.showToast('Retry campaign #'+id+': '+((r&&r.status)||'failed')); this.loadTab('marketing'); this.pollLogs(); },
     async reconcileNow(){ const r=await this.post('/operations/api/system/reconcile');
