@@ -412,6 +412,32 @@ def test_publish_builds_missing_listing_package_on_demand(client, monkeypatch):
     assert r2["ok"] is True and r2["built"] is False and calls["n"] == 1
 
 
+def test_publish_builds_from_product_when_no_ceo_score(client, monkeypatch):
+    """An operator-approved product with no CEO score still builds a listing
+    (the operator's approval is the gate), instead of 'No CEO-approved score'."""
+    from onassis import operations_centre as oc
+    db = client.app.state.db
+    state = client.app.state
+    brief_id = db.insert_brief({"brief_date": "2026-07-01", "theme": "S", "keywords": []})
+    cid = db.insert_campaign({"name": "Salt Air", "brief_id": brief_id})
+    db.insert_compliance_report({"campaign_id": cid, "verdict": "APPROVE",
+                                 "reasoning": "ok", "compliance_score": 92})
+    # A product with NO product_score row.
+    db.insert_product({"sku": f"{cid}-product", "name": "Salt & Stillness Body Oil",
+                       "campaign_id": cid, "product_key": "product"})
+
+    def _fake_export(campaign_id, spec, design_package=None):
+        assert spec["product_name"] == "Salt & Stillness Body Oil"
+        folder = oc._exports_dir(state) / str(campaign_id) / spec["product_key"]
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "listing.json").write_text('{"title": "x"}', encoding="utf-8")
+        return {"status": "ready"}
+
+    monkeypatch.setattr(state.daily.listing_factory, "export_product", _fake_export)
+    r = oc._ensure_listing_package(state, cid, "product")
+    assert r["ok"] is True and r["built"] is True
+
+
 def test_approval_card_falls_back_to_design_artwork_preview(client, tmp_path):
     """Sprint 42.1 Obj 1 — an awaiting product with no per-product listing
     package still shows a preview: the design master artwork."""

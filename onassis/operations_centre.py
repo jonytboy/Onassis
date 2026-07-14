@@ -1107,9 +1107,12 @@ def _ensure_listing_package(state: Any, campaign_id: int, product_key: str) -> d
         return {"ok": True, "built": False}
     scores = [s for s in state.db.list_product_scores(campaign_id)
               if s.get("product_key") == product_key]
-    if not scores:
-        return {"ok": False, "reason": "No CEO-approved product score to build a listing from."}
-    spec = scores[0]
+    # Prefer the CEO score; if none exists (an operator-approved product from a
+    # cycle that never scored it), build a spec from the catalogue/product record
+    # — the operator's approval is the gate here, not a CEO score.
+    spec = scores[0] if scores else _spec_from_product(state, campaign_id, product_key)
+    if spec is None:
+        return {"ok": False, "reason": "No product found to build a listing from."}
     design_package = None
     opp = spec.get("opportunity_id")
     if opp:
@@ -1128,6 +1131,29 @@ def _ensure_listing_package(state: Any, campaign_id: int, product_key: str) -> d
     if pkg.get("status") != "ready":
         return {"ok": False, "reason": pkg.get("reason") or "Listing build did not complete."}
     return {"ok": True, "built": True}
+
+
+def _spec_from_product(state: Any, campaign_id: int, product_key: str) -> dict[str, Any] | None:
+    """Build a listing-build spec from the catalogue definition + product record
+    when there is no CEO product score (an operator-approved product). Returns
+    None only when there is genuinely no product to build from."""
+    try:
+        cat = {c["key"]: c for c in state.daily.expansion.catalogue(include_unavailable=True)}
+    except Exception:
+        cat = {}
+    entry = cat.get(product_key) or {}
+    prod = next((p for p in state.db.list_products()
+                 if p.get("campaign_id") == campaign_id
+                 and p.get("product_key") == product_key), None)
+    if not entry and prod is None:
+        return None
+    spec = {
+        "product_key": product_key,
+        "product_name": (prod or {}).get("name") or entry.get("name") or product_key,
+        "production_cost": (prod or {}).get("production_cost") or entry.get("production_cost"),
+        "retail_price": entry.get("retail_price"),
+    }
+    return spec
 
 
 def _regenerate_mockups(state: Any, campaign_id: int, product_key: str) -> dict[str, Any]:
