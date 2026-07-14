@@ -120,6 +120,17 @@ REGISTRY: list[Integration] = [
                 required=["api_key"], actions=["test"],
                 setup=["Create a Gelato API key", "Set a public /exports base URL",
                        "Paste here", "Test Connection"]),
+    # Sprint 43 — Make.com is the single marketing distribution engine. ONASSIS
+    # generates every asset; Make fans the campaign out to all social platforms.
+    Integration("make", "Make.com", "Marketing",
+                [Field("webhook_url", "Webhook URL", secret=True, env="MAKE_WEBHOOK_URL"),
+                 Field("api_key", "API Key (optional)", secret=True, env="MAKE_API_KEY"),
+                 Field("file_base_url", "Public Image Base URL", env="MAKE_FILE_BASE_URL")],
+                required=["webhook_url"], actions=["test"],
+                setup=["Create a Make.com scenario with a Webhook trigger",
+                       "Copy the webhook URL", "Paste it here",
+                       "Add router modules per platform in Make",
+                       "Test Connection"]),
 ]
 _BY_KEY = {i.key: i for i in REGISTRY}
 _SETTING = "integration."
@@ -376,6 +387,11 @@ def _test_gelato(config, resolved, db):
     return GelatoConnector(_ns("gelato", resolved), db).test_connection()
 
 
+def _test_make(config, resolved, db):
+    from onassis.connectors.make import MakeConnector
+    return MakeConnector(_ns("make", resolved)).test_connection()
+
+
 def _test_etsy(config, resolved, db):
     if not resolved.get("client_id"):
         return {"ok": False, "configured": False, "detail": "Set the Etsy keystring."}
@@ -430,6 +446,7 @@ _DEFAULT_TESTERS: dict[str, Callable] = {
     "anthropic": _test_anthropic, "openai": _test_openai, "etsy": _test_etsy,
     "shopify": _test_shopify, "pinterest": _test_pinterest, "facebook": _test_facebook,
     "instagram": _test_instagram, "email": _test_email, "gelato": _test_gelato,
+    "make": _test_make,
 }
 
 

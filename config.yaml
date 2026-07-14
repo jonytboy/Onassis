@@ -10,7 +10,7 @@ app:
   name: ONASSIS
   # Sprint-based platform version — more operationally meaningful than a semantic
   # version while the platform is moving fast. Bump once per sprint.
-  version: "42.2"
+  version: "43.0"
   environment: development          # overridden by ONASSIS_ENV
 
 logging:
@@ -253,6 +253,16 @@ portfolio:
 #   print files from. The API serves the exports dir directly at /exports, so
 #   this is simply https://<your-server>/exports (swap for a CDN/bucket later
 #   without changing the connector).
+# --- Make.com distribution (Sprint 43) -------------------------------
+# The single marketing distribution engine: ONASSIS posts one complete campaign
+# package per product to this webhook; Make fans it out to every platform.
+# Credentials come from the env: MAKE_WEBHOOK_URL, MAKE_API_KEY, MAKE_FILE_BASE_URL.
+make:
+  webhook_url: null      # https://hook.eu1.make.com/...
+  api_key: null          # optional shared secret sent as x-make-apikey
+  file_base_url: null    # public https base for image URLs (e.g. https://api.host/exports)
+  timeout: 30
+
 gelato:
   base_url: "https://order.gelatoapis.com/v4"
   currency: GBP

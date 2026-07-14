@@ -445,6 +445,31 @@
 
   <!-- MARKETING -->
   <div x-show="tab==='marketing'">
+    <!-- Marketing Distribution via Make.com (Sprint 43) -->
+    <div class="panel" x-show="distribution" style="margin-bottom:12px">
+      <h2>Marketing Distribution</h2>
+      <div class="grid">
+        <div class="stat"><div class="k">Provider</div><div class="v sm">Make.com
+          <span class="pill" :class="distribution?.connected?'ok':'grey'" x-text="distribution?.connected?'Connected':'Not configured'"></span></div></div>
+        <div class="stat"><div class="k">Campaigns Sent</div><div class="v" x-text="distribution?.campaigns_sent??0"></div></div>
+        <div class="stat"><div class="k">Today's Campaigns</div><div class="v" x-text="distribution?.todays_campaigns??0"></div></div>
+        <div class="stat"><div class="k">Retry Queue</div><div class="v" x-text="distribution?.retry_queue??0"></div></div>
+        <div class="stat"><div class="k">Last Success</div><div class="v sm mono" x-text="when(distribution?.last_success)"></div></div>
+        <div class="stat"><div class="k">Last Failure</div><div class="v sm mono" x-text="when(distribution?.last_failure)"></div></div>
+      </div>
+      <div class="note" style="margin-top:6px" x-show="distribution?.webhook">Webhook: <span class="mono" x-text="distribution?.webhook"></span></div>
+      <div style="overflow-x:auto;margin-top:10px" x-show="(distribution?.recent||[]).length">
+      <table><thead><tr><th>Product</th><th>Collection</th><th>Status</th><th>Channels</th><th>Retries</th><th></th></tr></thead><tbody>
+        <template x-for="c in (distribution?.recent||[])" :key="c.id">
+          <tr><td x-text="c.product_id"></td><td class="muted" x-text="c.collection||'—'"></td>
+            <td><span class="pill" :class="{published:'ok',sent:'ok',failed:'failed',generated:'needs_review',partial:'needs_review'}[c.status]||'grey'" x-text="c.status"></span></td>
+            <td class="note"><template x-for="(v,k) in (c.channel_status||{})" :key="k"><span x-text="k+':'+v+' '"></span></template></td>
+            <td x-text="c.retry_count"></td>
+            <td><button class="btn small" x-show="c.status==='failed'" @click="retryCampaign(c.id)">Retry</button></td></tr>
+        </template>
+      </tbody></table>
+      </div>
+    </div>
     <div class="panel" x-show="marketing">
       <h2>Marketing — a first-class production stage</h2>
       <div class="grid">
@@ -897,7 +922,7 @@ function ops(){
     environment:null, deployRun:null, preview:null, validation:null, _deployPoll:null,
     productDetail:null, channelTests:null, testingChannels:false, regenerating:null,
     integrations:null, integrationDetail:null, integrationEdits:{}, integrationBusy:false,
-    commercial:null, commercialProducts:null, cmo:null, cfo:null,
+    commercial:null, commercialProducts:null, cmo:null, cfo:null, distribution:null,
     productSearch:'', productFilter:'all', productHealth:null, toast:'',
     productFilters:[['all','All'],['awaiting_approval','Awaiting Approval'],['ready_to_publish','Ready to Publish'],['draft_created','Draft Created'],['live','Live'],['failed','Failed'],['etsy','On Etsy'],['shopify','On Shopify'],['both','Etsy + Shopify'],['archived','Archived']],
     get running(){ return this.run?.status==='running'; },
@@ -963,6 +988,7 @@ function ops(){
         this.products=d.products; this.productSummary=d.summary;
         this.productHealth=await this.get('/operations/api/production-health'); }
       else if(t==='marketing'){ this.marketing=await this.get('/operations/api/marketing');
+        this.distribution=await this.get('/operations/api/distribution');
         this.cmo=await this.get('/operations/api/cmo'); }
       else if(t==='approvals') this.approvals=await this.get('/operations/api/approvals');
       else if(t==='integrations') this.integrations=await this.get('/operations/api/integrations');
@@ -1050,6 +1076,8 @@ function ops(){
         if(res.ok) this.showToast('Mockups regenerated for '+sku+' ('+res.passing+'/'+res.total+' passed).');
         else alert('Mockup regeneration for '+sku+' did not pass:\n'+(res.reason||'unknown')+'\n\nTry again, or check the image backend (OpenAI key / credit / rate limit).');
       } finally { this.regenerating=null; this.loadTab('approvals'); this.pollLogs(); } },
+    async retryCampaign(id){ const r=await this.post('/operations/api/distribution/'+id+'/retry');
+      this.showToast('Retry campaign #'+id+': '+((r&&r.status)||'failed')); this.loadTab('marketing'); this.pollLogs(); },
     async reconcileNow(){ const r=await this.post('/operations/api/system/reconcile');
       this.showToast('Self-healing: '+((r&&r.repaired)||0)+' issue(s) repaired.'); this.pollLogs(); },
     async saveSettings(){ this.savingSettings=true;

@@ -120,6 +120,9 @@ class DailyCycle:
         # distribution of the IG/FB/Blog/Email marketing assets.
         self.shopify = ShopifyPublisher(config, db)
         self.distribution = ChannelDistributor(config, db)
+        # Sprint 43 — Make.com is the single distribution engine when configured.
+        from onassis.campaign_distributor import CampaignDistributor
+        self.campaign_distributor = CampaignDistributor(config, db)
         from onassis.cmo import CMOManager
         from onassis.marketing_learning import MarketingLearning
         self.cmo = CMOManager(config, db)
@@ -637,7 +640,12 @@ class DailyCycle:
         # The CMO schedules new marketing assets across the campaign calendar,
         # then distribute ships only what is due today (Sprint 42).
         self.cmo.schedule_pending()
-        channels = self.distribution.distribute()
+        # Distribution: Make.com (one webhook per product) when configured;
+        # otherwise the native per-channel distributor (Sprint 43).
+        if self.campaign_distributor.make.is_configured:
+            channels = self._distribute_via_make(cid)
+        else:
+            channels = self.distribution.distribute()
         metrics = self.traffic.import_metrics()   # impressions/clicks -> attributed
         funnel = self.traffic.snapshot()
         # Marketing learning loop: record channel effectiveness so next run can
@@ -661,6 +669,23 @@ class DailyCycle:
                                         "failed": channels.get("failed", 0)},
                            "impressions": metrics.get("impressions", 0),
                            "clicks": metrics.get("clicks", 0), "funnel": funnel}}
+
+    def _distribute_via_make(self, campaign_id: int | None) -> dict[str, Any]:
+        """Send each launched product's complete campaign to Make.com in one
+        webhook (Sprint 43). Returns a native-distribute-shaped summary."""
+        launched = [s for s in self.db.list_product_scores(campaign_id)
+                    if s.get("launched")] if campaign_id else []
+        posted = failed = 0
+        for spec in launched:
+            key = spec.get("product_key")
+            res = self.campaign_distributor.distribute(
+                campaign_id, key, product_id=f"{campaign_id}-{key}")
+            if res.get("ok"):
+                posted += 1
+            else:
+                failed += 1
+        return {"processed": len(launched), "posted": posted, "skipped": 0,
+                "failed": failed, "provider": "make"}
 
     def _daily_report(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """Build the daily Revenue / Profit / Best / Worst / Recommendation report."""

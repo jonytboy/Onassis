@@ -880,6 +880,45 @@ def build_operations_router(get_state) -> APIRouter:
         return {"sku": sku,
                 "requests": request.app.state.db.ai_cost_by_product(sku)}
 
+    # --- Marketing distribution via Make.com (Sprint 43) ---
+    @router.get("/api/distribution")
+    def api_distribution(request: Request) -> Any:
+        _require_operator(request)
+        return request.app.state.distribution.dashboard()
+
+    @router.post("/api/distribution/send/{sku}")
+    def api_distribution_send(request: Request, sku: str) -> Any:
+        _require_operator(request)
+        s = request.app.state
+        product = s.db.get_product_by_sku(sku)
+        if not product:
+            raise HTTPException(status_code=404, detail="Unknown product.")
+        result = s.distribution.distribute(product.get("campaign_id"),
+                                           product.get("product_key"), product_id=sku)
+        get_state(request.app).add_log(
+            f"Distribution for {sku} -> Make.com: {result.get('status')}.",
+            "info" if result.get("ok") else "error")
+        return result
+
+    @router.post("/api/distribution/{camp_id}/retry")
+    def api_distribution_retry(request: Request, camp_id: int) -> Any:
+        _require_operator(request)
+        result = request.app.state.distribution.retry(camp_id)
+        get_state(request.app).add_log(
+            f"Retried marketing campaign #{camp_id}: {result.get('status')}.")
+        return result
+
+    @router.post("/api/distribution/feedback")
+    def api_distribution_feedback(request: Request, payload: dict | None = None) -> Any:
+        # Make.com posts per-channel statuses back here (Obj 5). Operator-authed;
+        # configure the API key header in the Make scenario.
+        _require_operator(request)
+        body = payload or {}
+        statuses = {k: v for k, v in body.items()
+                    if k not in ("campaign_id", "product_id")}
+        return request.app.state.distribution.record_feedback(
+            body.get("campaign_id"), statuses, product_id=body.get("product_id"))
+
     # --- Production health dashboard (Sprint 41.2, Obj 13) ---
     @router.get("/api/production-health")
     def api_production_health(request: Request) -> Any:

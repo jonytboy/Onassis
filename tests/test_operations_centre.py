@@ -300,6 +300,20 @@ def test_commercial_dashboard_endpoints(client):
     assert isinstance(client.get("/operations/api/commercial/products").json()["products"], list)
 
 
+def test_distribution_endpoints(client):
+    db = client.app.state.db
+    cid, sku = _seed_launched_product(db, key="mug")
+    db.insert_marketing_asset({"campaign_id": cid, "product_key": "mug", "channel": "facebook",
+                               "listing_url": "https://etsy.com/l/1", "payload": {"body": "x"}})
+    d = client.get("/operations/api/distribution").json()
+    assert d["provider"] == "Make.com" and "campaigns_sent" in d and "retry_queue" in d
+    # Not configured → send is a safe failure, archived for retry.
+    r = client.post(f"/operations/api/distribution/send/{sku}").json()
+    assert r["ok"] is False and r["status"] == "failed"
+    rec = db.latest_distribution_for_product(sku)
+    assert rec is not None and rec["package"]["campaign_id"] == cid
+
+
 def test_cfo_ai_cost_endpoint(client):
     db = client.app.state.db
     from onassis.ai_accounting import cost_context, record_image, set_recorder
@@ -571,7 +585,7 @@ def test_environment_awareness_endpoint(client, tmp_path):
     for k in ("environment", "branch", "commit", "git_status",
               "database_version", "application_version"):
         assert k in e
-    assert e["database_version"] == 46
+    assert e["database_version"] == 47
 
 
 def test_download_fetches_only(client, tmp_path):

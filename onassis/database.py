@@ -31,7 +31,7 @@ log = get_logger(__name__)
 # Bump whenever the schema changes (new table / column). Surfaced in the
 # Operations Centre "Environment" panel so an operator can see at a glance
 # whether the running database matches the code they expect.
-SCHEMA_VERSION = 46
+SCHEMA_VERSION = 47
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS briefs (
@@ -183,6 +183,27 @@ CREATE TABLE IF NOT EXISTS ai_requests (
 CREATE INDEX IF NOT EXISTS idx_ai_requests_date ON ai_requests(request_date);
 CREATE INDEX IF NOT EXISTS idx_ai_requests_product ON ai_requests(product_id);
 CREATE INDEX IF NOT EXISTS idx_ai_requests_stage ON ai_requests(stage);
+
+-- Marketing distribution campaigns (Sprint 43). One row per product campaign
+-- sent to Make.com: the full package is archived so a failed send can be
+-- retried WITHOUT regenerating content, and per-channel status is recorded.
+CREATE TABLE IF NOT EXISTS distribution_campaigns (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at     TEXT    NOT NULL,
+    campaign_id    INTEGER,
+    product_id     TEXT,
+    product_key    TEXT,
+    collection     TEXT,
+    status         TEXT    NOT NULL DEFAULT 'generated',  -- generated|sent|published|partial|failed
+    package        TEXT,                                   -- JSON campaign package (for retry)
+    channel_status TEXT,                                   -- JSON {channel: status}
+    retry_count    INTEGER NOT NULL DEFAULT 0,
+    last_attempt   TEXT,
+    sent_at        TEXT,
+    failure_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_distcamp_product ON distribution_campaigns(product_id);
+CREATE INDEX IF NOT EXISTS idx_distcamp_status ON distribution_campaigns(status);
 
 CREATE TABLE IF NOT EXISTS products (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1329,6 +1350,87 @@ class Database:
         with self._connect() as conn:
             row = conn.execute("SELECT COALESCE(SUM(cost_usd),0) FROM ai_requests").fetchone()
         return float(row[0])
+
+    # --- Marketing distribution campaigns (Sprint 43) ----------------
+
+    def insert_distribution_campaign(self, c: dict[str, Any]) -> int:
+        import json as _json
+        with self._connect() as conn:
+            cur = conn.execute(
+                """INSERT INTO distribution_campaigns
+                   (created_at, campaign_id, product_id, product_key, collection,
+                    status, package, channel_status, retry_count, last_attempt,
+                    sent_at, failure_reason)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (_utcnow(), c.get("campaign_id"), c.get("product_id"), c.get("product_key"),
+                 c.get("collection"), c.get("status", "generated"),
+                 _json.dumps(c.get("package") or {}),
+                 _json.dumps(c.get("channel_status") or {}),
+                 int(c.get("retry_count", 0)), c.get("last_attempt"),
+                 c.get("sent_at"), c.get("failure_reason")))
+            return int(cur.lastrowid)
+
+    def _distcamp_row(self, row: Any) -> dict[str, Any]:
+        import json as _json
+        d = dict(row)
+        for k in ("package", "channel_status"):
+            try:
+                d[k] = _json.loads(d.get(k) or "{}")
+            except Exception:
+                d[k] = {}
+        return d
+
+    def get_distribution_campaign(self, camp_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM distribution_campaigns WHERE id = ?",
+                               (camp_id,)).fetchone()
+        return self._distcamp_row(row) if row else None
+
+    def latest_distribution_for_product(self, product_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM distribution_campaigns WHERE product_id = ? "
+                "ORDER BY id DESC LIMIT 1", (product_id,)).fetchone()
+        return self._distcamp_row(row) if row else None
+
+    def list_distribution_campaigns(self, *, limit: int = 100,
+                                    status: str | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM distribution_campaigns"
+        params: tuple = ()
+        if status:
+            sql += " WHERE status = ?"
+            params = (status,)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params = (*params, int(limit))
+        with self._connect() as conn:
+            return [self._distcamp_row(r) for r in conn.execute(sql, params).fetchall()]
+
+    def update_distribution_campaign(self, camp_id: int, fields: dict[str, Any]) -> None:
+        import json as _json
+        if not fields:
+            return
+        sets, vals = [], []
+        for k, v in fields.items():
+            if k in ("package", "channel_status"):
+                v = _json.dumps(v or {})
+            sets.append(f"{k} = ?")
+            vals.append(v)
+        with self._connect() as conn:
+            conn.execute(f"UPDATE distribution_campaigns SET {', '.join(sets)} WHERE id = ?",
+                         (*vals, camp_id))
+
+    def count_distribution_campaigns(self, *, status: str | None = None,
+                                     on_date: str | None = None) -> int:
+        sql = "SELECT COUNT(*) FROM distribution_campaigns WHERE 1=1"
+        params: list[Any] = []
+        if status:
+            sql += " AND status = ?"
+            params.append(status)
+        if on_date:
+            sql += " AND substr(sent_at,1,10) = ?"
+            params.append(on_date)
+        with self._connect() as conn:
+            return int(conn.execute(sql, tuple(params)).fetchone()[0])
 
     def net_by_campaign(self) -> list[dict[str, Any]]:
         """Net profit (revenue - cost) grouped by campaign_id."""

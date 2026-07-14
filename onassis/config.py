@@ -100,6 +100,10 @@ class Config:
     shopify: dict[str, Any] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
     email: dict[str, Any] = field(default_factory=dict)
+    # Sprint 43 — Make.com single marketing distribution engine.
+    make: dict[str, Any] = field(default_factory=dict)
+    # Sprint 42.2 — AI pricing overrides for cost accounting (optional).
+    ai_pricing: dict[str, Any] = field(default_factory=dict)
 
     # secrets / future integrations
     anthropic_api_key: str | None = None
@@ -211,6 +215,14 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         "to_address": _env("EMAIL_TO", email.get("to_address")),
         "use_tls": bool(email.get("use_tls", True)),
     }
+    # Make.com single marketing distribution webhook (Sprint 43).
+    make = raw.get("make", {})
+    make = {
+        **make,
+        "webhook_url": _env("MAKE_WEBHOOK_URL", make.get("webhook_url")),
+        "api_key": _env("MAKE_API_KEY", make.get("api_key")),
+        "file_base_url": _env("MAKE_FILE_BASE_URL", make.get("file_base_url")),
+    }
     # Financial protection: only the CORE commercial controls come from the env;
     # all fee/estimation/business logic stays in the YAML `protection` section.
     security = raw.get("security", {})
@@ -310,5 +322,7 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         shopify=shopify,
         meta=meta,
         email=email,
+        make=make,
+        ai_pricing=raw.get("ai_pricing", {}),
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
     )
