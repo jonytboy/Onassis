@@ -420,11 +420,17 @@ def test_cleanup_archives_unpublished_keeps_published(client):
     preview = client.post("/operations/api/approvals/cleanup", json={"dry_run": True}).json()
     assert preview["dry_run"] is True and preview["archived"] >= 1
     assert all(p.get("active", 1) for p in db.list_products())
-    # Real run archives the unpublished product, keeps the published one.
+    # A draft publication with NO valid listing id is a failed attempt, not a
+    # real listing — it must still be archived.
+    cid3, sku_fake = _seed_launched_product(db, key="tote")
+    db.insert_publication({"platform": "etsy", "product_id": sku_fake, "campaign_id": cid3,
+                           "listing_id": None, "mode": "draft", "status": "draft"})
+    # Real run archives the unpublished + fake-draft products, keeps the real one.
     r = client.post("/operations/api/approvals/cleanup", json={}).json()
-    assert r["archived"] >= 1
+    assert r["archived"] >= 2
     active = {p["sku"]: p for p in db.list_products() if p.get("active", 1)}
-    assert sku_live in active and sku_pending not in active
+    assert sku_live in active
+    assert sku_pending not in active and sku_fake not in active
 
 
 def test_publish_builds_from_product_when_no_ceo_score(client, monkeypatch):

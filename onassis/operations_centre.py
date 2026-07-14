@@ -1160,8 +1160,14 @@ def _cleanup_incomplete_products(state: Any, *, dry_run: bool = False) -> dict[s
         sku, cid = p.get("sku"), p.get("campaign_id")
         etsy = db.get_latest_publication(cid, "etsy", product_id=sku) if cid else None
         shop = db.get_latest_publication(cid, "shopify", product_id=sku) if cid else None
-        published = any((pub or {}).get("status") in ("draft", "published", "live")
-                        for pub in (etsy, shop))
+        # A product counts as "published" only when it has a REAL listing — a
+        # draft/live status with a VALID listing id (matching what the operator
+        # sees). A draft record with no valid id is a failed attempt, not a live
+        # listing, so it should be archived.
+        published = any(
+            (pub or {}).get("status") in ("draft", "published", "live")
+            and is_valid_listing_id((pub or {}).get("listing_id"))
+            for pub in (etsy, shop))
         if not published:
             to_archive.append({"sku": sku, "name": p.get("name") or p.get("product_key")})
     if not dry_run:
