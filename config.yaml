@@ -266,7 +266,9 @@ catalogue:
   demand_neutral: 0.5            # demand index that maps to the base target (×1.0)
   demand_cap: 1.5               # max target multiplier for proven/high-demand categories
   demand_floor: 0.0             # min multiplier
-  demand_build_cutoff: 0.25     # demand below this (and no sales) → target 0, not built
+  demand_min_sample: 5          # every category keeps at least this many so it can be
+                                # MEASURED — market signal alone never zeroes a category
+                                # (dead products are removed later from real sell-through)
   targets:
     Mugs: 30
     T-Shirts: 25

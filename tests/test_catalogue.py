@@ -47,15 +47,16 @@ def _signal(db, product_type, demand, keyword=None):
                              "product_type": product_type, "demand": demand, "run_at": RUN})
 
 
-def test_demand_weighting_prunes_dead_categories(config, db):
-    """A category the stats say won't sell (low market demand, no sales) drops to
-    target 0 — ONASSIS does not burn credit building it — while a high-demand
-    category keeps/raises its target."""
-    config.catalogue = {"targets": {"Mugs": 20, "Candles": 10}, "demand_weighting": True}
+def test_demand_weighting_scales_down_but_keeps_a_sample(config, db):
+    """A low-demand category is scaled DOWN but never zeroed on market signal
+    alone — it keeps at least a small sample so it can be measured. A high-demand
+    category scales up to the cap."""
+    config.catalogue = {"targets": {"Mugs": 20, "Candles": 10},
+                        "demand_weighting": True, "demand_min_sample": 5}
     _signal(db, "mug", 80)          # strong demand
-    _signal(db, "candle", 10)       # effectively dead
+    _signal(db, "candle", 10)       # weak signal, but no SALES data yet
     t = CatalogueManager(config, db).targets()
-    assert t["Candles"] == 0        # below the build cutoff → not built
+    assert t["Candles"] == 5        # scaled down to the sample floor, NOT zero
     assert t["Mugs"] == 30          # 0.80/0.50 = 1.6, capped 1.5 → 20×1.5
 
 

@@ -143,11 +143,12 @@ class CatalogueManager:
 
         * a category with **no demand evidence** keeps its baseline (cold start
           is never blocked);
-        * a category whose demand index is **below the build cutoff** (and has no
-          sales) drops to **0** — it is simply not built;
-        * otherwise the target scales by ``demand / demand_neutral``, clamped to
-          ``[demand_floor, demand_cap]`` — proven/high-demand categories can grow
-          up to the cap, weak ones shrink.
+        * proven sellers and high-demand categories scale **up** to ``demand_cap``;
+        * weak-signal categories scale **down** toward demand, but never below a
+          small sample floor (``demand_min_sample``) — you cannot learn whether a
+          category sells without building at least a few of it, so market signal
+          alone never zeroes a category. Genuinely dead products are removed later
+          from REAL sell-through (retirement), not guessed away before any sale.
         """
         base = self._base_targets()
         if not bool(self.cfg.get("demand_weighting", True)):
@@ -156,17 +157,18 @@ class CatalogueManager:
         neutral = float(self.cfg.get("demand_neutral", 0.5)) or 0.5
         cap = float(self.cfg.get("demand_cap", 1.5))
         floor = float(self.cfg.get("demand_floor", 0.0))
-        cutoff = float(self.cfg.get("demand_build_cutoff", 0.25))
+        min_sample = max(0, int(self.cfg.get("demand_min_sample", 5)))
         out: dict[str, int] = {}
         for cat, t in base.items():
             di = idx.get(cat)
             if di is None:                       # no evidence yet → baseline
                 out[cat] = t
-            elif di < cutoff:                    # stats say it won't sell → don't build
-                out[cat] = 0
-            else:
-                mult = max(floor, min(cap, di / neutral))
-                out[cat] = max(1, round(t * mult))
+                continue
+            mult = max(floor, min(cap, di / neutral))
+            scaled = max(1, round(t * mult))
+            # Keep at least a small sample so every category is measured — demand
+            # weighting redistributes investment, it does not blind the probe.
+            out[cat] = max(scaled, min(min_sample, t))
         return out
 
     def _catalogue_products(self) -> list[dict[str, Any]]:
