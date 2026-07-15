@@ -258,6 +258,15 @@ portfolio:
 # to optimisation once every category reaches target. Targets are configurable.
 catalogue:
   retirement_days: 45            # no views/favourites/sales past this → archive candidate
+  # Demand weighting: scale the targets below by REAL demand (our own sell-through
+  # first, then market/Etsy/Google/Pinterest signals) so ONASSIS builds depth where
+  # products actually sell and does NOT burn credit filling dead categories. With
+  # no data yet (cold start) a category keeps its baseline target, so nothing stalls.
+  demand_weighting: true
+  demand_neutral: 0.5            # demand index that maps to the base target (×1.0)
+  demand_cap: 1.5               # max target multiplier for proven/high-demand categories
+  demand_floor: 0.0             # min multiplier
+  demand_build_cutoff: 0.25     # demand below this (and no sales) → target 0, not built
   targets:
     Mugs: 30
     T-Shirts: 25

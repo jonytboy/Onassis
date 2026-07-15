@@ -39,6 +39,56 @@ def test_gap_analysis_and_mode(config, db):
     assert "Tea Towels" in ga["prioritise"]
 
 
+RUN = "2026-07-15T00:00:00+00:00"
+
+
+def _signal(db, product_type, demand, keyword=None):
+    db.insert_market_signal({"keyword": keyword or product_type,
+                             "product_type": product_type, "demand": demand, "run_at": RUN})
+
+
+def test_demand_weighting_prunes_dead_categories(config, db):
+    """A category the stats say won't sell (low market demand, no sales) drops to
+    target 0 — ONASSIS does not burn credit building it — while a high-demand
+    category keeps/raises its target."""
+    config.catalogue = {"targets": {"Mugs": 20, "Candles": 10}, "demand_weighting": True}
+    _signal(db, "mug", 80)          # strong demand
+    _signal(db, "candle", 10)       # effectively dead
+    t = CatalogueManager(config, db).targets()
+    assert t["Candles"] == 0        # below the build cutoff → not built
+    assert t["Mugs"] == 30          # 0.80/0.50 = 1.6, capped 1.5 → 20×1.5
+
+
+def test_proven_sales_expand_the_target(config, db):
+    """Real sell-through is the strongest signal: a category that actually sells
+    is 'proven' and its target is expanded (up to the cap)."""
+    config.catalogue = {"targets": {"Mugs": 20, "Posters": 20}, "demand_weighting": True}
+    db.upsert_product_performance({"product_key": "ceramic_mug", "units_sold": 50,
+                                   "orders": 50, "gross_revenue": 900, "net_profit": 400})
+    cm = CatalogueManager(config, db)
+    assert cm.targets()["Mugs"] == 30        # proven → mult capped at 1.5
+    assert cm.targets()["Posters"] == 20     # no evidence → baseline
+    ga = {r["category"]: r for r in cm.gap_analysis()["categories"]}
+    assert ga["Mugs"]["demand_status"] == "proven"
+    assert ga["Posters"]["demand_status"] == "unproven"
+
+
+def test_no_evidence_keeps_baseline_targets(config, db):
+    """Cold start (no sales, no market signals) must never block production —
+    every category keeps its baseline target and nothing is pruned."""
+    config.catalogue = {"targets": {"Mugs": 20, "Aprons": 10}, "demand_weighting": True}
+    t = CatalogueManager(config, db).targets()
+    assert t == {"Mugs": 20, "Aprons": 10}
+
+
+def test_demand_weighting_can_be_disabled(config, db):
+    """With weighting off, targets are the operator's fixed numbers regardless
+    of demand."""
+    config.catalogue = {"targets": {"Candles": 10}, "demand_weighting": False}
+    _signal(db, "candle", 5)
+    assert CatalogueManager(config, db).targets()["Candles"] == 10
+
+
 def test_saturated_category_is_suspended(config, db):
     # Override targets to a tiny number so a category saturates.
     config.catalogue = {"targets": {"Mugs": 2, "T-Shirts": 5}}

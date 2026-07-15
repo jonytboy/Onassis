@@ -76,12 +76,11 @@ class CatalogueManager:
 
     # --- Targets & counts -------------------------------------------
 
-    def targets(self) -> dict[str, int]:
-        """Per-category targets: operator setting → config → defaults.
-
-        A config ``targets`` map is authoritative (it replaces the defaults), so
-        operators fully control the catalogue shape; only when none is set do the
-        built-in defaults apply."""
+    def _base_targets(self) -> dict[str, int]:
+        """The operator-defined catalogue shape: config ``targets`` → defaults,
+        with an optional Business-Setting override. These are the *maximum* depth
+        per category; demand weighting only ever scales them down (or up to the
+        cap) — it never invents a category the operator didn't ask for."""
         cfg_targets = self.cfg.get("targets")
         targets = ({k: int(v) for k, v in cfg_targets.items()} if cfg_targets
                    else dict(DEFAULT_TARGETS))
@@ -93,6 +92,82 @@ class CatalogueManager:
         except Exception:
             pass
         return targets
+
+    def category_demand(self) -> dict[str, float | None]:
+        """Per-category demand index in [0,1] from REAL signals — the evidence
+        used to decide what is worth building.
+
+        Priority, best evidence first:
+        * **proven sell-through** — any real sales in a category prove it converts
+          (0.6 baseline + up to 0.4 for relative volume, so winners expand);
+        * **market demand** — the average researched-keyword demand for the
+          category (Google/Pinterest/Etsy trends via the market report), 0-100→0-1;
+        * **None** — no evidence yet (cold start): treated as baseline, never
+          pruned, so production is never blocked before any data exists.
+        """
+        # Real sell-through (backward-looking).
+        sales: dict[str, int] = {}
+        for p in self._perf():
+            cat = category_of(p.get("product_key"), p.get("product_key"))
+            sales[cat] = sales.get(cat, 0) + int(p.get("units_sold", 0) or 0)
+        max_units = max(sales.values(), default=0)
+
+        # Market demand (forward-looking) — average keyword demand per category.
+        try:
+            signals = self.db.top_market_signals(limit=500)
+        except Exception:
+            signals = []
+        buckets: dict[str, list[float]] = {}
+        for s in signals:
+            cat = category_of(s.get("product_type"), s.get("keyword"))
+            buckets.setdefault(cat, []).append(float(s.get("demand", 0) or 0))
+        market = {c: sum(v) / len(v) / 100.0 for c, v in buckets.items() if v}
+
+        out: dict[str, float | None] = {}
+        for cat in set(self._base_targets()) | set(sales) | set(market):
+            if max_units > 0 and sales.get(cat, 0) > 0:
+                out[cat] = round(0.6 + 0.4 * (sales[cat] / max_units), 3)
+            elif cat in market:
+                out[cat] = round(market[cat], 3)
+            else:
+                out[cat] = None
+        return out
+
+    def targets(self) -> dict[str, int]:
+        """Demand-weighted per-category targets.
+
+        Starts from the operator's base targets, then — unless
+        ``catalogue.demand_weighting`` is off — scales each by real demand so
+        ONASSIS builds depth where the stats say products will sell and does NOT
+        spend credit filling categories the data says are dead:
+
+        * a category with **no demand evidence** keeps its baseline (cold start
+          is never blocked);
+        * a category whose demand index is **below the build cutoff** (and has no
+          sales) drops to **0** — it is simply not built;
+        * otherwise the target scales by ``demand / demand_neutral``, clamped to
+          ``[demand_floor, demand_cap]`` — proven/high-demand categories can grow
+          up to the cap, weak ones shrink.
+        """
+        base = self._base_targets()
+        if not bool(self.cfg.get("demand_weighting", True)):
+            return base
+        idx = self.category_demand()
+        neutral = float(self.cfg.get("demand_neutral", 0.5)) or 0.5
+        cap = float(self.cfg.get("demand_cap", 1.5))
+        floor = float(self.cfg.get("demand_floor", 0.0))
+        cutoff = float(self.cfg.get("demand_build_cutoff", 0.25))
+        out: dict[str, int] = {}
+        for cat, t in base.items():
+            di = idx.get(cat)
+            if di is None:                       # no evidence yet → baseline
+                out[cat] = t
+            elif di < cutoff:                    # stats say it won't sell → don't build
+                out[cat] = 0
+            else:
+                mult = max(floor, min(cap, di / neutral))
+                out[cat] = max(1, round(t * mult))
+        return out
 
     def _catalogue_products(self) -> list[dict[str, Any]]:
         """Products that count toward the catalogue (active, not archived)."""
@@ -113,12 +188,18 @@ class CatalogueManager:
     def gap_analysis(self) -> dict[str, Any]:
         targets = self.targets()
         counts = self.current_counts()
+        demand = self.category_demand()
         rows: list[dict[str, Any]] = []
         for cat, target in targets.items():
             current = counts.get(cat, 0)
+            di = demand.get(cat)
             rows.append({
                 "category": cat, "target": target, "current": current,
                 "remaining": max(0, target - current),
+                "demand": (round(di, 3) if di is not None else None),
+                "demand_status": ("proven" if (di is not None and di >= 0.6)
+                                  else "wanted" if di is not None
+                                  else "unproven"),
                 "status": _status(current, target)})
         rows.sort(key=lambda r: (-r["remaining"], r["category"]))
         prioritise = [r["category"] for r in rows
