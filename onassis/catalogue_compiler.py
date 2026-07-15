@@ -76,6 +76,12 @@ class CatalogueCompiler:
                 stopped = "targets_met"
                 break
 
+            # Keep a fresh, diverse supply of ideas flowing so a big run doesn't
+            # stall after one batch — research + generate more, biased to the gaps.
+            if not self._ensure_ideas():
+                stopped = "no_opportunities"
+                break
+
             units += 1
             try:
                 unit = self.daily.build_unit(
@@ -118,6 +124,45 @@ class CatalogueCompiler:
             "products": built,
             "catalogue": CatalogueManager(self.config, self.db).catalogue_dashboard(),
         }
+
+
+    def _ensure_ideas(self, min_backlog: int = 1) -> bool:
+        """Guarantee a supply of fresh product ideas so the compiler can keep
+        building a *diverse* catalogue instead of stalling after one batch.
+
+        When the backlog runs low it generates more (biased toward the under-
+        represented categories); if the current market report is exhausted it
+        researches fresh keywords first, then generates again. Returns False only
+        when even fresh research yields no new ideas (genuinely nothing to build).
+
+        A daily object without an opportunity engine (a stub) short-circuits to
+        True — build_unit is then responsible for its own idea supply."""
+        opps = getattr(self.daily, "opportunities", None)
+        if opps is None:
+            return True
+        if len(opps.top(limit=min_backlog)) >= min_backlog:
+            return True
+        focus = ", ".join(
+            CatalogueManager(self.config, self.db).priority_categories()[:4]) or None
+        # First draw more from the current market report.
+        try:
+            opps.generate(focus=focus)
+        except Exception:  # generation is best-effort — never crash the compile
+            log.debug("idea generation failed", exc_info=True)
+        if opps.top(limit=1):
+            return True
+        # Report exhausted — research fresh keywords, then generate again.
+        market = getattr(self.daily, "market", None)
+        if market is not None:
+            try:
+                market.research()
+            except Exception:
+                log.debug("market research failed", exc_info=True)
+        try:
+            opps.generate(focus=focus)
+        except Exception:
+            log.debug("idea generation (post-research) failed", exc_info=True)
+        return bool(opps.top(limit=1))
 
 
 def _no_ideas(exc: Exception) -> bool:

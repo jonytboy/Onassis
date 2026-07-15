@@ -86,6 +86,68 @@ def test_compiler_isolates_a_crashing_unit(config, db):
     assert r["built"] == 2 and r["blocked"] >= 1
 
 
+class StubOpps:
+    """A backlog that refills a fixed number of times, then runs dry — models the
+    opportunity engine so idea replenishment can be tested."""
+
+    def __init__(self, per_gen=3, max_gens=2):
+        self.backlog: list[str] = []
+        self.per_gen = per_gen
+        self.max_gens = max_gens
+        self.gens = 0
+
+    def top(self, limit=1):
+        return self.backlog[:limit]
+
+    def generate(self, count=None, focus=None):
+        if self.gens >= self.max_gens:
+            return {"generated": 0}
+        self.gens += 1
+        self.backlog += [f"opp{self.gens}_{i}" for i in range(self.per_gen)]
+        return {"generated": self.per_gen}
+
+
+class ReplenishDaily:
+    """A daily cycle stub with an idea supply: build_unit consumes one idea."""
+
+    def __init__(self, db, *, per_gen=3, max_gens=2):
+        self.db = db
+        self.opportunities = StubOpps(per_gen=per_gen, max_gens=max_gens)
+        self.market = _MarketSpy()
+        self.built = 0
+
+    def build_unit(self, *, go_live=None, ignore_cap=False):
+        if not self.opportunities.backlog:
+            return {"status": "skipped", "reason": "no opportunity", "products": []}
+        self.opportunities.backlog.pop(0)
+        self.built += 1
+        self.db.insert_ai_request({"provider": "openai", "model": "gpt-image-1",
+                                   "kind": "image", "cost_usd": 0.1})
+        return {"status": "ok", "campaign_id": self.built,
+                "products": [{"product_key": "ceramic_mug", "product_name": "Mug",
+                              "category": "Mugs"}]}
+
+
+class _MarketSpy:
+    def __init__(self):
+        self.research_calls = 0
+
+    def research(self):
+        self.research_calls += 1
+        return {}
+
+
+def test_compiler_replenishes_ideas_until_supply_is_exhausted(config, db):
+    """The compiler keeps building across multiple idea batches (replenishment),
+    not just one — then stops cleanly when ideas genuinely run out."""
+    daily = ReplenishDaily(db, per_gen=3, max_gens=2)
+    r = CatalogueCompiler(config, db, daily).compile(budget_usd=1000)
+    # 2 generations × 3 ideas = 6 products across replenishment rounds.
+    assert r["built"] == 6 and r["stopped"] == "no_opportunities"
+    # Fresh market research was triggered when a batch ran dry.
+    assert daily.market.research_calls >= 1
+
+
 # --- Integration with the real pipeline ------------------------------
 
 def test_build_unit_builds_and_drafts_products(production_cycle, db):
