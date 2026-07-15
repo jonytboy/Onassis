@@ -453,6 +453,21 @@ def test_archived_products_vanish_from_the_approval_workspace(client):
     assert sku not in all_skus
 
 
+def test_legacy_compliance_buckets_clear_with_the_queue(client):
+    """The Auto-approved / Needs-review / Blocked summary strip is bound to
+    active campaigns — archiving a campaign's product removes its stale
+    'Prepare Etsy listing…' compliance card too, instead of orphaning it."""
+    db = client.app.state.db
+    cid, sku = _seed_launched_product(db, key="mug")   # seeds an APPROVE report
+    before = client.get("/operations/api/approvals").json()
+    assert any(a["campaign_id"] == cid
+               for a in before["auto_approved"] + before["needs_review"] + before["blocked"])
+    db.set_product_active(sku, False)
+    after = client.get("/operations/api/approvals").json()
+    assert not any(a.get("campaign_id") == cid
+                   for a in after["auto_approved"] + after["needs_review"] + after["blocked"])
+
+
 def test_publish_builds_from_product_when_no_ceo_score(client, monkeypatch):
     """An operator-approved product with no CEO score still builds a listing
     (the operator's approval is the gate), instead of 'No CEO-approved score'."""

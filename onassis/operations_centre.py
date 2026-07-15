@@ -1645,8 +1645,10 @@ def _approvals(state: Any) -> dict[str, Any]:
     # cleared them, so they must vanish from queue/ready/published, not linger.
     # (The Product Status Engine derives status independently of the active flag,
     # so without this filter an archived product still shows as "ready".)
-    rows = [_product_row(state, p, ctx)
-            for p in state.db.list_products() if p.get("active", 1)]
+    products = [p for p in state.db.list_products() if p.get("active", 1)]
+    active_cids = {p.get("campaign_id") for p in products if p.get("campaign_id")}
+    active_keys = {p.get("product_key") for p in products if p.get("product_key")}
+    rows = [_product_row(state, p, ctx) for p in products]
     queue, ready, published = [], [], []
     for r in rows:
         if r["status"] in ("awaiting_approval", "failed"):
@@ -1656,9 +1658,13 @@ def _approvals(state: Any) -> dict[str, Any]:
         elif r["status"] in ("draft_created", "live", "marketing", "tracking"):
             published.append(_approval_card(state, r, ctx))
 
-    # Legacy compliance-derived buckets (kept for the summary strip).
+    # Legacy compliance-derived buckets (the summary strip). Bound to campaigns
+    # that still have an ACTIVE product — so clearing the queue clears these too,
+    # instead of leaving orphaned "Prepare Etsy listing…" cards from dead runs.
     blocked, review, auto = [], [], []
-    for r in state.db.list_compliance_reports()[:50]:
+    for r in state.db.list_compliance_reports()[:100]:
+        if r.get("campaign_id") not in active_cids:
+            continue
         verdict = (r.get("verdict") or "").upper()
         item = {"subject": r.get("subject"), "verdict": verdict,
                 "score": r.get("compliance_score"), "campaign_id": r.get("campaign_id")}
@@ -1668,7 +1674,9 @@ def _approvals(state: Any) -> dict[str, Any]:
             review.append(item)
         else:
             auto.append(item)
-    for d in state.db.list_protection_decisions(decision="REJECT")[:20]:
+    for d in state.db.list_protection_decisions(decision="REJECT")[:40]:
+        if d.get("product_key") not in active_keys:
+            continue
         review.append({"subject": f"{d['action']} · {d.get('product_key') or ''}",
                        "verdict": "PROTECTION_HOLD", "score": d.get("confidence"),
                        "reason": d.get("reason")})
