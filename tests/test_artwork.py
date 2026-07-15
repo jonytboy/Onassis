@@ -368,6 +368,35 @@ def test_master_and_print_prompts_are_brief_driven():
     assert "transparent background" in print_prompt.lower()
 
 
+# --- Sprint 45: artwork diversity -----------------------------------
+
+def test_brief_palette_and_illustration_style_reach_the_prompt():
+    """A concept's own palette and illustration style drive the artwork, instead
+    of collapsing to the fixed terracotta / 'warm editorial' fallback."""
+    b = CommercialPromptBuilder()
+    brief = {"theme": "Cycladic blue architecture",
+             "colour_palette": ["cobalt blue", "whitewash", "gold"],
+             "illustration_style": "bold flat vector with hard shadows",
+             "emotional_angle": "crisp island clarity"}
+    master = b.master(brief)
+    assert "cobalt blue" in master and "whitewash" in master
+    assert "bold flat vector with hard shadows" in master
+    # The fixed fallback must NOT be used when the brief carries its own direction.
+    assert "warm, editorial and aspirational" not in master
+
+
+def test_palette_and_mood_vary_by_theme_when_unspecified():
+    """With no explicit palette/style, different themes still get different
+    palettes and moods (deterministically) — not one identical look."""
+    b = CommercialPromptBuilder()
+    a = b.master({"theme": "Aegean fishing villages", "emotional_angle": "calm"})
+    c = b.master({"theme": "Tuscan golden vineyards", "emotional_angle": "calm"})
+    # Same call is stable (deterministic) ...
+    assert b.master({"theme": "Aegean fishing villages", "emotional_angle": "calm"}) == a
+    # ... but two distinct themes resolve to different palette/mood language.
+    assert a != c
+
+
 # --- OpenAI production backend --------------------------------------
 
 class _Capture:

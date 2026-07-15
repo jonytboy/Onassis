@@ -123,6 +123,17 @@ def dedupe_key(product_type: str, theme: str, emotional_angle: str) -> str:
     return "|".join(_normalise(p) for p in (product_type, theme, emotional_angle))
 
 
+def _tokens(text: str) -> set[str]:
+    return {t for t in _normalise(text).split() if len(t) > 2}
+
+
+def _jaccard(a: set[str], b: set[str]) -> float:
+    """Token overlap in [0,1]; 0 when either side is empty."""
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
 class OpportunityEngine:
     """Generates, ranks, stores, and serves product opportunities."""
 
@@ -200,6 +211,16 @@ class OpportunityEngine:
         raw = gen.get("opportunities", []) or []
 
         existing_keys = self.db.opportunity_dedupe_keys()
+        # Near-duplicate guard (Sprint 45): the exact fingerprint only blocks
+        # identical product_type|theme|angle triples, so slight rewordings of the
+        # same concept ("olive branch / coastal calm" twice) slip through and make
+        # the catalogue look samey. Also reject a concept whose theme strongly
+        # overlaps an existing one for the same product type.
+        sim_threshold = float(self.cfg.get("near_duplicate_similarity", 0.7))
+        concepts: list[tuple[str, set[str]]] = [
+            (_normalise(o.get("product_type", "")), _tokens(o.get("theme", "")))
+            for o in self.db.list_opportunities()
+        ]
         seen: set[str] = set()
         stored: list[dict[str, Any]] = []
         duplicates = 0
@@ -212,7 +233,14 @@ class OpportunityEngine:
             if not key.strip("|") or key in existing_keys or key in seen:
                 duplicates += 1
                 continue
+            pt = _normalise(item.get("product_type", ""))
+            toks = _tokens(item.get("theme", ""))
+            if toks and any(pt == ept and _jaccard(toks, etok) >= sim_threshold
+                            for ept, etok in concepts):
+                duplicates += 1
+                continue
             seen.add(key)
+            concepts.append((pt, toks))
             opp = self._build(item, brand, key)
             opp["id"] = self.db.insert_opportunity(opp)
             stored.append(opp)

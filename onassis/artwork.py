@@ -27,6 +27,7 @@ is always produced.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -227,12 +228,51 @@ class CommercialPromptBuilder:
             "theme": theme, "customer": customer, "emotion": emotion,
             "artwork": artwork, "rationale": rationale,
             "palette": self._palette_words(brief),
-            "mood": f"warm, editorial and aspirational, evoking {emotion}",
+            "mood": self._mood_words(brief, emotion),
             "season_line": f"Evoke {season}. " if season else "",
         }
 
+    # Distinct on-brand palette / mood families. When the brief carries no
+    # explicit direction we pick one deterministically from the theme, so every
+    # concept still looks different instead of collapsing to one terracotta look
+    # (Sprint 45 — artwork diversity).
+    _PALETTE_FAMILIES = (
+        "warm Mediterranean neutrals with a terracotta accent",
+        "cool Aegean blues with whitewashed stone and crisp white",
+        "sun-bleached ochre, warm sand and soft olive green",
+        "deep indigo and bright citrus over cream",
+        "soft coastal pastels — sage, blush and sea-glass",
+        "charcoal and natural linen with a single brass accent",
+        "sunset coral, rose clay and dusty gold",
+        "verdant olive, cypress green and stone grey",
+    )
+    _MOOD_FAMILIES = (
+        "warm, editorial and aspirational",
+        "bright, airy and contemporary",
+        "moody, refined and atmospheric",
+        "fresh, playful and modern",
+        "serene, minimal and calm",
+        "rich, sun-drenched and romantic",
+    )
+
     @staticmethod
-    def _palette_words(brief: dict[str, Any]) -> str:
+    def _variant(seed: str, options: tuple[str, ...]) -> str:
+        """Pick one option deterministically from a seed string (stable across
+        runs, so a given theme always renders consistently)."""
+        h = int(hashlib.sha1(str(seed).encode("utf-8")).hexdigest(), 16)
+        return options[h % len(options)]
+
+    def _mood_words(self, brief: dict[str, Any], emotion: str) -> str:
+        # An idea's own illustration/photography style wins; otherwise vary the
+        # mood by theme rather than always "warm, editorial".
+        style = (brief.get("illustration_style") or brief.get("photography_style") or "").strip()
+        if style:
+            base = style.rstrip(". ")
+        else:
+            base = self._variant(brief.get("theme") or "", self._MOOD_FAMILIES)
+        return f"{base}, evoking {emotion}"
+
+    def _palette_words(self, brief: dict[str, Any]) -> str:
         words: list[str] = []
         for key in ("shirt_colour", "print_colour", "primary_colour", "secondary_colour"):
             val = brief.get(key)
@@ -241,7 +281,10 @@ class CommercialPromptBuilder:
         for c in brief.get("colour_palette", []) or []:
             if c and str(c).lower() not in [w.lower() for w in words]:
                 words.append(str(c))
-        return ", ".join(words) or "warm Mediterranean neutrals with a terracotta accent"
+        if words:
+            return ", ".join(words)
+        # No explicit palette — pick a distinct on-brand family from the theme.
+        return self._variant(brief.get("theme") or "", self._PALETTE_FAMILIES)
 
 
 class ArtworkReview:

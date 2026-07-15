@@ -167,11 +167,21 @@ class RevenueExpansionEngine:
     # --- Launch plan (CEO decides) ----------------------------------
 
     def _catalogue_reorder(self, ceo_ok: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Move products in saturated (at-target) categories to the back so gaps
-        fill first. Stable within each group; no-op when nothing is saturated."""
+        """Steer the launch selection with the Catalogue Manager (Sprint 44).
+
+        In **build mode** (any category below target) the full gap analysis drives
+        the order: products in critical/priority categories sort first and
+        saturated ones last, so ONASSIS builds breadth across the catalogue
+        instead of re-launching the same families (mugs/posters/totes) every
+        cycle. In **optimise mode** (every target met) we keep the composite order
+        but push at-target categories to the back. Never breaks expansion."""
         try:
             from onassis.catalogue import CatalogueManager, category_of
-            saturated = CatalogueManager(self.config, self.db).saturated_categories()
+            cm = CatalogueManager(self.config, self.db)
+            if cm.mode() == "build":
+                # Fill the gaps first — this is the diversity driver.
+                return cm.rank_for_build(ceo_ok)
+            saturated = cm.saturated_categories()
         except Exception:  # never let catalogue analysis break expansion
             return ceo_ok
         if not saturated:

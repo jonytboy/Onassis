@@ -88,6 +88,26 @@ def test_cold_start_guarantees_min_variants(engine, db):
     assert below and all(s["ceo_verdict"] == "APPROVE" for s in below)
 
 
+def test_build_mode_fills_category_gaps_first(config, db):
+    """Sprint 45 — in build mode the Catalogue Manager steers the launch: an
+    under-represented category leads even over a higher-scoring saturated one, so
+    ONASSIS builds breadth instead of re-launching the same families."""
+    # Targets: Mugs satisfied by one existing product; T-Shirts wide open.
+    config.catalogue = {"targets": {"Mugs": 1, "T-Shirts": 25}}
+    db.insert_product({"sku": "9-ceramic_mug", "name": "Ceramic Mug",
+                       "campaign_id": 9, "product_key": "ceramic_mug"})
+    engine = RevenueExpansionEngine(config, db)
+    ceo_ok = [
+        {"product_key": "ceramic_mug", "product_name": "Ceramic Mug", "composite_score": 95},
+        {"product_key": "premium_tshirt", "product_name": "Premium T-Shirt",
+         "composite_score": 70},
+    ]
+    ordered = engine._catalogue_reorder(list(ceo_ok))
+    # The empty T-Shirts category leads despite the mug's higher score.
+    assert ordered[0]["product_key"] == "premium_tshirt"
+    assert ordered[-1]["product_key"] == "ceramic_mug"
+
+
 def test_variants_capped_at_max(config, db):
     """Even with a very low threshold, no more than max_variants launch."""
     config.expansion = {**config.expansion, "score_threshold": 1, "max_variants": 4}

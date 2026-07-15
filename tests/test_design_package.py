@@ -92,6 +92,10 @@ def test_design_brief_has_every_required_field(config, db, tmp_path):
     # Carried from the opportunity.
     assert brief["product_name"] == "Amalfi Morning Tee"
     assert brief["target_customer"] == "design-loving travellers"
+    # Per-idea visual direction is carried through to the artwork (Sprint 45).
+    assert brief["colour_palette"] == ["citrus", "whitewash", "sea blue"]
+    assert brief["illustration_style"] == "watercolour"
+    assert brief["photography_style"] == "morning light"
     # Deterministic print spec.
     assert brief["transparent_background_required"] is True
     assert brief["dpi_requirement"] == 300

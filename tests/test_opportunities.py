@@ -116,6 +116,26 @@ def test_duplicate_concepts_in_one_batch_are_skipped(config, db):
     assert result["duplicates_skipped"] == 1
 
 
+def test_near_duplicate_reworded_theme_is_skipped(config, db):
+    """A slight rewording of the same concept (same product type, heavily
+    overlapping theme) is rejected — otherwise the catalogue looks samey."""
+    _engine(config, db, [_item(theme="Slow coastal Mediterranean mornings")]).generate(1)
+    # Same product_type, theme is a near-reword -> caught by the similarity guard
+    # even though the exact fingerprint differs.
+    result = _engine(config, db, [
+        _item(theme="Slow coastal mornings by the Mediterranean",
+              emotional_angle="a different angle entirely")]).generate(1)
+    assert result["generated"] == 0 and result["duplicates_skipped"] == 1
+
+
+def test_genuinely_different_theme_is_kept(config, db):
+    """A distinct concept for the same product type is NOT a near-duplicate."""
+    _engine(config, db, [_item(theme="Slow coastal mornings")]).generate(1)
+    result = _engine(config, db, [
+        _item(theme="Bold geometric Cycladic architecture at midday")]).generate(1)
+    assert result["generated"] == 1 and result["duplicates_skipped"] == 0
+
+
 def test_duplicates_against_existing_backlog_are_skipped(config, db):
     _engine(config, db, [_item()]).generate(1)
     # A second run yielding the same concept must not create a duplicate.

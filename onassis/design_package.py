@@ -205,6 +205,13 @@ class DesignPackageBuilder:
             "product_name": opp.get("product_name"),
             "target_customer": opp.get("target_customer"),
             "emotional_angle": opp.get("emotional_angle"),
+            # Per-idea visual direction (Sprint 45) — carry the opportunity's own
+            # palette and illustration/photography style through to the artwork
+            # prompt so every concept looks distinct, instead of collapsing to the
+            # generator's fixed terracotta/"warm editorial" fallback.
+            "colour_palette": opp.get("colour_palette") or [],
+            "illustration_style": opp.get("illustration_style") or "",
+            "photography_style": opp.get("photography_style") or "",
             "shirt_colour": design["shirt_colour"],
             "print_colour": design["print_colour"],
             "typography_direction": design["typography_direction"],
