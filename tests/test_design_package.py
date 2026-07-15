@@ -57,6 +57,29 @@ def _builder(config, db, *, compliance=None) -> DesignPackageBuilder:
     return b
 
 
+# --- Art-direction diversity (Sprint 47) ----------------------------
+
+def test_art_direction_is_deterministic_and_varied():
+    from onassis.design_package import art_direction
+
+    # Stable for a given design (so rebuilds don't change the look)...
+    assert art_direction("OPP-abc")["name"] == art_direction("OPP-abc")["name"]
+    # ...but spread across many distinct styles over a catalogue of designs.
+    names = {art_direction(f"OPP-{i}")["name"] for i in range(50)}
+    assert len(names) >= 6
+
+
+def test_design_prompt_forces_a_distinct_art_direction(config, db):
+    """Every design is handed a MANDATORY, style-specific art direction so the
+    catalogue stops collapsing into one beige wordmark."""
+    prompt = _builder(config, db)._prompt(
+        {"opportunity_id": "OPP-xyz", "product_name": "X", "product_type": "mug",
+         "theme": "t", "colour_palette": []})
+    assert "ART DIRECTION" in prompt and "MANDATORY" in prompt
+    assert "NOT a subtle brand wordmark" in prompt
+    assert "do NOT default to plain beige/ecru" in prompt
+
+
 # --- Happy path -----------------------------------------------------
 
 def test_build_writes_all_six_files(config, db, tmp_path):

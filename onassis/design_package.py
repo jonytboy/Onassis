@@ -34,6 +34,7 @@ safe margin, Gelato notes) is deterministic from config.
 from __future__ import annotations
 
 import json
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -83,6 +84,62 @@ _SYSTEM = (
     "generators; you do not create the assets yourself. Be concrete and "
     "specific so no human interpretation is needed."
 )
+
+
+# Distinct art directions (Sprint 47). Left to itself the design LLM collapses
+# every product into the same minimalist beige wordmark. One direction is
+# assigned per design — deterministically, so a design is stable across rebuilds
+# — and injected as a MANDATORY brief, so the catalogue is visually varied AND
+# striking instead of one house style repeated. Each carries its own real palette
+# so the output isn't all ecru.
+_ART_DIRECTIONS: list[dict[str, str]] = [
+    {"name": "Vintage travel poster",
+     "brief": "a bold, illustrative vintage Mediterranean travel-poster scene with "
+              "confident shapes, real depth and a rich saturated palette",
+     "palette": "sun-drenched cobalt, ochre, coral and cream"},
+    {"name": "Botanical line illustration",
+     "brief": "an elegant detailed single-line botanical illustration (olive, citrus, "
+              "fig or wild herbs) with beautiful negative space",
+     "palette": "deep olive green on warm ivory"},
+    {"name": "Hand-painted watercolour",
+     "brief": "a loose painterly hand-painted watercolour scene with visible brush "
+              "texture and soft colour bleeds",
+     "palette": "aegean blues, terracotta and sea-glass"},
+    {"name": "Retro geometric",
+     "brief": "a bold 1970s-inspired geometric composition of arches, suns and waves "
+              "in flat colour blocks",
+     "palette": "burnt orange, mustard, teal and cream"},
+    {"name": "Mediterranean tile mosaic",
+     "brief": "an ornate repeating Mediterranean / Moorish tile pattern with intricate "
+              "symmetry",
+     "palette": "cobalt and white with warm gold accents"},
+    {"name": "Risograph print",
+     "brief": "a punchy two-colour risograph-style print with grain, overprint and a "
+              "graphic contemporary feel",
+     "palette": "hot coral and deep blue on off-white"},
+    {"name": "Linocut block print",
+     "brief": "a high-contrast hand-carved linocut / block print of a coastal scene "
+              "with bold gouged texture",
+     "palette": "single deep indigo on natural stone"},
+    {"name": "Minimal type lockup",
+     "brief": "a refined minimalist typographic lockup with a small emblem — elegant "
+              "and editorial",
+     "palette": "warm terracotta on ecru"},
+    {"name": "Abstract modern shapes",
+     "brief": "bold abstract modern shapes evoking sun, sea and hills, layered with "
+              "confident colour",
+     "palette": "coral, sand, olive and sky blue"},
+    {"name": "Painterly still life",
+     "brief": "a warm painterly still life of lemons, olives, ceramics and linen with "
+              "rich light and shadow",
+     "palette": "golden ochre, deep green and warm white"},
+]
+
+
+def art_direction(seed: str) -> dict[str, str]:
+    """Pick one art direction deterministically from a seed (stable per design)."""
+    h = int(hashlib.sha1(str(seed).encode("utf-8")).hexdigest(), 16)
+    return _ART_DIRECTIONS[h % len(_ART_DIRECTIONS)]
 
 
 class DesignPackageError(RuntimeError):
@@ -292,6 +349,17 @@ class DesignPackageBuilder:
 
     def _prompt(self, opp: dict[str, Any], corrections: list[str] | None = None) -> str:
         palette = ", ".join(opp.get("colour_palette", []))
+        ad = art_direction(opp.get("opportunity_id") or opp.get("product_name") or "")
+        art = (
+            "\nART DIRECTION — MANDATORY (make THIS design visually distinct):\n"
+            f"- Style: {ad['name']} — {ad['brief']}.\n"
+            f"- Palette: base the print and garment/product colours on {ad['palette']} "
+            "(do NOT default to plain beige/ecru unless this palette says so).\n"
+            "- Commit FULLY to this style and make it striking and retail-ready — a "
+            "design someone would actually buy — NOT a subtle brand wordmark or logo. "
+            "The `artwork_description`, `print_colour` and `shirt_colour` MUST reflect "
+            "this style and palette.\n"
+        )
         amend = ""
         if corrections:
             bullets = "\n".join(f"- {c}" for c in corrections)
@@ -302,8 +370,7 @@ class DesignPackageBuilder:
                 f"{bullets}\n"
             )
         return f"""Translate this approved product opportunity into a print-ready design direction.
-{amend}
-
+{amend}{art}
 OPPORTUNITY
 - Product name: {opp.get('product_name')}
 - Product type: {opp.get('product_type')}
