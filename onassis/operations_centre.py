@@ -949,6 +949,51 @@ def build_operations_router(get_state) -> APIRouter:
                 "count": db.count_gelato_catalogue(),
                 "available": db.count_gelato_catalogue(available_only=True)}
 
+    @router.post("/api/catalogue/compile")
+    def api_compile_catalogue(request: Request, payload: dict | None = None) -> Any:
+        """Build a whole catalogue in one event (Sprint 46) — runs in the
+        background, bounded by a $ budget cap; products land as private drafts."""
+        _require_operator(request)
+        state = get_state(request.app)
+        if state.mode != RUNNING:
+            raise HTTPException(status_code=409,
+                                detail=f"Business is {state.mode} — resume it first.")
+        if state.is_running:
+            raise HTTPException(status_code=409, detail="A run is already in progress.")
+        body = payload or {}
+        budget = body.get("budget_usd")
+        budget = float(budget) if budget not in (None, "") else None
+        max_products = body.get("max_products")
+        max_products = int(max_products) if max_products not in (None, "") else None
+        mode = str(body.get("mode") or "auto_draft")
+        daily = request.app.state.daily
+        state.begin_run()
+        state.add_log(f"COMPILE CATALOGUE requested — budget=${budget}, "
+                      f"max={max_products}, mode={mode}.")
+
+        def worker() -> None:
+            handler = _RunLogHandler(state)
+            root = logging.getLogger("onassis")
+            root.addHandler(handler)
+            try:
+                from onassis.catalogue_compiler import CatalogueCompiler
+                result = CatalogueCompiler(
+                    request.app.state.config, request.app.state.db, daily).compile(
+                    budget_usd=budget, max_products=max_products, mode=mode)
+                state.end_run("completed", result)
+                state.add_log(f"COMPILE finished: {result['built']} product(s), "
+                              f"${result['spend_usd']} spent (stopped: {result['stopped']}).")
+            except Exception as exc:  # never crash the server on a compile failure
+                state.end_run("failed", {"error": str(exc)})
+                state.add_log(f"COMPILE crashed: {exc}", "error")
+                log.exception("Catalogue compile failed")
+            finally:
+                root.removeHandler(handler)
+
+        threading.Thread(target=worker, name="compile-catalogue", daemon=True).start()
+        return {"status": "started", "budget_usd": budget,
+                "max_products": max_products, "mode": mode}
+
     # --- Marketing distribution via Make.com (Sprint 43) ---
     @router.get("/api/distribution")
     def api_distribution(request: Request) -> Any:

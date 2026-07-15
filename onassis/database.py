@@ -1330,6 +1330,13 @@ class Database:
                 (request_date,)).fetchone()
         return float(row[0])
 
+    def ai_spend_total(self) -> float:
+        """All-time AI spend (USD). Snapshot before/after an operation to measure
+        its cost — used by the Catalogue Compiler's budget cap."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT COALESCE(SUM(cost_usd),0) FROM ai_requests").fetchone()
+        return float(row[0])
+
     def ai_cost_by_stage(self, request_date: str | None = None) -> list[dict[str, Any]]:
         sql = ("SELECT stage, COALESCE(SUM(cost_usd),0) AS cost, COUNT(*) AS n "
                "FROM ai_requests")

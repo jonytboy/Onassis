@@ -282,7 +282,10 @@
   <div x-show="tab==='catalogue'">
     <div class="panel" x-show="catalogue" style="margin-bottom:12px">
       <h2>Catalogue — <span class="pill" :class="catalogue?.mode==='build'?'needs_review':'ok'" x-text="catalogue?.mode==='build'?'Build Mode':'Optimisation Mode'"></span>
-        <button class="btn small" style="float:right" @click="syncGelato()">Sync Gelato catalogue</button></h2>
+        <span style="float:right">
+          <button class="btn small" @click="syncGelato()">Sync Gelato catalogue</button>
+          <button class="btn small" @click="compileCatalogue()">Compile catalogue…</button>
+        </span></h2>
       <div class="grid">
         <div class="stat"><div class="k">Overall health</div><div class="v" x-text="(catalogue?.health?.overall??0)+'%'"></div></div>
         <div class="stat"><div class="k">Category balance</div><div class="v sm" x-text="(catalogue?.health?.category_balance??0)+'%'"></div></div>
@@ -1171,6 +1174,13 @@ function ops(){
       const r=await this.post('/operations/api/approvals/cleanup',{});
       this.showToast('Archived '+(r?.archived||0)+' unpublished product(s).');
       this.loadTab('approvals'); this.pollLogs(); },
+    async compileCatalogue(){
+      const budget=prompt('Compile catalogue — maximum AI spend for this run (USD).\nIt builds products across categories until the budget is hit or targets are met, then stops. Products land as private Etsy/Shopify drafts for review.','25');
+      if(budget===null) return;
+      const b=parseFloat(budget); if(!(b>0)){ alert('Enter a positive dollar budget.'); return; }
+      const r=await this.post('/operations/api/catalogue/compile',{budget_usd:b,mode:'auto_draft'});
+      if(r&&r.status==='started'){ this.showToast('Compiling catalogue (budget $'+b+') — watch the log.'); this.refreshRun(); this.pollLogs(); }
+      else { alert('Could not start compile: '+((r&&r.detail)||r?.error||'unknown')); } },
     async syncGelato(){
       if(!confirm('Pull your real Gelato product catalogue into ONASSIS? This replaces manual UID entry — synced products become buildable automatically.')) return;
       this.showToast('Syncing Gelato catalogue…');

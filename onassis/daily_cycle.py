@@ -458,7 +458,8 @@ class DailyCycle:
         except Exception:  # fall back to raw config on any lookup problem
             return int((self.config.portfolio or {}).get("max_new_listings_per_day", 2))
 
-    def _stream_products(self, ctx: dict[str, Any]) -> dict[str, Any]:
+    def _stream_products(self, ctx: dict[str, Any], *, ignore_cap: bool = False,
+                         go_live_override: bool | None = None) -> dict[str, Any]:
         """Stream each approved product to a live Etsy draft, independently.
 
         Revenue beats completeness: for every product we run the *whole* tail —
@@ -467,6 +468,10 @@ class DailyCycle:
         and only THEN move to the next product. The first sellable product reaches
         Etsy as early as possible. A product that fails is isolated: it is logged
         and skipped, never rolled back, and the remaining products still run.
+
+        ``ignore_cap`` skips the daily portfolio cap (the Catalogue Compiler is an
+        explicit bulk build-out, bounded by its own budget cap). ``go_live_override``
+        forces draft-only (False) or live (True) regardless of the launch policy.
         """
         if ctx["dry"]:
             return {"status": "skipped", "detail": "dry run"}
@@ -480,21 +485,23 @@ class DailyCycle:
         # Portfolio guard — never flood Etsy. Cap NEW live/draft listings per day.
         # Honour the operator's Business Setting (DB override) over the config
         # default, so raising "Max Campaigns / Day" in the UI actually takes effect.
-        cap = int(self._daily_listing_cap())
-        already = self.db.count_new_listings_today()
-        remaining = max(0, cap - already)
         capped = 0
-        if len(specs) > remaining:
-            capped = len(specs) - remaining
-            log.info("[stream] Portfolio cap: %d/%d listing(s) already today; "
-                     "publishing %d, deferring %d.", already, cap, remaining, capped)
-            specs = specs[:remaining]
-        if not specs:
-            return {"status": "skipped",
-                    "detail": f"daily listing cap reached ({already}/{cap})"}
+        if not ignore_cap:
+            cap = int(self._daily_listing_cap())
+            already = self.db.count_new_listings_today()
+            remaining = max(0, cap - already)
+            if len(specs) > remaining:
+                capped = len(specs) - remaining
+                log.info("[stream] Portfolio cap: %d/%d listing(s) already today; "
+                         "publishing %d, deferring %d.", already, cap, remaining, capped)
+                specs = specs[:remaining]
+            if not specs:
+                return {"status": "skipped",
+                        "detail": f"daily listing cap reached ({already}/{cap})"}
 
         design_package = ctx.get("design_package")
-        go_live = self.publisher.auto_go_live
+        go_live = (self.publisher.auto_go_live if go_live_override is None
+                   else bool(go_live_override))
         stream: list[dict[str, Any]] = []
         live_results: list[dict[str, Any]] = []
         published = live = 0
@@ -600,6 +607,40 @@ class DailyCycle:
             "products": len(specs), "published": published, "live": live,
             "failed": len(failed), "deferred_by_cap": capped,
             "first_draft_at": first_draft_at, "timeline": stream}}
+
+    def build_unit(self, *, go_live: bool | None = None,
+                   ignore_cap: bool = False) -> dict[str, Any]:
+        """Build ONE product unit end-to-end (opportunity → design → master
+        artwork → campaign → expand → publish drafts) and return a summary.
+
+        This is exactly the daily cycle's product-creation tail (stages 10–15),
+        packaged as one call so the Catalogue Compiler can loop it to build a
+        whole catalogue in one event — without duplicating the pipeline. ``go_live``
+        forces draft-only (False) or live (True); ``ignore_cap`` skips the daily
+        listing cap (the compiler is bounded by its own budget instead)."""
+        ctx: dict[str, Any] = {"dry": False}
+        opp = self._create_opportunity(ctx)
+        if opp["status"] != "ok":
+            return {"status": "skipped", "reason": opp.get("detail", "no opportunity"),
+                    "products": []}
+        for stage in (self._build_design_package, self._generate_master_artwork,
+                      self._create_campaign, self._expand_products):
+            res = stage(ctx)
+            if res["status"] == "blocked":
+                return {"status": "blocked", "reason": res.get("detail"),
+                        "campaign_id": ctx.get("campaign_id"), "products": []}
+        stream = self._stream_products(ctx, ignore_cap=ignore_cap, go_live_override=go_live)
+        from onassis.catalogue import category_of
+        launched = (ctx.get("expansion") or {}).get("launched", [])
+        products = [{"product_key": s["product_key"],
+                     "product_name": s.get("product_name") or s["product_key"],
+                     "category": category_of(s["product_key"], s.get("product_name"))}
+                    for s in launched]
+        return {"status": stream["status"],
+                "campaign_id": ctx.get("campaign_id"),
+                "opportunity": (ctx.get("opportunity") or {}).get("opportunity_id"),
+                "published": (stream.get("detail") or {}).get("published", 0),
+                "products": products}
 
     def _generate_content(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """Generate marketing LAST — only to promote the new product. Produces the
