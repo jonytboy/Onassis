@@ -453,6 +453,27 @@ def test_archived_products_vanish_from_the_approval_workspace(client):
     assert sku not in all_skus
 
 
+def test_unbuildable_generic_product_is_flagged_not_publishable(client):
+    """A product with no matching Gelato type (the anchor 'product' with a null
+    product_key from create_from_opportunity) can never build a listing, so it
+    must be flagged in the queue for archiving — never sit in Ready to publish
+    offering a publish button that will only fail."""
+    db = client.app.state.db
+    brief_id = db.insert_brief({"brief_date": "2026-07-01", "theme": "S", "keywords": []})
+    cid = db.insert_campaign({"name": "Cove-to-Cove", "brief_id": brief_id})
+    db.insert_compliance_report({"campaign_id": cid, "verdict": "APPROVE",
+                                 "reasoning": "ok", "compliance_score": 90})
+    # Anchor product: sku = opportunity id, NO product_key (unbuildable).
+    db.insert_product({"sku": "OPP-generic1", "name": "Cove-to-Cove Weekender",
+                       "campaign_id": cid})
+    w = client.get("/operations/api/approvals").json()
+    assert not any(c["sku"] == "OPP-generic1" for c in w["ready"])
+    card = next(c for c in w["queue"] if c["sku"] == "OPP-generic1")
+    assert card["buildable"] is False
+    assert "approve_and_publish" not in card["actions"] and "approve" not in card["actions"]
+    assert "cannot build" in card["status_label"].lower()
+
+
 def test_legacy_compliance_buckets_clear_with_the_queue(client):
     """The Auto-approved / Needs-review / Blocked summary strip is bound to
     active campaigns — archiving a campaign's product removes its stale

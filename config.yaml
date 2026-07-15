@@ -495,6 +495,52 @@ expansion:
       base_conversion: 0.035
       base_commercial: 68
       available: true
+    # --- Catalogue breadth (Sprint 45) -------------------------------
+    # These broaden the catalogue beyond apparel/wall-art/mug/tote into the
+    # empty target categories (Cushions, Aprons, Tea Towels, Kitchen Accessories)
+    # so ONASSIS stops producing only the same few product types.
+    #
+    # IMPORTANT — each gelato_uid below is a PLACEHOLDER. Before enabling a
+    # product you MUST replace it with the real product UID from YOUR Gelato
+    # catalogue (Gelato dashboard → product → API/UID), then set `available: true`.
+    # An incorrect UID does not fail at listing time — it fails when a real order
+    # is sent to Gelato for production — so they ship disabled by default.
+    - key: throw_cushion
+      name: "Throw Cushion"
+      gelato_uid: "REPLACE_ME_home-and-living_product_cushion"
+      production_cost: 14.0
+      retail_price: 38.0
+      base_brand_fit: 86
+      base_conversion: 0.024
+      base_commercial: 80
+      available: false
+    - key: cotton_apron
+      name: "Cotton Apron"
+      gelato_uid: "REPLACE_ME_home-and-living_product_apron"
+      production_cost: 13.0
+      retail_price: 34.0
+      base_brand_fit: 84
+      base_conversion: 0.022
+      base_commercial: 78
+      available: false
+    - key: linen_tea_towel
+      name: "Linen Tea Towel"
+      gelato_uid: "REPLACE_ME_home-and-living_product_tea-towel"
+      production_cost: 8.0
+      retail_price: 20.0
+      base_brand_fit: 85
+      base_conversion: 0.028
+      base_commercial: 80
+      available: false
+    - key: ceramic_coaster
+      name: "Ceramic Coaster Set"
+      gelato_uid: "REPLACE_ME_home-and-living_product_coaster"
+      production_cost: 9.0
+      retail_price: 24.0
+      base_brand_fit: 82
+      base_conversion: 0.026
+      base_commercial: 78
+      available: false
 
 # --- Launch policy ---------------------------------------------------
 # The pipeline always completes automatically up to "Launch Ready" (a design

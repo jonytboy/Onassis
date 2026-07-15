@@ -1176,6 +1176,16 @@ def _cleanup_incomplete_products(state: Any, *, dry_run: bool = False) -> dict[s
     return {"archived": len(to_archive), "products": to_archive, "dry_run": dry_run}
 
 
+def _buildable_keys(state: Any) -> set[str]:
+    """The product keys ONASSIS can actually build a listing for — i.e. those
+    with a matching Gelato catalogue product. A product outside this set (the
+    generic ``product`` key from a broken cycle) can never produce a listing."""
+    try:
+        return {c["key"] for c in state.daily.expansion.catalogue(include_unavailable=True)}
+    except Exception:
+        return set()
+
+
 def _spec_from_product(state: Any, campaign_id: int, product_key: str) -> dict[str, Any] | None:
     """Build a listing-build spec from the catalogue definition + product record
     when there is no CEO product score (an operator-approved product). Returns
@@ -1649,10 +1659,31 @@ def _approvals(state: Any) -> dict[str, Any]:
     active_cids = {p.get("campaign_id") for p in products if p.get("campaign_id")}
     active_keys = {p.get("product_key") for p in products if p.get("product_key")}
     rows = [_product_row(state, p, ctx) for p in products]
+    # A product whose type has no matching Gelato catalogue product (e.g. the
+    # generic "product" key from a broken cycle) can NEVER build a listing, so it
+    # must not sit in "Ready to publish" fooling the operator into publishing it.
+    # Flag it as un-buildable and route it to the queue for archiving instead.
+    buildable = _buildable_keys(state)
     queue, ready, published = [], [], []
+    _non_published = ("awaiting_approval", "approved", "failed")
     for r in rows:
+        broken = (r["status"] in _non_published
+                  and r.get("product_key") not in buildable)
+        if broken:
+            r["status"] = "failed"
+            r["status_label"] = "Cannot build — unrecognised product type"
+            r["reason"] = (
+                f"Product type '{r.get('product_key') or '—'}' has no matching "
+                "Gelato product, so no listing can be built. Archive it (Clear "
+                "pending) to remove it from the queue.")
+            r["retryable"] = False
         if r["status"] in ("awaiting_approval", "failed"):
-            queue.append(_approval_card(state, r, ctx))
+            card = _approval_card(state, r, ctx)
+            if broken:  # never offer approve/publish/retry — it can only be archived
+                card["actions"] = [a for a in card["actions"]
+                                   if a not in ("retry", "approve", "approve_and_publish")]
+                card["buildable"] = False
+            queue.append(card)
         elif r["status"] == "approved":
             ready.append(_approval_card(state, r, ctx))
         elif r["status"] in ("draft_created", "live", "marketing", "tracking"):
