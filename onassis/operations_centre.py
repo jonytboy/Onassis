@@ -922,6 +922,33 @@ def build_operations_router(get_state) -> APIRouter:
         _require_operator(request)
         return {"collections": request.app.state.catalogue.collection_dashboard()}
 
+    @router.post("/api/catalogue/sync-gelato")
+    def api_sync_gelato(request: Request, payload: dict | None = None) -> Any:
+        """Pull the real Gelato product catalogue into ONASSIS (Sprint 46) so the
+        product list auto-expands with verified UIDs — no manual entry."""
+        _require_operator(request)
+        from onassis.gelato_catalogue import GelatoCatalogueSync, GelatoError
+        state = request.app.state
+        body = payload or {}
+        sync = GelatoCatalogueSync(state.config, state.db)
+        if not sync.is_configured:
+            return {"ok": False, "detail": "Gelato API key not set (GELATO_API_KEY)."}
+        try:
+            result = sync.sync(catalogs=body.get("catalogs") or None,
+                               per_catalog=int(body.get("per_catalog", 1)),
+                               available=bool(body.get("available", True)))
+        except GelatoError as exc:  # network / API error — reported, never fatal
+            return {"ok": False, "detail": str(exc)}
+        return {"ok": True, **result, "total": state.db.count_gelato_catalogue()}
+
+    @router.get("/api/catalogue/gelato")
+    def api_gelato_catalogue(request: Request) -> Any:
+        _require_operator(request)
+        db = request.app.state.db
+        return {"products": db.list_gelato_catalogue(),
+                "count": db.count_gelato_catalogue(),
+                "available": db.count_gelato_catalogue(available_only=True)}
+
     # --- Marketing distribution via Make.com (Sprint 43) ---
     @router.get("/api/distribution")
     def api_distribution(request: Request) -> Any:

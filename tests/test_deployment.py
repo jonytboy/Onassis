@@ -214,7 +214,7 @@ def test_status_combines_version_git_health(svc):
 def test_environment_awareness(svc):
     e = svc.environment()
     assert e["branch"] == "main" and e["git_status"] == "clean"
-    assert e["database_version"] == 47
+    assert e["database_version"] == 48
     assert "application_version" in e
 
 
@@ -350,7 +350,7 @@ def test_restart_bridge_result_clears_marker(config, db, tmp_path, monkeypatch):
 def test_environment_exposes_platform_and_schema(svc):
     e = svc.environment()
     assert e["platform_version"] == svc.version()
-    assert e["schema_version"] == 47 and e["database_version"] == 47
+    assert e["schema_version"] == 48 and e["database_version"] == 48
 
 
 def test_deploy_restart_uses_bridge_when_configured(config, db, tmp_path, monkeypatch):

@@ -298,6 +298,10 @@ gelato:
   retry_backoff_seconds: 0             # linear backoff between retries (0 in tests)
   # api_key + file_base_url are read from GELATO_API_KEY / GELATO_FILE_BASE_URL.
   file_base_url: null                  # public https base that serves exports/<cid>/<key>/print_file.png
+  # Catalogue sync (Sprint 46): "Sync Gelato catalogue" pulls real product UIDs
+  # from Gelato's Product Catalog API into ONASSIS so the product list expands
+  # automatically. The Catalog API doesn't return price, so retail = cost × markup.
+  catalogue_markup: 2.75
 
 # --- Etsy connector (read-only, observation only) --------------------
 # Credentials come from the environment (never commit them):

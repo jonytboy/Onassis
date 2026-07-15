@@ -31,7 +31,7 @@ log = get_logger(__name__)
 # Bump whenever the schema changes (new table / column). Surfaced in the
 # Operations Centre "Environment" panel so an operator can see at a glance
 # whether the running database matches the code they expect.
-SCHEMA_VERSION = 47
+SCHEMA_VERSION = 48
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS briefs (
@@ -204,6 +204,28 @@ CREATE TABLE IF NOT EXISTS distribution_campaigns (
 );
 CREATE INDEX IF NOT EXISTS idx_distcamp_product ON distribution_campaigns(product_id);
 CREATE INDEX IF NOT EXISTS idx_distcamp_status ON distribution_campaigns(status);
+
+-- Gelato product catalogue (Sprint 46). Synced from Gelato's Product Catalog
+-- API so ONASSIS builds from REAL product UIDs automatically instead of a hand-
+-- maintained list. One row per buildable product type.
+CREATE TABLE IF NOT EXISTS gelato_catalogue (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    synced_at       TEXT    NOT NULL,
+    product_uid     TEXT    NOT NULL UNIQUE,     -- Gelato productUid (real fulfilment id)
+    catalog_uid     TEXT,                         -- e.g. posters | mugs | apparel
+    title           TEXT,
+    category        TEXT,                         -- catalogue category (category_of)
+    product_key     TEXT    NOT NULL,             -- our internal product type key
+    production_cost REAL    NOT NULL DEFAULT 0,
+    retail_price    REAL    NOT NULL DEFAULT 0,
+    base_brand_fit  INTEGER NOT NULL DEFAULT 78,
+    base_commercial INTEGER NOT NULL DEFAULT 76,
+    base_conversion REAL    NOT NULL DEFAULT 0.025,
+    attributes      TEXT,                         -- JSON of Gelato product attributes
+    available       INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_gelato_cat_category ON gelato_catalogue(category);
+CREATE INDEX IF NOT EXISTS idx_gelato_cat_key ON gelato_catalogue(product_key);
 
 CREATE TABLE IF NOT EXISTS products (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2509,6 +2531,78 @@ class Database:
                 (run_at, limit),
             ).fetchall()
         return [_row_to_market(r) for r in rows]
+
+    # --- Gelato catalogue (Sprint 46) -------------------------------
+
+    def upsert_gelato_product(self, row: dict[str, Any]) -> None:
+        """Insert or update one synced Gelato product (keyed by product_uid)."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO gelato_catalogue
+                    (synced_at, product_uid, catalog_uid, title, category, product_key,
+                     production_cost, retail_price, base_brand_fit, base_commercial,
+                     base_conversion, attributes, available)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(product_uid) DO UPDATE SET
+                    synced_at=excluded.synced_at, catalog_uid=excluded.catalog_uid,
+                    title=excluded.title, category=excluded.category,
+                    product_key=excluded.product_key,
+                    production_cost=excluded.production_cost,
+                    retail_price=excluded.retail_price,
+                    base_brand_fit=excluded.base_brand_fit,
+                    base_commercial=excluded.base_commercial,
+                    base_conversion=excluded.base_conversion,
+                    attributes=excluded.attributes, available=excluded.available
+                """,
+                (
+                    _utcnow(), row["product_uid"], row.get("catalog_uid"),
+                    row.get("title"), row.get("category"), row["product_key"],
+                    float(row.get("production_cost", 0) or 0),
+                    float(row.get("retail_price", 0) or 0),
+                    int(row.get("base_brand_fit", 78) or 78),
+                    int(row.get("base_commercial", 76) or 76),
+                    float(row.get("base_conversion", 0.025) or 0.025),
+                    json.dumps(row.get("attributes", {})),
+                    1 if row.get("available", True) else 0,
+                ),
+            )
+
+    def list_gelato_catalogue(self, *, available_only: bool = False) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM gelato_catalogue"
+        if available_only:
+            sql += " WHERE available = 1"
+        sql += " ORDER BY category, product_key"
+        with self._connect() as conn:
+            rows = conn.execute(sql).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["attributes"] = json.loads(d.get("attributes") or "{}")
+            except (TypeError, ValueError):
+                d["attributes"] = {}
+            out.append(d)
+        return out
+
+    def count_gelato_catalogue(self, *, available_only: bool = False) -> int:
+        sql = "SELECT COUNT(*) AS n FROM gelato_catalogue"
+        if available_only:
+            sql += " WHERE available = 1"
+        with self._connect() as conn:
+            return int(conn.execute(sql).fetchone()["n"])
+
+    def set_gelato_product_available(self, product_key: str, available: bool) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE gelato_catalogue SET available = ? WHERE product_key = ?",
+                (1 if available else 0, product_key))
+            return cur.rowcount
+
+    def clear_gelato_catalogue(self) -> int:
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM gelato_catalogue")
+            return cur.rowcount
 
     def upsert_product_performance(self, perf: dict[str, Any]) -> None:
         with self._connect() as conn:

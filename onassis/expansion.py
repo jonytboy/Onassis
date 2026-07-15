@@ -73,11 +73,35 @@ class RevenueExpansionEngine:
     # --- Catalogue --------------------------------------------------
 
     def catalogue(self, include_unavailable: bool = False) -> list[dict[str, Any]]:
-        """The Phase-1 product catalogue (available products by default)."""
-        items = self.cfg.get("catalogue") or []
+        """The product catalogue ONASSIS can build.
+
+        The hand-maintained config list is the base; any products synced from
+        Gelato's catalogue (Sprint 46) are merged in and take precedence by key,
+        so once the operator runs a Gelato sync the catalogue auto-expands with
+        real product UIDs — no manual entry. With nothing synced the behaviour is
+        unchanged (config only)."""
+        items = list(self.cfg.get("catalogue") or [])
+        synced = self._synced_catalogue()
+        if synced:
+            by_key = {i["key"]: i for i in items}
+            for s in synced:
+                by_key[s["key"]] = s
+            items = list(by_key.values())
         if include_unavailable:
-            return list(items)
+            return items
         return [p for p in items if p.get("available", True)]
+
+    def _synced_catalogue(self) -> list[dict[str, Any]]:
+        """Products synced from Gelato's catalogue, in entry shape (empty when
+        none synced or the table is unavailable — never breaks scoring)."""
+        try:
+            rows = self.db.list_gelato_catalogue()
+        except Exception:
+            return []
+        if not rows:
+            return []
+        from onassis.gelato_catalogue import GelatoCatalogueSync
+        return [GelatoCatalogueSync._to_entry(r) for r in rows]
 
     def _unavailable(self) -> list[str]:
         return [p["key"] for p in (self.cfg.get("catalogue") or [])
