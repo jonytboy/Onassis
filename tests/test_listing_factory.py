@@ -90,6 +90,22 @@ def test_export_products_blocked_without_an_approved_set(factory, db):
     assert factory.export_products(cid)["status"] == "blocked"
 
 
+def test_blocked_product_reason_names_the_actual_issue(factory, db):
+    """When compliance exhausts its attempts, the reason must name WHAT it kept
+    demanding — not an opaque 'still needed changes after 3 attempts' the
+    operator cannot act on."""
+    cid = _approved_campaign(db)
+    factory.compliance.max_remediation_attempts = 2
+    factory.compliance._llm = FakeLLM(make_compliance_response(
+        platform=55, corrections=["Remove the unverified 'handmade' claim"]))
+    spec = {"product_key": "ceramic_mug", "product_name": "Ceramic Mug",
+            "production_cost": 7.5, "retail_price": 22.0}
+    result = factory.export_product(cid, spec)
+    assert result["status"] == "blocked"
+    assert "Remove the unverified 'handmade' claim" in result["reason"]
+    assert result["missing"] == ["Remove the unverified 'handmade' claim"]
+
+
 # --- Gates ----------------------------------------------------------
 
 def test_missing_campaign_raises(factory):

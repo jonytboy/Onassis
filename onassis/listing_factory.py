@@ -278,11 +278,16 @@ class ListingFactory:
                 campaign, product=spec, design_package=design_package, corrections=corr),
             lambda listing: self._review_listing(listing, campaign_id))
         if outcome["status"] != "approved":
+            # Surface WHAT compliance kept demanding — an opaque "still needed
+            # changes after 3 attempts" is not actionable; the specific blocking
+            # issues tell the operator (and us) exactly why it won't publish.
+            missing = [str(m) for m in (outcome.get("missing") or []) if str(m).strip()]
+            detail = (": " + "; ".join(missing[:4])) if missing else "."
+            reason = ("Listing REJECTED by compliance" + detail
+                      if outcome["status"] == "rejected" else
+                      f"Still needed changes after {outcome['attempts']} attempt(s)" + detail)
             return {"product_key": spec["product_key"], "status": "blocked",
-                    "reason": ("Listing REJECTED by compliance."
-                               if outcome["status"] == "rejected" else
-                               f"Still needed changes after {outcome['attempts']} attempt(s)."),
-                    "missing": outcome["missing"]}
+                    "reason": reason, "missing": missing}
         pkg = self._write_package(campaign_id, outcome["artifact"], outcome["report"],
                                   subdir=spec["product_key"], design_package=design_package)
         pkg["compliance_attempts"] = outcome["attempts"]
