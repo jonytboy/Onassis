@@ -685,12 +685,6 @@
         </template>
         <div x-show="!(approvals?.ready||[]).length" class="muted">Nothing approved yet.</div>
       </div>
-
-      <div class="cols" style="margin-top:18px">
-        <div><h2>🟢 Auto-approved</h2><template x-for="a in (approvals?.auto_approved||[])"><div class="stat" style="margin-bottom:8px"><div class="v sm" x-text="a.subject"></div><div class="note">score <span x-text="a.score"></span></div></div></template></div>
-        <div><h2>🟡 Needs review</h2><template x-for="a in (approvals?.needs_review||[])"><div class="stat" style="margin-bottom:8px"><div class="v sm" x-text="a.subject"></div><div class="note" x-text="a.verdict + (a.reason? ' · '+a.reason:'')"></div></div></template></div>
-        <div><h2>🔴 Blocked by compliance</h2><template x-for="a in (approvals?.blocked||[])"><div class="stat" style="margin-bottom:8px"><div class="v sm" x-text="a.subject"></div><div class="note" x-text="a.verdict"></div></div></template></div>
-      </div>
     </div>
   </div>
 
