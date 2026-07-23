@@ -31,7 +31,7 @@ log = get_logger(__name__)
 # Bump whenever the schema changes (new table / column). Surfaced in the
 # Operations Centre "Environment" panel so an operator can see at a glance
 # whether the running database matches the code they expect.
-SCHEMA_VERSION = 48
+SCHEMA_VERSION = 49
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS briefs (
@@ -226,6 +226,33 @@ CREATE TABLE IF NOT EXISTS gelato_catalogue (
 );
 CREATE INDEX IF NOT EXISTS idx_gelato_cat_category ON gelato_catalogue(category);
 CREATE INDEX IF NOT EXISTS idx_gelato_cat_key ON gelato_catalogue(product_key);
+
+-- Short-form video content (Sprint 48). One row per generated TikTok/Reel clip:
+-- the mp4 path plus caption/hashtags/sound, its posting status, and engagement
+-- (which becomes the 'what actually converts' signal once posted).
+CREATE TABLE IF NOT EXISTS short_form_content (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at     TEXT    NOT NULL,
+    campaign_id    INTEGER,
+    product_id     TEXT,
+    product_key    TEXT,
+    fmt            TEXT,                               -- style_slide|product_in_use|gifting
+    path           TEXT,
+    caption        TEXT,
+    hashtags       TEXT,                               -- JSON list
+    sound          TEXT,
+    duration_s     REAL    NOT NULL DEFAULT 0,
+    listing_url    TEXT,
+    status         TEXT    NOT NULL DEFAULT 'queued',  -- queued|distributed|posted|failed
+    distributed_at TEXT,
+    delivery_ref   TEXT,
+    views          INTEGER NOT NULL DEFAULT 0,
+    likes          INTEGER NOT NULL DEFAULT 0,
+    shares         INTEGER NOT NULL DEFAULT 0,
+    clicks         INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_shortform_status ON short_form_content(status);
+CREATE INDEX IF NOT EXISTS idx_shortform_fmt ON short_form_content(fmt);
 
 CREATE TABLE IF NOT EXISTS products (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2610,6 +2637,69 @@ class Database:
         with self._connect() as conn:
             cur = conn.execute("DELETE FROM gelato_catalogue")
             return cur.rowcount
+
+    # --- Short-form video content (Sprint 48) -----------------------
+
+    def insert_short_form(self, row: dict[str, Any]) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO short_form_content
+                    (created_at, campaign_id, product_id, product_key, fmt, path,
+                     caption, hashtags, sound, duration_s, listing_url, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (_utcnow(), row.get("campaign_id"), row.get("product_id"),
+                 row.get("product_key"), row.get("fmt"), row.get("path"),
+                 row.get("caption"), json.dumps(row.get("hashtags", [])),
+                 row.get("sound"), float(row.get("duration_s", 0) or 0),
+                 row.get("listing_url"), row.get("status", "queued")))
+            return int(cur.lastrowid)
+
+    def list_short_form(self, *, status: str | None = None,
+                        limit: int = 100) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM short_form_content"
+        params: list[Any] = []
+        if status:
+            sql += " WHERE status = ?"
+            params.append(status)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["hashtags"] = json.loads(d.get("hashtags") or "[]")
+            except (TypeError, ValueError):
+                d["hashtags"] = []
+            out.append(d)
+        return out
+
+    def count_short_form(self, *, status: str | None = None) -> int:
+        sql = "SELECT COUNT(*) AS n FROM short_form_content"
+        params: list[Any] = []
+        if status:
+            sql += " WHERE status = ?"
+            params.append(status)
+        with self._connect() as conn:
+            return int(conn.execute(sql, params).fetchone()["n"])
+
+    def set_short_form_status(self, clip_id: int, status: str,
+                              ref: str | None = None) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE short_form_content SET status = ?, delivery_ref = ?, "
+                "distributed_at = ? WHERE id = ?",
+                (status, ref, _utcnow() if status == "distributed" else None, clip_id))
+
+    def update_short_form_engagement(self, clip_id: int, *, views: int = 0, likes: int = 0,
+                                     shares: int = 0, clicks: int = 0) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE short_form_content SET views=?, likes=?, shares=?, clicks=? "
+                "WHERE id = ?", (views, likes, shares, clicks, clip_id))
 
     def upsert_product_performance(self, perf: dict[str, Any]) -> None:
         with self._connect() as conn:

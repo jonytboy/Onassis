@@ -106,6 +106,8 @@ class Config:
     ai_pricing: dict[str, Any] = field(default_factory=dict)
     # Sprint 44 — catalogue targets + retirement policy.
     catalogue: dict[str, Any] = field(default_factory=dict)
+    # Sprint 48 — short-form video content engine.
+    content: dict[str, Any] = field(default_factory=dict)
 
     # secrets / future integrations
     anthropic_api_key: str | None = None
@@ -327,5 +329,6 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         make=make,
         ai_pricing=raw.get("ai_pricing", {}),
         catalogue=raw.get("catalogue", {}),
+        content=raw.get("content", {}),
         anthropic_api_key=_env("ANTHROPIC_API_KEY"),
     )

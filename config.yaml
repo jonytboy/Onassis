@@ -282,6 +282,18 @@ catalogue:
     Candles: 10
     Kitchen Accessories: 20
 
+# --- Short-form video content engine (Sprint 48) ---------------------
+# Turns built products into vertical TikTok/Reels clips (needs ffmpeg installed).
+# Clips render SILENT (add trending sound natively when posting); the queue is a
+# plain folder under exports/reels so any scheduler can consume it, and each clip
+# is also handed to the Make webhook when configured. Set public_base to a URL
+# that serves exports/ so a poster can fetch the mp4.
+content:
+  reel_size: [1080, 1920]        # 9:16
+  reel_fps: 30
+  reel_slide_frames: 24          # frames per slide (≈0.8s at 30fps)
+  public_base: null              # https base serving exports/ (falls back to gelato.file_base_url)
+
 # --- Make.com distribution (Sprint 43) -------------------------------
 # The single marketing distribution engine: ONASSIS posts one complete campaign
 # package per product to this webhook; Make fans it out to every platform.

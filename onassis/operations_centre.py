@@ -949,6 +949,49 @@ def build_operations_router(get_state) -> APIRouter:
                 "count": db.count_gelato_catalogue(),
                 "available": db.count_gelato_catalogue(available_only=True)}
 
+    # --- Short-form video content engine (Sprint 48) ---
+    @router.get("/api/content/reels")
+    def api_content_reels(request: Request) -> Any:
+        _require_operator(request)
+        return request.app.state.content.dashboard()
+
+    @router.post("/api/content/reels/build")
+    def api_build_reels(request: Request, payload: dict | None = None) -> Any:
+        """Generate a queue of short-form clips (runs in the background — rendering
+        video takes time). Products land in the exports/reels queue as drafts."""
+        _require_operator(request)
+        state = get_state(request.app)
+        if state.is_running:
+            raise HTTPException(status_code=409, detail="A run is already in progress.")
+        body = payload or {}
+        limit = int(body.get("limit", 20))
+        engine = request.app.state.content
+        state.begin_run()
+        state.add_log(f"CONTENT: building up to {limit} short-form clip(s).")
+
+        def worker() -> None:
+            handler = _RunLogHandler(state)
+            root = logging.getLogger("onassis")
+            root.addHandler(handler)
+            try:
+                result = engine.build_batch(limit=limit)
+                state.end_run("completed", result)
+                state.add_log(f"CONTENT: built {result['built']} clip(s).")
+            except Exception as exc:  # never crash the server on a render failure
+                state.end_run("failed", {"error": str(exc)})
+                state.add_log(f"CONTENT build crashed: {exc}", "error")
+                log.exception("Content build failed")
+            finally:
+                root.removeHandler(handler)
+
+        threading.Thread(target=worker, name="content-build", daemon=True).start()
+        return {"status": "started", "limit": limit}
+
+    @router.post("/api/content/reels/distribute")
+    def api_distribute_reels(request: Request) -> Any:
+        _require_operator(request)
+        return request.app.state.content.distribute()
+
     @router.post("/api/catalogue/compile")
     def api_compile_catalogue(request: Request, payload: dict | None = None) -> Any:
         """Build a whole catalogue in one event (Sprint 46) — runs in the

@@ -1,0 +1,95 @@
+"""Tests for the Content Engine (Sprint 48) — short-form video factory."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from PIL import Image
+
+from onassis.content_engine import ContentEngine
+from onassis.reel_studio import ReelStudio
+
+
+def _stub_encoder(frames, out_path, *, fps):
+    Path(out_path).write_bytes(b"\x00\x00\x00\x18ftypmp42")   # pretend mp4
+    return out_path
+
+
+def _build_package(config, tmp_path, cid=1, key="ceramic_mug"):
+    """Write a minimal built listing package (listing.json + gallery images)."""
+    config.listing = {**(config.listing or {}), "exports_dir": str(tmp_path / "exports")}
+    folder = tmp_path / "exports" / str(cid) / key
+    images = folder / "images"
+    images.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (600, 600), (240, 232, 222)).save(folder / "master_artwork.png")
+    manifest = []
+    for i, scene in enumerate(["hero", "lifestyle", "room", "closeup"]):
+        fn = f"{scene}.jpg"
+        Image.new("RGB", (600, 600), (200, 150, 120)).save(images / fn)
+        manifest.append({"order": i, "mockup_type": scene, "filename": fn, "alt_text": scene})
+    (folder / "listing.json").write_text(json.dumps({
+        "title": "Casa Med Ceramic Mug", "product_name": "Casa Med Mug",
+        "theme": "the Amalfi coast", "tags": ["mediterranean", "mug", "coastal"],
+        "price": 22.0, "listing_url": "https://etsy.com/listing/1",
+        "mockup_manifest": manifest,
+    }), encoding="utf-8")
+    return cid, key
+
+
+def _engine(config, db) -> ContentEngine:
+    # Tiny frames so rendering is instant in tests (no ffmpeg either way).
+    config.content = {"reel_size": [96, 170], "reel_slide_frames": 2}
+    return ContentEngine(config, db, studio=ReelStudio(encoder=_stub_encoder))
+
+
+def test_build_for_product_makes_one_clip_per_format(config, db, tmp_path):
+    cid, key = _build_package(config, tmp_path)
+    r = _engine(config, db).build_for_product(cid, key)
+    assert r["ok"] and r["count"] == 3
+    fmts = {c["fmt"] for c in r["clips"]}
+    assert fmts == {"style_slide", "product_in_use", "gifting"}
+    # Each clip has a real mp4 file, a caption, and hashtags.
+    for c in r["clips"]:
+        assert Path(c["path"]).exists()
+        assert c["caption"] and c["hashtags"]
+        assert (tmp_path / "exports" / "reels" / str(cid) / key / f"{c['fmt']}.mp4").exists()
+        assert (tmp_path / "exports" / "reels" / str(cid) / key / f"{c['fmt']}.json").exists()
+    # Persisted to the queue.
+    assert db.count_short_form() == 3
+    assert db.count_short_form(status="queued") == 3
+
+
+def test_build_skips_products_without_a_package(config, db, tmp_path):
+    config.listing = {**(config.listing or {}), "exports_dir": str(tmp_path / "exports")}
+    r = _engine(config, db).build_for_product(99, "ghost")
+    assert r["ok"] is False and "No built listing package" in r["reason"]
+    assert db.count_short_form() == 0
+
+
+def test_caption_and_hashtags_reflect_the_product(config, db, tmp_path):
+    cid, key = _build_package(config, tmp_path)
+    clips = _engine(config, db).build_for_product(cid, key)["clips"]
+    gifting = next(c for c in clips if c["fmt"] == "gifting")
+    assert "gift" in gifting["caption"].lower()
+    assert any(h.startswith("#") for h in gifting["hashtags"])
+    assert "#mediterraneanstyle" in gifting["hashtags"]
+
+
+def test_distribute_marks_queued_clips_handed_off(config, db, tmp_path):
+    cid, key = _build_package(config, tmp_path)
+    eng = _engine(config, db)
+    eng.build_for_product(cid, key)
+    # No Make webhook configured → still handed to the queue (not failed).
+    r = eng.distribute()
+    assert r["processed"] == 3 and r["handed_off"] == 3
+    assert db.count_short_form(status="queued") == 0
+    assert db.count_short_form(status="distributed") == 3
+
+
+def test_batch_build_respects_the_limit(config, db, tmp_path):
+    cid, key = _build_package(config, tmp_path)
+    db.insert_product({"sku": f"{cid}-{key}", "name": "Mug", "campaign_id": cid,
+                       "product_key": key})
+    r = _engine(config, db).build_batch(limit=2)
+    assert r["built"] == 2                     # capped, though 3 formats exist

@@ -328,6 +328,39 @@
     </div>
   </div>
 
+  <!-- CONTENT (short-form video) -->
+  <div x-show="tab==='content'">
+    <div class="panel" style="margin-bottom:12px">
+      <h2>Short-form video — TikTok / Reels
+        <span style="float:right">
+          <button class="btn small" @click="buildReels()">Build clips</button>
+          <button class="btn small" @click="distributeReels()">Distribute queue</button>
+        </span></h2>
+      <div class="note" style="margin-bottom:8px">Builds vertical 9:16 clips from your products in 3 tagged formats (style-slide, product-in-use, gifting). Clips render <b>silent</b> — add trending sound natively when posting. Queue lives in <code>exports/reels/</code>; a Make webhook (if set) receives each package.</div>
+      <div class="grid">
+        <div class="stat"><div class="k">Clips total</div><div class="v" x-text="content?.total??0"></div></div>
+        <div class="stat"><div class="k">Queued</div><div class="v sm" x-text="content?.queued??0"></div></div>
+        <template x-for="(n,f) in (content?.by_format||{})" :key="f">
+          <div class="stat"><div class="k" x-text="f.replace(/_/g,' ')"></div><div class="v sm" x-text="n"></div></div>
+        </template>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Recent clips</h2>
+      <div style="overflow-x:auto">
+      <table><thead><tr><th>Product</th><th>Format</th><th>Caption</th><th>Status</th><th>Length</th></tr></thead><tbody>
+        <template x-for="c in (content?.recent||[])" :key="c.id">
+          <tr><td x-text="c.product_key"></td>
+            <td><span class="pill grey" x-text="c.fmt.replace(/_/g,' ')"></span></td>
+            <td class="note" x-text="c.caption"></td>
+            <td><span class="pill" :class="{queued:'needs_review',distributed:'ok',posted:'ok',failed:'failed'}[c.status]||'grey'" x-text="c.status"></span></td>
+            <td x-text="(c.duration_s||0)+'s'"></td></tr>
+        </template>
+      </tbody></table></div>
+      <div x-show="!(content?.recent||[]).length" class="muted">No clips yet — click “Build clips”.</div>
+    </div>
+  </div>
+
   <!-- AI COST (CFO) -->
   <div x-show="tab==='aicost'">
     <div class="panel" x-show="cfo && Object.keys(cfo?.dashboard?.provider_alerts||{}).length" style="margin-bottom:12px;border:1px solid #ff8a8a">
@@ -998,7 +1031,7 @@ function ops(){
     key: localStorage.getItem('onassis_ops_key') || '',
     tab:'overview',
     tabs:[{id:'overview',label:'Overview'},{id:'business',label:'Business'},{id:'commercial',label:'Commercial'},
-          {id:'catalogue',label:'Catalogue'},{id:'aicost',label:'AI Cost'},
+          {id:'catalogue',label:'Catalogue'},{id:'content',label:'Content'},{id:'aicost',label:'AI Cost'},
           {id:'products',label:'Products'},{id:'marketing',label:'Marketing'},
           {id:'approvals',label:'Approvals'},{id:'integrations',label:'Integrations'},
           {id:'system',label:'System'}],
@@ -1010,7 +1043,7 @@ function ops(){
     productDetail:null, channelTests:null, testingChannels:false, regenerating:null,
     integrations:null, integrationDetail:null, integrationEdits:{}, integrationBusy:false,
     commercial:null, commercialProducts:null, cmo:null, cfo:null, distribution:null,
-    catalogue:null, collections:null, publishingAll:false, publishAllTotal:0, publishAllDone:0,
+    catalogue:null, collections:null, content:null, publishingAll:false, publishAllTotal:0, publishAllDone:0,
     productSearch:'', productFilter:'all', productHealth:null, toast:'',
     productFilters:[['all','All'],['awaiting_approval','Awaiting Approval'],['ready_to_publish','Ready to Publish'],['draft_created','Draft Created'],['live','Live'],['failed','Failed'],['etsy','On Etsy'],['shopify','On Shopify'],['both','Etsy + Shopify'],['archived','Archived']],
     get running(){ return this.run?.status==='running'; },
@@ -1072,6 +1105,7 @@ function ops(){
       else if(t==='commercial'){ this.commercial=await this.get('/operations/api/commercial');
         this.commercialProducts=(await this.get('/operations/api/commercial/products')).products; }
       else if(t==='aicost'){ this.cfo=await this.get('/operations/api/cfo'); }
+      else if(t==='content'){ this.content=await this.get('/operations/api/content/reels'); }
       else if(t==='catalogue'){ this.catalogue=await this.get('/operations/api/catalogue');
         this.collections=(await this.get('/operations/api/collections')).collections; }
       else if(t==='products'){ const d=await this.get('/operations/api/products?filter='+this.productFilter);
@@ -1181,6 +1215,16 @@ function ops(){
       const r=await this.post('/operations/api/catalogue/compile',{budget_usd:b,mode:'auto_draft'});
       if(r&&r.status==='started'){ this.showToast('Compiling catalogue (budget $'+b+') — watch the log.'); this.refreshRun(); this.pollLogs(); }
       else { alert('Could not start compile: '+((r&&r.detail)||r?.error||'unknown')); } },
+    async buildReels(){
+      const n=prompt('How many short-form clips to build? (each product makes up to 3 formats)','12');
+      if(n===null) return;
+      const r=await this.post('/operations/api/content/reels/build',{limit:parseInt(n)||12});
+      if(r&&r.status==='started'){ this.showToast('Building clips — watch the log (video rendering takes a moment).'); this.refreshRun(); this.pollLogs(); }
+      else alert('Could not start: '+((r&&r.detail)||r?.error||'unknown')); },
+    async distributeReels(){
+      const r=await this.post('/operations/api/content/reels/distribute');
+      this.showToast('Distributed '+((r&&r.handed_off)||0)+'/'+((r&&r.processed)||0)+' clip(s)'+((r&&!r.make_configured)?' (queue only — set the Make webhook to auto-post)':''));
+      this.loadTab('content'); this.pollLogs(); },
     async syncGelato(){
       if(!confirm('Pull your real Gelato product catalogue into ONASSIS? This replaces manual UID entry — synced products become buildable automatically.')) return;
       this.showToast('Syncing Gelato catalogue…');

@@ -198,6 +198,8 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.distribution = CampaignDistributor(config, db)
     from onassis.catalogue import CatalogueManager
     app.state.catalogue = CatalogueManager(config, db)
+    from onassis.content_engine import ContentEngine
+    app.state.content = ContentEngine(config, db)
 
     def _full_campaign(campaign_id: int) -> dict[str, Any] | None:
         """Assemble a campaign with its content and the Brain's prediction."""
