@@ -271,6 +271,9 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         # sandbox token against the production host returns 401, and vice versa.
         "base_url": _env("PINTEREST_BASE_URL",
                          pinterest.get("base_url", "https://api.pinterest.com/v5")),
+        # Route pins through the Make webhook (production access) instead of the
+        # Pinterest API — bypasses Trial-access. Toggled from the dashboard too.
+        "via_make": pinterest.get("via_make", False),
     }
     # Etsy credentials come from the environment. In Etsy's Open API v3 the
     # "keystring" is both the OAuth client_id and the x-api-key, so ETSY_CLIENT_ID

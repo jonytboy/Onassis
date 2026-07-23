@@ -70,6 +70,11 @@ SCHEMA: list[Setting] = [
             lambda c: int((getattr(c, "traffic", None) or {}).get("max_pins_per_day", 10)),
             group="Channels",
             help="How many pins to post per day, cycling through all products."),
+    Setting("pinterest_via_make", "Pinterest via Make/Buffer", "bool",
+            lambda c: bool((getattr(c, "pinterest", None) or {}).get("via_make", False)),
+            group="Channels",
+            help="Post pins through the Make webhook (which has production access) "
+                 "instead of the Pinterest API — bypasses Trial-access limits."),
     Setting("email_enabled", "Email", "bool",
             lambda c: bool(_cfg(c, "marketing", "email_enabled", True)),
             group="Channels", help="Produce email marketing assets."),

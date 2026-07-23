@@ -52,6 +52,8 @@ class TrafficEngine:
         self.config = config
         self.db = db
         self.pinterest = pinterest or PinterestConnector(config)
+        from onassis.connectors.make import MakeConnector
+        self.make = MakeConnector(config)
         cfg = getattr(config, "traffic", None) or {}
         self.min_per_day = int(cfg.get("min_pins_per_day", 5))
         self.max_per_day = int(cfg.get("max_pins_per_day", 10))
@@ -157,10 +159,13 @@ class TrafficEngine:
         link is attached when the product is live. Best-effort per pin.
 
         Pinterest has no natural dedupe, so re-running re-pins — run it once.
-        ``require_link`` skips products with no live listing to link to."""
-        if not self.pinterest.can_publish:
+        ``require_link`` skips products with no live listing to link to. Uses the
+        active sink (direct API, or Make when ``pinterest_via_make`` is on)."""
+        if not self._pin_sink_ready():
+            where = ("Make webhook" if self._pin_via_make()
+                     else "Pinterest (access token + board id)")
             return {"posted": 0, "failed": 0, "no_image": 0, "skipped": 0, "total": 0,
-                    "reason": "Pinterest not connected — set the access token and board id."}
+                    "reason": f"{where} not connected."}
         products = [p for p in self.db.list_products()
                     if p.get("active", 1) and p.get("product_key") and p.get("campaign_id")]
         if limit:
@@ -169,27 +174,26 @@ class TrafficEngine:
         results: list[dict[str, Any]] = []
         for p in products:
             cid, key, sku = p["campaign_id"], p["product_key"], p["sku"]
-            image = self._hero_path(cid, key)
-            if not image:
-                no_image += 1
-                continue
             meta = self._listing_meta(cid, key)
             link = self._product_link(cid, sku, meta)
             if require_link and not link:
                 skipped += 1
                 continue
             title = str(meta.get("title") or p.get("name") or key)[:100]
-            res = self.pinterest.publish_pins([{
-                "title": title, "description": self._pin_description(meta, p),
-                "link": link, "image_path": image, "alt_text": title}])
-            if res.get("posted"):
+            out = self._post_pin({
+                "campaign_id": cid, "product_key": key, "title": title,
+                "description": self._pin_description(meta, p), "listing_url": link,
+                "keyword": (meta.get("tags") or [None])[0],
+                "image_path": self._hero_path(cid, key),
+                "board": self._board({}, posted + failed)})
+            if out["status"] == "posted":
                 posted += 1
-                ref = (res.get("results") or [{}])[0].get("pin_id")
-                results.append({"sku": sku, "pin_id": ref, "link": link})
+                results.append({"sku": sku, "pin_id": out.get("ref"), "link": link})
+            elif out["status"] == "no_image":
+                no_image += 1
             else:
                 failed += 1
-                reason = (res.get("results") or [{}])[0].get("reason") or res.get("reason")
-                results.append({"sku": sku, "error": reason})
+                results.append({"sku": sku, "error": out.get("reason")})
         log.info("Pinterest bulk: posted %d, failed %d, no-image %d of %d product(s).",
                  posted, failed, no_image, len(products))
         return {"posted": posted, "failed": failed, "no_image": no_image,
@@ -310,38 +314,94 @@ class TrafficEngine:
         return {"scheduled": scheduled, "daily_target": target,
                 "catalogue": len(products)}
 
+    # --- Pin sink: direct API or via Make (bypasses the API tier) ----
+
+    def _pin_via_make(self) -> bool:
+        """Route pins through the Make webhook instead of Pinterest's API — Make
+        (or Buffer behind it) has its own production access, so this sidesteps
+        Pinterest Trial-access, which cannot create pins in production."""
+        try:
+            from onassis.business_settings import BusinessSettings
+            v = BusinessSettings(self.db, self.config).get("pinterest_via_make")
+            if v is not None:
+                return bool(v)
+        except Exception:
+            pass
+        return bool((self.config.pinterest or {}).get("via_make", False))
+
+    def _public_image_url(self, campaign_id: Any, product_key: str | None) -> str | None:
+        """Public URL of a product's hero image (Make/Pinterest fetch it by URL)."""
+        base = ((getattr(self.config, "content", None) or {}).get("public_base")
+                or (self.config.gelato or {}).get("file_base_url") or "").rstrip("/")
+        if not base or campaign_id is None or not product_key:
+            return None
+        return f"{base}/{campaign_id}/{product_key}/images/hero.jpg"
+
+    def _pin_sink_ready(self) -> bool:
+        if self._pin_via_make():
+            return self.make.is_configured
+        return self.pinterest.can_publish
+
+    def _post_pin(self, pin: dict[str, Any]) -> dict[str, Any]:
+        """Post one pin via the active sink. Returns a normalised outcome:
+        ``{status: posted|failed|no_image|skipped, ref, reason}``."""
+        if self._pin_via_make():
+            image_url = self._public_image_url(pin.get("campaign_id"), pin.get("product_key"))
+            if not image_url:
+                return {"status": "no_image",
+                        "reason": "No public image URL — set content.public_base "
+                                  "(or gelato.file_base_url) so Make/Pinterest can fetch it."}
+            payload = {"type": "pinterest_pin", "board": pin.get("board"),
+                       "title": pin.get("title"), "description": pin.get("description"),
+                       "link": pin.get("listing_url"), "image_url": image_url,
+                       "keyword": pin.get("keyword"), "product_key": pin.get("product_key")}
+            res = self.make.send(payload)
+            if res.get("ok"):
+                return {"status": "posted", "ref": res.get("ref") or "make"}
+            return {"status": "failed", "reason": res.get("detail")}
+        # Direct Pinterest API (base64 image upload from the local hero file).
+        image = pin.get("image_path")
+        if not image or not Path(image).exists():
+            return {"status": "no_image", "reason": "no hero image on disk"}
+        res = self.pinterest.publish_pins([{
+            "title": pin.get("title"), "description": pin.get("description"),
+            "link": pin.get("listing_url"), "alt_text": pin.get("title"),
+            "image_path": image}])
+        if res.get("posted"):
+            return {"status": "posted",
+                    "ref": (res.get("results") or [{}])[0].get("pin_id")}
+        return {"status": "failed",
+                "reason": (res.get("results") or [{}])[0].get("reason") or res.get("reason")}
+
     # --- Distribute --------------------------------------------------
 
     def distribute(self, today: str | None = None) -> dict[str, Any]:
-        """Post every pin whose scheduled date has arrived, with its hero image
-        attached. A pin with no image file is left queued (Pinterest needs media).
-        Safe no-op until Pinterest is configured."""
+        """Post every pin whose scheduled date has arrived, via the active sink
+        (direct Pinterest API, or the Make webhook when ``pinterest_via_make`` is
+        on — which bypasses the Pinterest API access tier). Safe no-op until a
+        sink is configured; unposted pins stay queued."""
         day = today or date.today().isoformat()
         due = self.db.due_pins(day)
         if not due:
             return {"date": day, "posted": 0, "queued": 0, "detail": "nothing due"}
-        if not self.pinterest.can_publish:
+        via_make = self._pin_via_make()
+        if not self._pin_sink_ready():
+            where = "Make webhook" if via_make else "Pinterest"
             return {"date": day, "posted": 0, "queued": len(due),
-                    "detail": "Pinterest not configured — pins stay queued"}
+                    "detail": f"{where} not configured — pins stay queued"}
         posted = failed = no_image = 0
         for pin in due:
-            image = pin.get("image_path")
-            if not image or not Path(image).exists():
-                no_image += 1
-                continue  # can't post an imageless pin — keep it queued
-            payload = [{"title": pin.get("title"), "description": pin.get("description"),
-                        "link": pin.get("listing_url"), "alt_text": pin.get("title"),
-                        "image_path": image}]
-            res = self.pinterest.publish_pins(payload)
-            if res.get("posted"):
-                ref = (res.get("results") or [{}])[0].get("pin_id")
-                self.db.set_pin_status(pin["id"], "posted", pin_ref=ref)
+            out = self._post_pin(pin)
+            if out["status"] == "posted":
+                self.db.set_pin_status(pin["id"], "posted", pin_ref=out.get("ref"))
                 posted += 1
+            elif out["status"] == "no_image":
+                no_image += 1                       # keep queued, nothing to post
             else:
                 self.db.set_pin_status(pin["id"], "failed")
                 failed += 1
         return {"date": day, "posted": posted, "failed": failed,
-                "no_image": no_image, "queued": no_image}
+                "no_image": no_image, "queued": no_image, "via_make": via_make}
 
     # --- Import metrics (impressions / clicks / CTR, attributed) ----
 

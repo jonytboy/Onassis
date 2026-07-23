@@ -138,6 +138,48 @@ def test_publish_all_products_safe_noop_when_pinterest_unconfigured(config, db):
     assert out["posted"] == 0 and "not connected" in out["reason"].lower()
 
 
+def test_pins_route_through_make_when_enabled(config, db, tmp_path):
+    """With pinterest_via_make on, pins go to the Make webhook (production access)
+    instead of the Pinterest API — bypassing Trial-access limits."""
+    _hero(config, tmp_path, "mug", 1)
+    db.insert_product({"sku": "1-mug", "name": "Mug", "campaign_id": 1, "product_key": "mug"})
+    config.pinterest = {"via_make": True}
+    config.make = {"webhook_url": "https://hook.make.com/abc"}
+    config.gelato = {**(config.gelato or {}), "file_base_url": "https://cdn.onassis/exports"}
+
+    sent = []
+
+    class FakeMake:
+        is_configured = True
+        def send(self, payload):
+            sent.append(payload)
+            return {"ok": True, "ref": "make1"}
+
+    eng = TrafficEngine(config, db)
+    eng.make = FakeMake()
+    out = eng.publish_all_products()
+    assert out["posted"] == 1 and out["failed"] == 0
+    # The payload carries a PUBLIC image URL + type Make can route on.
+    assert sent[0]["type"] == "pinterest_pin"
+    assert sent[0]["image_url"] == "https://cdn.onassis/exports/1/mug/images/hero.jpg"
+
+
+def test_via_make_needs_a_public_image_base(config, db, tmp_path):
+    _hero(config, tmp_path, "mug", 1)
+    db.insert_product({"sku": "1-mug", "name": "Mug", "campaign_id": 1, "product_key": "mug"})
+    config.pinterest = {"via_make": True}
+
+    class FakeMake:
+        is_configured = True
+        def send(self, payload):  # pragma: no cover - must not be reached
+            raise AssertionError("must not send without a public image URL")
+
+    eng = TrafficEngine(config, db)
+    eng.make = FakeMake()
+    out = eng.publish_all_products()
+    assert out["posted"] == 0 and out["no_image"] == 1     # no public base → can't post
+
+
 def test_evergreen_backfill_cycles_through_all_products(config, db, tmp_path):
     for key in ("linen_throw", "ceramic_mug", "premium_poster"):
         _hero(config, tmp_path, key, 1)
