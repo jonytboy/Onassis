@@ -536,6 +536,10 @@
 
   <!-- MARKETING -->
   <div x-show="tab==='marketing'">
+    <div class="panel" style="margin-bottom:12px">
+      <h2>Pinterest <button class="btn small" style="float:right" @click="pinAll()">Pin all products to board</button></h2>
+      <div class="note">Posts a pin for every active product (with its hero image) straight to your connected board. Images upload inline — links attach when a product is live. Pinterest rate-limits bulk posting, so it runs in the background; watch the log.</div>
+    </div>
     <!-- Marketing Distribution via Make.com (Sprint 43) -->
     <div class="panel" x-show="distribution" style="margin-bottom:12px">
       <h2>Marketing Distribution</h2>
@@ -1216,6 +1220,11 @@ function ops(){
       const r=await this.post('/operations/api/catalogue/compile',{budget_usd:b,mode:'auto_draft'});
       if(r&&r.status==='started'){ this.showToast('Compiling catalogue (budget $'+b+') — watch the log.'); this.refreshRun(); this.pollLogs(); }
       else { alert('Could not start compile: '+((r&&r.detail)||r?.error||'unknown')); } },
+    async pinAll(){
+      if(!confirm('Pin every active product to your Pinterest board now? Pinterest has no dedupe, so run this once.')) return;
+      const r=await this.post('/operations/api/traffic/pin-all',{});
+      if(r&&r.status==='started'){ this.showToast('Pinning all products — watch the log.'); this.refreshRun(); this.pollLogs(); }
+      else alert('Could not start: '+((r&&r.detail)||r?.error||'unknown')); },
     async buildReels(){
       const n=prompt('How many short-form clips to build? (each product makes up to 3 formats)','12');
       if(n===null) return;

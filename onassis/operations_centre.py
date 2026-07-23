@@ -992,6 +992,45 @@ def build_operations_router(get_state) -> APIRouter:
         _require_operator(request)
         return request.app.state.content.distribute()
 
+    @router.post("/api/traffic/pin-all")
+    def api_pin_all(request: Request, payload: dict | None = None) -> Any:
+        """Pin every product to the Pinterest board in one go (runs in the
+        background — bulk posting is slow and rate-limited)."""
+        _require_operator(request)
+        state = get_state(request.app)
+        if state.is_running:
+            raise HTTPException(status_code=409, detail="A run is already in progress.")
+        traffic = request.app.state.traffic
+        if not traffic.pinterest.can_publish:
+            return {"ok": False, "detail": "Pinterest not connected — set the access "
+                    "token and board id on Integrations → Pinterest."}
+        body = payload or {}
+        limit = body.get("limit")
+        limit = int(limit) if limit not in (None, "") else None
+        require_link = bool(body.get("require_link", False))
+        state.begin_run()
+        state.add_log("PINTEREST: pinning all products to the board…")
+
+        def worker() -> None:
+            handler = _RunLogHandler(state)
+            root = logging.getLogger("onassis")
+            root.addHandler(handler)
+            try:
+                result = traffic.publish_all_products(limit=limit, require_link=require_link)
+                state.end_run("completed", result)
+                state.add_log(f"PINTEREST: posted {result['posted']}/{result['total']} "
+                              f"pin(s) ({result['failed']} failed, {result['no_image']} "
+                              "without a hero image).")
+            except Exception as exc:  # never crash the server on a bulk-pin failure
+                state.end_run("failed", {"error": str(exc)})
+                state.add_log(f"PINTEREST bulk pin crashed: {exc}", "error")
+                log.exception("Pinterest bulk pin failed")
+            finally:
+                root.removeHandler(handler)
+
+        threading.Thread(target=worker, name="pin-all", daemon=True).start()
+        return {"status": "started", "limit": limit}
+
     @router.post("/api/catalogue/compile")
     def api_compile_catalogue(request: Request, payload: dict | None = None) -> Any:
         """Build a whole catalogue in one event (Sprint 46) — runs in the

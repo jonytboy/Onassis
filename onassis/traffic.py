@@ -19,6 +19,7 @@ schedule and records the funnel from data the system already collects.
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -145,6 +146,96 @@ class TrafficEngine:
             return (date.fromisoformat(day[:10]) + timedelta(days=n)).isoformat()
         except ValueError:
             return day
+
+    # --- Bulk pin the whole catalogue (Sprint 49) --------------------
+
+    def publish_all_products(self, *, limit: int | None = None,
+                             require_link: bool = False) -> dict[str, Any]:
+        """Post one pin for EVERY active product that has a hero image, straight
+        to the configured board — building the board out from the whole catalogue
+        in one go. The image is uploaded inline (no public URL needed); a listing
+        link is attached when the product is live. Best-effort per pin.
+
+        Pinterest has no natural dedupe, so re-running re-pins — run it once.
+        ``require_link`` skips products with no live listing to link to."""
+        if not self.pinterest.can_publish:
+            return {"posted": 0, "failed": 0, "no_image": 0, "skipped": 0, "total": 0,
+                    "reason": "Pinterest not connected — set the access token and board id."}
+        products = [p for p in self.db.list_products()
+                    if p.get("active", 1) and p.get("product_key") and p.get("campaign_id")]
+        if limit:
+            products = products[:limit]
+        posted = failed = no_image = skipped = 0
+        results: list[dict[str, Any]] = []
+        for p in products:
+            cid, key, sku = p["campaign_id"], p["product_key"], p["sku"]
+            image = self._hero_path(cid, key)
+            if not image:
+                no_image += 1
+                continue
+            meta = self._listing_meta(cid, key)
+            link = self._product_link(cid, sku, meta)
+            if require_link and not link:
+                skipped += 1
+                continue
+            title = str(meta.get("title") or p.get("name") or key)[:100]
+            res = self.pinterest.publish_pins([{
+                "title": title, "description": self._pin_description(meta, p),
+                "link": link, "image_path": image, "alt_text": title}])
+            if res.get("posted"):
+                posted += 1
+                ref = (res.get("results") or [{}])[0].get("pin_id")
+                results.append({"sku": sku, "pin_id": ref, "link": link})
+            else:
+                failed += 1
+                reason = (res.get("results") or [{}])[0].get("reason") or res.get("reason")
+                results.append({"sku": sku, "error": reason})
+        log.info("Pinterest bulk: posted %d, failed %d, no-image %d of %d product(s).",
+                 posted, failed, no_image, len(products))
+        return {"posted": posted, "failed": failed, "no_image": no_image,
+                "skipped": skipped, "total": len(products), "results": results[:200]}
+
+    def _listing_meta(self, campaign_id: Any, product_key: str) -> dict[str, Any]:
+        from onassis.config import ROOT_DIR
+        base = Path((self.config.listing or {}).get("exports_dir", "exports"))
+        if not base.is_absolute():
+            base = ROOT_DIR / base
+        lp = base / str(campaign_id) / str(product_key) / "listing.json"
+        if not lp.exists():
+            return {}
+        try:
+            return json.loads(lp.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            return {}
+
+    def _product_link(self, campaign_id: int, sku: str, meta: dict[str, Any]) -> str | None:
+        if meta.get("listing_url"):
+            return meta["listing_url"]
+        for platform in ("etsy", "shopify"):
+            pub = self.db.get_latest_publication(campaign_id, platform, product_id=sku)
+            if pub and pub.get("status") in ("published", "live", "draft"):
+                url = pub.get("listing_url") or pub.get("url")
+                if url:
+                    return url
+                lid = pub.get("listing_id")
+                if platform == "etsy" and lid and str(lid).isdigit():
+                    return f"https://www.etsy.com/listing/{lid}"
+        return None
+
+    @staticmethod
+    def _pin_description(meta: dict[str, Any], product: dict[str, Any]) -> str:
+        theme = meta.get("theme") or ""
+        tags = meta.get("tags") or meta.get("seo_keywords") or []
+        hashtags = " ".join("#" + str(t).replace(" ", "") for t in tags[:5])
+        parts = []
+        base = str(meta.get("description") or "").strip()[:300]
+        if base:
+            parts.append(base)
+        if theme:
+            parts.append(f"Inspired by {theme}.")
+        if hashtags:
+            parts.append(hashtags)
+        return (" ".join(parts)[:500]) or str(product.get("name") or "")
 
     # --- Distribute --------------------------------------------------
 

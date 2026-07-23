@@ -106,6 +106,38 @@ def test_distribute_posts_live_pins_with_their_hero_image(config, db, tmp_path):
     assert len(db.list_pin_schedule(status="posted")) == 5
 
 
+def test_publish_all_products_pins_every_product_with_a_hero(config, db, tmp_path):
+    _hero(config, tmp_path, "linen_throw", 1)
+    _hero(config, tmp_path, "ceramic_mug", 1)
+    db.insert_product({"sku": "1-linen_throw", "name": "Linen Throw", "campaign_id": 1,
+                       "product_key": "linen_throw"})
+    db.insert_product({"sku": "1-ceramic_mug", "name": "Ceramic Mug", "campaign_id": 1,
+                       "product_key": "ceramic_mug"})
+    db.insert_product({"sku": "1-no_image", "name": "No Image", "campaign_id": 1,
+                       "product_key": "no_image"})           # no hero on disk
+
+    class FakePinterest:
+        can_publish = True
+
+        def __init__(self):
+            self.calls = []
+
+        def publish_pins(self, pins):
+            self.calls.append(pins[0])
+            return {"posted": 1, "failed": 0, "skipped": 0,
+                    "results": [{"status": "posted", "pin_id": "p1"}]}
+
+    fake = FakePinterest()
+    out = TrafficEngine(config, db, pinterest=fake).publish_all_products()
+    assert out["posted"] == 2 and out["no_image"] == 1 and out["total"] == 3
+    assert all(c["image_path"].endswith("hero.jpg") for c in fake.calls)
+
+
+def test_publish_all_products_safe_noop_when_pinterest_unconfigured(config, db):
+    out = TrafficEngine(config, db).publish_all_products()
+    assert out["posted"] == 0 and "not connected" in out["reason"].lower()
+
+
 def test_distribute_leaves_imageless_pins_queued(config, db):
     _seed_pins(config, db)                                # no hero file on disk
 
