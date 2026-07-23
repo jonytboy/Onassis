@@ -49,6 +49,8 @@ _PUBLIC_EXACT = {
     "/etsy/oauth/login",
     "/etsy/oauth/callback",
     "/etsy/oauth/status",
+    "/pinterest/oauth/login",
+    "/pinterest/oauth/callback",
 }
 _PUBLIC_PREFIXES = ("/exports", "/operations/api", "/operations/static")
 

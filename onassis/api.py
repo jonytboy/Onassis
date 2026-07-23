@@ -337,6 +337,47 @@ def create_app(config: Config | None = None) -> FastAPI:
         """Etsy OAuth authorisation status (no secrets)."""
         return etsy.oauth.status()
 
+    @app.get("/pinterest/oauth/login", tags=["pinterest"])
+    def pinterest_oauth_login() -> Any:
+        """Start Pinterest OAuth — redirect to consent, requesting pins:write."""
+        from starlette.responses import RedirectResponse
+
+        from onassis.connectors.pinterest_oauth import authorize_url
+        resolved = app.state.integrations.resolve("pinterest")
+        app_id, redirect_uri = resolved.get("app_id"), resolved.get("redirect_uri")
+        if not (app_id and redirect_uri):
+            raise HTTPException(status_code=409,
+                                detail="Set the Pinterest App ID + Redirect URI first.")
+        return RedirectResponse(authorize_url(app_id, redirect_uri))
+
+    @app.get("/pinterest/oauth/callback", tags=["pinterest"])
+    def pinterest_oauth_callback(code: str | None = None, state: str | None = None,
+                                 error: str | None = None) -> Any:
+        """OAuth redirect target — exchange the code for a WRITE-scoped token and
+        save it to the Pinterest integration (applied live, no restart)."""
+        from starlette.responses import RedirectResponse
+
+        from onassis.connectors.pinterest_oauth import (
+            PinterestOAuthError, exchange_code,
+        )
+        if error or not code:
+            raise HTTPException(status_code=400,
+                                detail=f"Pinterest authorisation was not granted ({error or 'no code'}).")
+        resolved = app.state.integrations.resolve("pinterest")
+        base_url = (app.state.config.pinterest or {}).get(
+            "base_url", "https://api.pinterest.com/v5")
+        try:
+            tok = exchange_code(resolved.get("app_id"), resolved.get("app_secret"),
+                                code, resolved.get("redirect_uri"), base_url=base_url)
+        except PinterestOAuthError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        access = tok.get("access_token")
+        if not access:
+            raise HTTPException(status_code=400, detail="Pinterest returned no access token.")
+        app.state.integrations.save("pinterest", {"access_token": access},
+                                    operator="pinterest-oauth")
+        return RedirectResponse("/operations?connected=pinterest")
+
     @app.get("/listing/{campaign_id}", tags=["listing"])
     def listing(campaign_id: int) -> dict[str, Any]:
         """Build & export a complete, upload-ready Etsy listing package."""

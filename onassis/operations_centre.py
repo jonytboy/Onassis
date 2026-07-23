@@ -835,6 +835,12 @@ def build_operations_router(get_state) -> APIRouter:
                 return {"ok": False, "detail": str(exc)}
         if key == "etsy" and action == "reconnect_oauth":
             return {"ok": True, "redirect": "/etsy/oauth/login"}
+        if key == "pinterest" and action == "reconnect_oauth":
+            resolved = s.integrations.resolve("pinterest")
+            if not (resolved.get("app_id") and resolved.get("redirect_uri")):
+                return {"ok": False, "detail": "Set the App ID, App Secret and Redirect "
+                        "URI first (Pinterest, production app), then Reconnect OAuth."}
+            return {"ok": True, "redirect": "/pinterest/oauth/login"}
         raise HTTPException(status_code=400,
                             detail=f"No action '{action}' for '{key}'.")
 
