@@ -261,6 +261,11 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         "access_token": _env("PINTEREST_ACCESS_TOKEN", pinterest.get("access_token")),
         "ad_account_id": _env("PINTEREST_AD_ACCOUNT_ID", pinterest.get("ad_account_id")),
         "board_id": _env("PINTEREST_BOARD_ID", pinterest.get("board_id")),
+        # App credentials for the OAuth flow that mints a WRITE-scoped token
+        # (the dashboard "generate token" button only grants read scopes).
+        "app_id": _env("PINTEREST_APP_ID", pinterest.get("app_id")),
+        "app_secret": _env("PINTEREST_APP_SECRET", pinterest.get("app_secret")),
+        "redirect_uri": _env("PINTEREST_REDIRECT_URI", pinterest.get("redirect_uri")),
         # Production by default; set PINTEREST_BASE_URL to the sandbox host
         # (https://api-sandbox.pinterest.com/v5) ONLY with a sandbox token — a
         # sandbox token against the production host returns 401, and vice versa.
