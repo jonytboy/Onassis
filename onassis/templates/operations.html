@@ -348,13 +348,14 @@
     <div class="panel">
       <h2>Recent clips</h2>
       <div style="overflow-x:auto">
-      <table><thead><tr><th>Product</th><th>Format</th><th>Caption</th><th>Status</th><th>Length</th></tr></thead><tbody>
+      <table><thead><tr><th>Product</th><th>Format</th><th>Caption</th><th>Status</th><th>Length</th><th>Clip</th></tr></thead><tbody>
         <template x-for="c in (content?.recent||[])" :key="c.id">
           <tr><td x-text="c.product_key"></td>
             <td><span class="pill grey" x-text="c.fmt.replace(/_/g,' ')"></span></td>
             <td class="note" x-text="c.caption"></td>
             <td><span class="pill" :class="{queued:'needs_review',distributed:'ok',posted:'ok',failed:'failed'}[c.status]||'grey'" x-text="c.status"></span></td>
-            <td x-text="(c.duration_s||0)+'s'"></td></tr>
+            <td x-text="(c.duration_s||0)+'s'"></td>
+            <td><a :href="'/exports/reels/'+c.campaign_id+'/'+c.product_key+'/'+c.fmt+'.mp4'" target="_blank">▶ view</a></td></tr>
         </template>
       </tbody></table></div>
       <div x-show="!(content?.recent||[]).length" class="muted">No clips yet — click “Build clips”.</div>

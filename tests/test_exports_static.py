@@ -17,7 +17,23 @@ def _app(config, tmp_path):
     (folder / "print_file.png").write_bytes(b"\x89PNG\r\n\x1a\nprintfile")
     (folder / "images" / "hero.jpg").write_bytes(b"\xff\xd8\xff\xe0jpeg")
     (folder / "listing.json").write_text('{"price": 24.0}', encoding="utf-8")
+    # A short-form clip + its private sidecar (Sprint 48).
+    reel = tmp_path / "exports" / "reels" / "1" / "ceramic_mug"
+    reel.mkdir(parents=True, exist_ok=True)
+    (reel / "style_slide.mp4").write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    (reel / "style_slide.json").write_text('{"caption": "x"}', encoding="utf-8")
     return TestClient(app)
+
+
+def test_short_form_video_is_served(config, tmp_path):
+    client = _app(config, tmp_path)
+    r = client.get("/exports/reels/1/ceramic_mug/style_slide.mp4")
+    assert r.status_code == 200 and r.content.startswith(b"\x00\x00\x00\x18ftyp")
+
+
+def test_reel_caption_sidecar_stays_private(config, tmp_path):
+    client = _app(config, tmp_path)
+    assert client.get("/exports/reels/1/ceramic_mug/style_slide.json").status_code == 404
 
 
 def test_print_file_is_served_over_http(config, tmp_path):

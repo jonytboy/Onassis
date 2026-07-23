@@ -34,9 +34,11 @@ from onassis.logger import get_logger
 
 log = get_logger(__name__)
 
-# The only extensions ever served — the sellable artwork/print files. Everything
-# else under exports/ (listing.json, manifest.json, …) stays private.
-ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".svg", ".gif"}
+# The only extensions ever served — the sellable artwork/print files and the
+# short-form video clips (Sprint 48), which must be fetchable to be posted.
+# Everything else under exports/ (listing.json, manifest.json, the reel sidecar
+# json with captions, …) stays private.
+ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".svg", ".gif", ".mp4", ".webm"}
 
 MOUNT_PATH = "/exports"
 
