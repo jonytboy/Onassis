@@ -12,8 +12,10 @@ def test_authorize_url_requests_write_scopes():
     assert url.startswith("https://www.pinterest.com/oauth/?")
     assert "client_id=appid123" in url
     assert "response_type=code" in url
-    # The whole point: write scopes are requested (url-encoded).
+    # The whole point: write scopes are requested (url-encoded)...
     assert "pins%3Awrite" in url and "boards%3Awrite" in url
+    # ...plus user_accounts:read, which the Test Connection / whoami call needs.
+    assert "user_accounts%3Aread" in url
     assert "callback" in url
 
 

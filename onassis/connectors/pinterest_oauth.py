@@ -20,8 +20,10 @@ import base64
 from typing import Any
 from urllib.parse import urlencode
 
-# Everything the bulk pinner and catalogue tools need: read + write pins/boards.
-DEFAULT_SCOPES = ["boards:read", "boards:write", "pins:read", "pins:write"]
+# Everything ONASSIS uses: read + write pins/boards, plus user_accounts:read
+# (the Test Connection / whoami call hits /user_account and needs it).
+DEFAULT_SCOPES = ["boards:read", "boards:write", "pins:read", "pins:write",
+                  "user_accounts:read"]
 _AUTH_HOST = "https://www.pinterest.com/oauth/"
 
 
