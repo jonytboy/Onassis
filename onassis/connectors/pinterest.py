@@ -143,9 +143,10 @@ class PinterestConnector:
         return self._pin_client
 
 
-def _pin_error_hint(status: int, base_url: str) -> str:
-    """A human hint for the two Pinterest gotchas: environment + scope."""
+def _pin_error_hint(status: int, base_url: str, body: str = "") -> str:
+    """A human hint for the Pinterest gotchas: access tier, environment, scope."""
     sandbox = "sandbox" in base_url
+    low = (body or "").lower()
     if status == 401:
         return (" — Authentication failed. Usually a token/environment mismatch: a "
                 "SANDBOX token works only against the sandbox host and a PRODUCTION "
@@ -153,6 +154,13 @@ def _pin_error_hint(status: int, base_url: str) -> str:
                 f"{'SANDBOX' if sandbox else 'PRODUCTION'}. Use a matching token, or "
                 "set PINTEREST_BASE_URL accordingly.")
     if status == 403:
+        # The real blocker for most new apps: Trial access can't write in production.
+        if "trial access" in low or '"code":29' in low or "code\": 29" in low:
+            return (" — Your Pinterest app has TRIAL access, which cannot create pins "
+                    "in production (only in the sandbox, where pins aren't real). To "
+                    "post real pins you must apply for STANDARD access in the Pinterest "
+                    "developer dashboard (submit the app for review). No token change "
+                    "fixes this — it's an access-tier gate.")
         return (" — Forbidden. The token is missing a required scope: pin creation "
                 "needs 'pins:write' (and 'boards:read'). Regenerate the token with "
                 "those scopes.")
@@ -192,7 +200,7 @@ class PinterestPinClient:
         if resp.status_code >= 400:
             raise RuntimeError(
                 f"Pinterest createPin HTTP {resp.status_code}: {resp.text}"
-                + _pin_error_hint(resp.status_code, self.base_url))
+                + _pin_error_hint(resp.status_code, self.base_url, resp.text))
         return resp.json()
 
 

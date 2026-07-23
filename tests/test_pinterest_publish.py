@@ -36,8 +36,12 @@ def test_error_hints_explain_sandbox_and_scope():
     h401 = _pin_error_hint(401, "https://api.pinterest.com/v5")
     assert "PRODUCTION" in h401 and "sandbox" in h401.lower()
     assert "SANDBOX" in _pin_error_hint(401, "https://api-sandbox.pinterest.com/v5")
-    # 403 → missing scope; names the scope needed.
+    # 403 with a scope problem → names the scope needed.
     assert "pins:write" in _pin_error_hint(403, "https://api.pinterest.com/v5")
+    # 403 with Pinterest's Trial-access message → names the real fix (Standard access).
+    trial = _pin_error_hint(403, "https://api.pinterest.com/v5",
+                            '{"code":29,"message":"Apps with Trial access may not create Pins"}')
+    assert "STANDARD access" in trial and "TRIAL" in trial
 
 
 def test_publishes_pins_to_the_board(config):

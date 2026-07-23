@@ -998,6 +998,41 @@ def build_operations_router(get_state) -> APIRouter:
         _require_operator(request)
         return request.app.state.content.distribute()
 
+    @router.post("/api/run-marketing")
+    def api_run_marketing(request: Request) -> Any:
+        """Run the promotion push only (pins + due channel assets) — decoupled
+        from product creation, so marketing goes out daily without a production
+        run. Cheap: no new products, no LLM/image cost."""
+        _require_operator(request)
+        state = get_state(request.app)
+        if state.mode != RUNNING:
+            raise HTTPException(status_code=409,
+                                detail=f"Business is {state.mode} — resume it first.")
+        if state.is_running:
+            raise HTTPException(status_code=409, detail="A run is already in progress.")
+        daily = request.app.state.daily
+        state.begin_run()
+        state.add_log("MARKETING PUSH requested — pinning + channel distribution.")
+
+        def worker() -> None:
+            handler = _RunLogHandler(state)
+            root = logging.getLogger("onassis")
+            root.addHandler(handler)
+            try:
+                result = daily.run_marketing()
+                state.end_run("completed", result)
+                state.add_log(f"MARKETING PUSH finished: {result.get('pins_posted', 0)} "
+                              "pin(s) posted.")
+            except Exception as exc:  # never crash the server on a push failure
+                state.end_run("failed", {"error": str(exc)})
+                state.add_log(f"MARKETING PUSH crashed: {exc}", "error")
+                log.exception("Marketing push failed")
+            finally:
+                root.removeHandler(handler)
+
+        threading.Thread(target=worker, name="run-marketing", daemon=True).start()
+        return {"status": "started"}
+
     @router.post("/api/traffic/pin-all")
     def api_pin_all(request: Request, payload: dict | None = None) -> Any:
         """Pin every product to the Pinterest board in one go (runs in the

@@ -54,6 +54,19 @@ _DESIGN = {
 }
 
 
+# --- Marketing push (decoupled from production) ---------------------
+
+def test_run_marketing_pushes_without_creating_products(config, db):
+    """The standalone marketing run pins + distributes but creates NO products
+    and spends no LLM/image credit — safe to run daily on its own."""
+    cycle = DailyCycle(config, db)
+    before = len(db.list_products())
+    result = cycle.run_marketing()
+    assert result["status"] == "ok"
+    assert "traffic" in result and "evergreen" in result["traffic"]
+    assert len(db.list_products()) == before          # nothing created
+
+
 # --- Dry run (fully offline; observation + decision only) -----------
 
 def test_daily_listing_cap_honours_business_setting(config, db):

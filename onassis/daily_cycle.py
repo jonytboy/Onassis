@@ -138,6 +138,35 @@ class DailyCycle:
 
     # --- Entry point ------------------------------------------------
 
+    def run_marketing(self, today: str | None = None) -> dict[str, Any]:
+        """Run ONLY the promotion push — decoupled from product creation — so
+        marketing goes out DAILY even on days with no production run.
+
+        Cheap and safe to run often: it schedules + evergreen-cycles + posts pins
+        (rotating the whole catalogue), ships any due channel assets, imports
+        traffic metrics and logs the funnel. It creates NO products and spends no
+        LLM/image credit."""
+        log.info("=== ONASSIS marketing push START ===")
+        traffic = self.traffic.run(today)
+        # Native channel distribution (IG/FB/Blog/Email) ships what's due; when
+        # Make is the distribution path, per-product campaigns already went out at
+        # launch, so we only publish the first-party blog directly here.
+        if self.campaign_distributor.make.is_configured:
+            channels = self.distribution.distribute(channels=["blog"])
+        else:
+            channels = self.distribution.distribute()
+        funnel = self.traffic.snapshot(today)
+        try:
+            self.marketing_learning.record()
+        except Exception:  # learning is best-effort, never fail the push
+            log.debug("marketing learning skipped", exc_info=True)
+        posted = (traffic.get("distribute") or {}).get("posted", 0)
+        ever = (traffic.get("evergreen") or {}).get("scheduled", 0)
+        log.info("=== marketing push DONE — %d pin(s) posted, %d queued evergreen ===",
+                 posted, ever)
+        return {"status": "ok", "traffic": traffic, "channels": channels,
+                "funnel": funnel, "pins_posted": posted, "evergreen_scheduled": ever}
+
     def run(self, mode: str = "production") -> dict[str, Any]:
         """Run the full cycle. ``mode`` is 'production' or 'dry_run'."""
         dry = mode == "dry_run"
