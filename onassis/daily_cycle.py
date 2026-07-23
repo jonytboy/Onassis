@@ -677,6 +677,9 @@ class DailyCycle:
             return {"status": "skipped", "detail": "dry run"}
         cid = ctx.get("campaign_id")
         sched = self.traffic.schedule(campaign_id=cid)
+        # Evergreen: keep pinning daily, cycling the WHOLE catalogue (least-
+        # recently-pinned first) so promotion never dries up after launch.
+        self.traffic.backfill_evergreen()
         dist = self.traffic.distribute()
         # The CMO schedules new marketing assets across the campaign calendar,
         # then distribute ships only what is due today (Sprint 42).

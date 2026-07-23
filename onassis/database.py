@@ -3284,6 +3284,16 @@ class Database:
                 "SELECT pin_key FROM pin_schedule WHERE pin_key IS NOT NULL").fetchall()
         return {r["pin_key"] for r in rows}
 
+    def last_pinned_dates(self) -> dict[str, str]:
+        """product_key → the most recent date it was POSTED (or scheduled). Drives
+        evergreen round-robin: least-recently-pinned products go first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT product_key, MAX(COALESCE(posted_at, scheduled_date)) AS last "
+                "FROM pin_schedule WHERE product_key IS NOT NULL "
+                "GROUP BY product_key").fetchall()
+        return {r["product_key"]: (r["last"] or "") for r in rows}
+
     def list_pin_schedule(self, *, scheduled_date: str | None = None,
                           status: str | None = None,
                           product_key: str | None = None) -> list[dict[str, Any]]:

@@ -138,6 +138,48 @@ def test_publish_all_products_safe_noop_when_pinterest_unconfigured(config, db):
     assert out["posted"] == 0 and "not connected" in out["reason"].lower()
 
 
+def test_evergreen_backfill_cycles_through_all_products(config, db, tmp_path):
+    for key in ("linen_throw", "ceramic_mug", "premium_poster"):
+        _hero(config, tmp_path, key, 1)
+        db.insert_product({"sku": f"1-{key}", "name": key, "campaign_id": 1,
+                           "product_key": key})
+    config.traffic = {**(config.traffic or {}), "max_pins_per_day": 2,
+                      "schedule_horizon_days": 2}
+    eng = TrafficEngine(config, db)
+    out = eng.backfill_evergreen(today="2026-07-03")
+    # 2/day × 2 days = 4 pins scheduled across the 3-product catalogue.
+    assert out["scheduled"] == 4 and out["daily_target"] == 2
+    rows = db.list_pin_schedule()
+    assert all(r["pin_key"].endswith(":evg:2026-07-03") or r["pin_key"].endswith(":evg:2026-07-04")
+               for r in rows)
+    # Every product appears (it cycles through the whole catalogue).
+    assert {r["product_key"] for r in rows} == {"linen_throw", "ceramic_mug", "premium_poster"}
+
+
+def test_evergreen_pins_least_recently_pinned_first(config, db, tmp_path):
+    for key in ("a", "b"):
+        _hero(config, tmp_path, key, 1)
+        db.insert_product({"sku": f"1-{key}", "name": key, "campaign_id": 1, "product_key": key})
+    # 'a' was pinned recently; 'b' never → 'b' must be scheduled first.
+    db.insert_pin_schedule({"pin_key": "a:old", "product_key": "a", "campaign_id": 1,
+                            "scheduled_date": "2026-07-01", "status": "posted",
+                            "posted_at": "2026-07-01"})
+    config.traffic = {**(config.traffic or {}), "max_pins_per_day": 1,
+                      "schedule_horizon_days": 1}
+    TrafficEngine(config, db).backfill_evergreen(today="2026-07-05")
+    fresh = [r for r in db.list_pin_schedule(scheduled_date="2026-07-05")]
+    assert len(fresh) == 1 and fresh[0]["product_key"] == "b"
+
+
+def test_evergreen_respects_the_daily_target_setting(config, db, tmp_path):
+    _hero(config, tmp_path, "mug", 1)
+    db.insert_product({"sku": "1-mug", "name": "mug", "campaign_id": 1, "product_key": "mug"})
+    db.set_setting("business.pinterest_daily_pins", 0)     # operator turned it off
+    config.traffic = {**(config.traffic or {}), "schedule_horizon_days": 1}
+    out = TrafficEngine(config, db).backfill_evergreen(today="2026-07-03")
+    assert out["scheduled"] == 0
+
+
 def test_distribute_leaves_imageless_pins_queued(config, db):
     _seed_pins(config, db)                                # no hero file on disk
 

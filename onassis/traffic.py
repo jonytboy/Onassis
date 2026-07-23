@@ -237,6 +237,79 @@ class TrafficEngine:
             parts.append(hashtags)
         return (" ".join(parts)[:500]) or str(product.get("name") or "")
 
+    # --- Evergreen cycling (Sprint 49) -------------------------------
+
+    def _daily_pin_target(self) -> int:
+        """How many pins to keep scheduled per day — the operator's Business
+        Setting if set, else the config max."""
+        try:
+            from onassis.business_settings import BusinessSettings
+            v = BusinessSettings(self.db, self.config).get("pinterest_daily_pins")
+            if v is not None:
+                return max(0, int(v))
+        except Exception:
+            pass
+        return self.max_per_day
+
+    def _marketing_on(self) -> bool:
+        try:
+            from onassis.business_settings import BusinessSettings
+            return bool(BusinessSettings(self.db, self.config).get("marketing_enabled"))
+        except Exception:
+            return True
+
+    def backfill_evergreen(self, today: str | None = None) -> dict[str, Any]:
+        """Keep the pin calendar topped up by cycling through the WHOLE catalogue,
+        least-recently-pinned first — so pins keep going out daily and every
+        product gets re-promoted in turn, long after its launch. Respects the
+        daily target and never double-schedules a product on the same day."""
+        if not self._marketing_on():
+            return {"scheduled": 0, "reason": "marketing disabled"}
+        base = today or date.today().isoformat()
+        target = self._daily_pin_target()
+        if target <= 0:
+            return {"scheduled": 0, "reason": "daily target is 0"}
+        products = [p for p in self.db.list_products()
+                    if p.get("active", 1) and p.get("product_key") and p.get("campaign_id")
+                    and self._hero_path(p["campaign_id"], p["product_key"])]
+        if not products:
+            return {"scheduled": 0, "reason": "no products with a hero image"}
+        last = self.db.last_pinned_dates()
+        products.sort(key=lambda p: (last.get(p["product_key"], ""), p["product_key"]))
+        days = [self._add_days(base, i) for i in range(self.horizon_days)]
+        existing = self.db.scheduled_pin_keys()
+        scheduled, qi, slot = 0, 0, 0
+        for d in days:
+            cap = max(0, target - self.db.count_pins_scheduled_on(d))
+            placed, guard = 0, 0
+            while placed < cap and guard < len(products) * 2:
+                guard += 1
+                p = products[qi % len(products)]
+                qi += 1
+                cid, key = p["campaign_id"], p["product_key"]
+                pin_key = f"{key}:evg:{d}"
+                if pin_key in existing:
+                    continue
+                meta = self._listing_meta(cid, key)
+                row = {
+                    "pin_key": pin_key, "campaign_id": cid, "product_key": key,
+                    "listing_url": self._product_link(cid, p["sku"], meta),
+                    "keyword": (meta.get("tags") or [None])[0],
+                    "title": str(meta.get("title") or p.get("name") or key)[:100],
+                    "description": self._pin_description(meta, p),
+                    "image_path": self._hero_path(cid, key),
+                    "board": self._board({}, slot), "season": season_for(d),
+                    "scheduled_date": d, "status": "scheduled"}
+                if self.db.insert_pin_schedule(row) is not None:
+                    existing.add(pin_key)
+                    scheduled += 1
+                    placed += 1
+                    slot += 1
+        log.info("Traffic evergreen: topped up %d pin(s) (target %d/day) across %d day(s).",
+                 scheduled, target, len(days))
+        return {"scheduled": scheduled, "daily_target": target,
+                "catalogue": len(products)}
+
     # --- Distribute --------------------------------------------------
 
     def distribute(self, today: str | None = None) -> dict[str, Any]:
@@ -316,11 +389,14 @@ class TrafficEngine:
 
     def run(self, today: str | None = None,
             campaign_id: int | None = None) -> dict[str, Any]:
-        """The daily traffic push: schedule, distribute due pins, import metrics."""
+        """The daily traffic push: schedule fresh pins, top up evergreen from the
+        whole catalogue, distribute due pins, import metrics."""
         sched = self.schedule(today, campaign_id)
+        ever = self.backfill_evergreen(today)
         dist = self.distribute(today)
         metrics = self.import_metrics(today)
-        return {"schedule": sched, "distribute": dist, "metrics": metrics}
+        return {"schedule": sched, "evergreen": ever, "distribute": dist,
+                "metrics": metrics}
 
     # --- Funnel: Impressions -> Clicks -> Visits -> Sales -----------
 
