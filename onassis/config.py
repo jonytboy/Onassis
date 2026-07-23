@@ -261,6 +261,11 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         "access_token": _env("PINTEREST_ACCESS_TOKEN", pinterest.get("access_token")),
         "ad_account_id": _env("PINTEREST_AD_ACCOUNT_ID", pinterest.get("ad_account_id")),
         "board_id": _env("PINTEREST_BOARD_ID", pinterest.get("board_id")),
+        # Production by default; set PINTEREST_BASE_URL to the sandbox host
+        # (https://api-sandbox.pinterest.com/v5) ONLY with a sandbox token — a
+        # sandbox token against the production host returns 401, and vice versa.
+        "base_url": _env("PINTEREST_BASE_URL",
+                         pinterest.get("base_url", "https://api.pinterest.com/v5")),
     }
     # Etsy credentials come from the environment. In Etsy's Open API v3 the
     # "keystring" is both the OAuth client_id and the x-api-key, so ETSY_CLIENT_ID

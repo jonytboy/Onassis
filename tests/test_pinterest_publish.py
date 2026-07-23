@@ -30,6 +30,16 @@ def _pins(n=2, link="https://www.etsy.com/listing/555"):
              "image_path": None, "alt_text": "a"} for i in range(n)]
 
 
+def test_error_hints_explain_sandbox_and_scope():
+    from onassis.connectors.pinterest import _pin_error_hint
+    # 401 → environment mismatch; names the environment we're pointed at.
+    h401 = _pin_error_hint(401, "https://api.pinterest.com/v5")
+    assert "PRODUCTION" in h401 and "sandbox" in h401.lower()
+    assert "SANDBOX" in _pin_error_hint(401, "https://api-sandbox.pinterest.com/v5")
+    # 403 → missing scope; names the scope needed.
+    assert "pins:write" in _pin_error_hint(403, "https://api.pinterest.com/v5")
+
+
 def test_publishes_pins_to_the_board(config):
     client = StubPinClient()
     conn = PinterestConnector(_config(config), pin_client=client)

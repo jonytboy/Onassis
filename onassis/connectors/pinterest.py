@@ -143,6 +143,22 @@ class PinterestConnector:
         return self._pin_client
 
 
+def _pin_error_hint(status: int, base_url: str) -> str:
+    """A human hint for the two Pinterest gotchas: environment + scope."""
+    sandbox = "sandbox" in base_url
+    if status == 401:
+        return (" — Authentication failed. Usually a token/environment mismatch: a "
+                "SANDBOX token works only against the sandbox host and a PRODUCTION "
+                "token only against production. This app is pointed at "
+                f"{'SANDBOX' if sandbox else 'PRODUCTION'}. Use a matching token, or "
+                "set PINTEREST_BASE_URL accordingly.")
+    if status == 403:
+        return (" — Forbidden. The token is missing a required scope: pin creation "
+                "needs 'pins:write' (and 'boards:read'). Regenerate the token with "
+                "those scopes.")
+    return ""
+
+
 class PinterestPinClient:
     """Minimal Pinterest v5 pin-creation client (write). Injectable for tests."""
 
@@ -174,7 +190,9 @@ class PinterestPinClient:
                                    "Content-Type": "application/json"},
                           json=body, timeout=self.timeout)
         if resp.status_code >= 400:
-            raise RuntimeError(f"Pinterest createPin HTTP {resp.status_code}: {resp.text}")
+            raise RuntimeError(
+                f"Pinterest createPin HTTP {resp.status_code}: {resp.text}"
+                + _pin_error_hint(resp.status_code, self.base_url))
         return resp.json()
 
 
