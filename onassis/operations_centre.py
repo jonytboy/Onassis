@@ -1024,7 +1024,7 @@ def build_operations_router(get_state) -> APIRouter:
         _require_operator(request)
         s = request.app.state
         if (payload or {}).get("generate"):
-            s.content.generate_blog()
+            s.content.generate_blog(limit=1000)   # cover the whole backlog
         pending = s.db.list_marketing_assets(channel="blog")
         pending = [a for a in pending if (a.get("status") or "pending") == "pending"]
         result = s.daily.distribution.distribute(channels=["blog"], due_on="2999-12-31")
@@ -1041,6 +1041,21 @@ def build_operations_router(get_state) -> APIRouter:
             f"{result.get('skipped', 0)} skipped, {result.get('failed', 0)} failed.")
         return {**result, "attempted": len(pending), "details": details,
                 "diagnosis": _blog_status(s)}
+
+    @router.post("/api/content/blog/schedule")
+    def api_schedule_blog(request: Request, payload: dict | None = None) -> Any:
+        """Generate articles for the whole catalogue and schedule the full lot to
+        drip out over future days (``per_day`` a day, default 2) — so the daily
+        marketing run publishes a steady stream instead of dumping them at once."""
+        _require_operator(request)
+        s = request.app.state
+        per_day = int((payload or {}).get("per_day", 2))
+        start = (payload or {}).get("start")
+        result = s.content.schedule_blog_backlog(per_day=per_day, start=start)
+        get_state(request.app).add_log(
+            f"Blog backlog scheduled: {result.get('scheduled', 0)} article set(s), "
+            f"{result.get('per_day')}/day through {result.get('last_date')}.")
+        return {**result, "diagnosis": _blog_status(s)}
 
     @router.post("/api/run-marketing")
     def api_run_marketing(request: Request) -> Any:

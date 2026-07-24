@@ -93,6 +93,27 @@ def test_generate_blog_creates_articles_on_demand(config, db, tmp_path):
     assert eng.generate_blog()["generated"] == 0
 
 
+def test_schedule_blog_backlog_drips_across_days(config, db, tmp_path):
+    """The whole blog backlog can be generated and spread over future days so the
+    daily run posts a steady trickle (not a same-day dump)."""
+    for i in range(1, 6):
+        cid, key = _build_package(config, tmp_path, cid=i, key=f"mug{i}")
+        db.insert_product({"sku": f"{cid}-{key}", "name": f"Mug {i}",
+                           "campaign_id": cid, "product_key": key})
+    eng = _engine(config, db)
+    r = eng.schedule_blog_backlog(per_day=2, start="2026-07-24")
+    assert r["scheduled"] == 5 and r["per_day"] == 2
+    assert r["first_date"] == "2026-07-24" and r["last_date"] == "2026-07-26"
+    # Two go out today, two tomorrow, one the day after — dripped, not dumped.
+    dates = sorted(a["scheduled_date"]
+                   for a in db.list_marketing_assets(channel="blog"))
+    assert dates == ["2026-07-24", "2026-07-24", "2026-07-25",
+                     "2026-07-25", "2026-07-26"]
+    # Only the two due today are picked up by a distribute run on that day.
+    due = db.list_pending_marketing_assets(channel="blog", due_on="2026-07-24")
+    assert len(due) == 2
+
+
 def test_blog_embeds_image_video_and_product_link(config, db, tmp_path):
     """Blog articles carry the hero picture, the clips, and a product link for SEO."""
     cid, key = _build_package(config, tmp_path)   # listing.json links to etsy/listing/1

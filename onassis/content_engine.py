@@ -273,6 +273,36 @@ class ContentEngine:
             made += 1
         return {"generated": made}
 
+    def schedule_blog_backlog(self, *, per_day: int = 2, start: str | None = None,
+                              generate: bool = True) -> dict[str, Any]:
+        """Schedule the whole blog backlog to drip out over future days.
+
+        Generates articles for every product that lacks them (``generate``), then
+        spreads all pending blog assets across future dates at ``per_day`` a day —
+        so the daily marketing run publishes a steady trickle instead of dumping
+        the lot at once (which reads as spam and is bad for SEO). Re-running
+        re-spaces the backlog from ``start`` (today by default). Returns the count
+        scheduled and the date range."""
+        from datetime import datetime, timedelta, timezone
+
+        if generate:
+            self.generate_blog(limit=1000)
+        per_day = max(1, int(per_day))
+        start_dt = (datetime.strptime(start, "%Y-%m-%d")
+                    if start else datetime.now(timezone.utc)).date()
+        # Oldest first, so earlier products go out first.
+        pending = [a for a in self.db.list_marketing_assets(channel="blog")
+                   if (a.get("status") or "pending") == "pending"]
+        pending.sort(key=lambda a: a.get("id") or 0)
+        for i, asset in enumerate(pending):
+            day = start_dt + timedelta(days=i // per_day)
+            self.db.schedule_marketing_asset(asset["id"], day.strftime("%Y-%m-%d"))
+        last = (start_dt + timedelta(days=(max(0, len(pending) - 1)) // per_day)
+                ) if pending else start_dt
+        return {"scheduled": len(pending), "per_day": per_day,
+                "first_date": start_dt.strftime("%Y-%m-%d"),
+                "last_date": last.strftime("%Y-%m-%d")}
+
     # --- Distribution (platform-agnostic) ---------------------------
 
     def distribute(self, limit: int = 50) -> dict[str, Any]:

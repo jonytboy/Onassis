@@ -334,6 +334,7 @@
       <h2>Shopify Blog
         <span style="float:right">
           <button class="btn small" @click="generateBlog()">Generate articles</button>
+          <button class="btn small" @click="scheduleBlog()">Schedule the lot</button>
           <button class="btn small" @click="publishBlog()">Publish blog now</button>
         </span></h2>
       <div class="note" x-text="blog?.diagnosis||'—'"></div>
@@ -1245,9 +1246,17 @@ function ops(){
       this.showToast('Generated '+((r&&r.generated)||0)+' blog article set(s). Now click “Publish blog now”.');
       this.loadTab('content'); },
     async publishBlog(){
-      const r=await this.post('/operations/api/content/blog/publish',{});
+      // Generate any missing articles first, then post the whole backlog now.
+      const r=await this.post('/operations/api/content/blog/publish',{generate:true});
       const d=(r&&r.diagnosis)||{};
       this.showToast('Blog: '+((r&&r.posted)||0)+' posted, '+((r&&r.skipped)||0)+' skipped. '+(d.diagnosis||''));
+      this.loadTab('content'); this.pollLogs(); },
+    async scheduleBlog(){
+      const n=prompt('Schedule the whole blog backlog to drip out. How many articles per day?','2');
+      if(n===null) return;
+      const r=await this.post('/operations/api/content/blog/schedule',{generate:true,per_day:parseInt(n)||2});
+      if(r&&r.scheduled!=null) this.showToast('Scheduled '+r.scheduled+' article set(s) at '+r.per_day+'/day, '+r.first_date+' → '+r.last_date+'. The daily run posts them automatically.');
+      else this.showToast('Could not schedule the blog backlog.');
       this.loadTab('content'); this.pollLogs(); },
     async runMarketing(){
       const r=await this.post('/operations/api/run-marketing',{});
