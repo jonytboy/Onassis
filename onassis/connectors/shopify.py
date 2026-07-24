@@ -15,6 +15,7 @@ lets the marketing Blog channel publish to the store's blog.
 from __future__ import annotations
 
 import base64
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -174,7 +175,10 @@ class ShopifyConnector:
             "article": {"title": article.get("title") or "New post",
                         "body_html": article.get("body") or "",
                         "tags": ", ".join(article.get("keywords") or []),
-                        "published": True}})
+                        # published + an explicit published_at so it is visible on
+                        # the storefront immediately (not held as a hidden draft).
+                        "published": True,
+                        "published_at": datetime.now(timezone.utc).isoformat()}})
         art = (resp or {}).get("article") or {}
         art_id = art.get("id")
         if not art_id:
@@ -192,11 +196,32 @@ class ShopifyConnector:
             verified, verify_error = False, f"Verification failed: {exc}"
         handle = art.get("handle") or ""
         domain = self.cfg.get("store_domain") or ""
-        url = art.get("url") or (
-            f"https://{domain}/blogs/{blog_id}/{handle}" if (domain and handle) else "")
+        # Storefront blog URLs use the blog HANDLE, not its numeric id — using the
+        # id gives a 404 that looks like "it didn't post" even though it did. We
+        # build the URL from the handle ourselves rather than trusting the
+        # Admin-API ``url`` field, which points at the numeric-id path.
+        blog_handle = self._blog_handle(str(blog_id)) or str(blog_id)
+        url = (f"https://{domain}/blogs/{blog_handle}/{handle}"
+               if (domain and handle) else "")
+        admin_url = (f"https://{domain}/admin/blogs/{blog_id}/articles/{art_id}"
+                     if domain else "")
         return {"ok": bool(art_id) and verified, "id": str(art_id),
-                "handle": handle, "url": url, "verified": verified,
-                "error": verify_error}
+                "handle": handle, "url": url, "admin_url": admin_url,
+                "verified": verified, "error": verify_error}
+
+    def _blog_handle(self, blog_id: str) -> str | None:
+        """The blog's handle (for storefront URLs), cached from list_blogs."""
+        cache = getattr(self, "_blog_handles", None)
+        if cache is None:
+            cache = self._blog_handles = {}
+        if blog_id in cache:
+            return cache[blog_id]
+        try:
+            for b in (self._c().list_blogs() or {}).get("blogs", []):
+                cache[str(b.get("id"))] = b.get("handle")
+        except Exception:  # URL nicety only — never break publishing on it
+            pass
+        return cache.get(blog_id)
 
 
 class ShopifyAdminClient:

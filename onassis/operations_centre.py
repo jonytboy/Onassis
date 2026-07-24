@@ -1017,16 +1017,30 @@ def build_operations_router(get_state) -> APIRouter:
         return {**result, "diagnosis": _blog_status(s)}
 
     @router.post("/api/content/blog/publish")
-    def api_publish_blog(request: Request) -> Any:
-        """Publish all pending Shopify blog articles now (ignores the schedule),
-        returning the outcome + reasons."""
+    def api_publish_blog(request: Request, payload: dict | None = None) -> Any:
+        """Publish all pending Shopify blog articles now (ignores the schedule).
+        Returns the exact per-article outcome — the Shopify URL on success, or the
+        error on failure. ``generate: true`` first backfills missing articles."""
         _require_operator(request)
         s = request.app.state
+        if (payload or {}).get("generate"):
+            s.content.generate_blog()
+        pending = s.db.list_marketing_assets(channel="blog")
+        pending = [a for a in pending if (a.get("status") or "pending") == "pending"]
         result = s.daily.distribution.distribute(channels=["blog"], due_on="2999-12-31")
+        # Read back each blog asset's outcome so the operator sees exactly what
+        # happened (URL published, or the reason it didn't).
+        details = []
+        for a in s.db.list_marketing_assets(channel="blog")[:25]:
+            details.append({"product_key": a.get("product_key"),
+                            "status": a.get("status") or "pending",
+                            "url": a.get("delivery_ref"),
+                            "error": a.get("delivery_error")})
         get_state(request.app).add_log(
             f"Blog publish: {result.get('posted', 0)} posted, "
             f"{result.get('skipped', 0)} skipped, {result.get('failed', 0)} failed.")
-        return {**result, "diagnosis": _blog_status(s)}
+        return {**result, "attempted": len(pending), "details": details,
+                "diagnosis": _blog_status(s)}
 
     @router.post("/api/run-marketing")
     def api_run_marketing(request: Request) -> Any:

@@ -118,6 +118,22 @@ def test_publish_article_verifies_and_returns_url(config):
     assert res["url"] == "https://shop.myshopify.com/blogs/7/linen-throw-story"
 
 
+def test_publish_article_url_uses_the_blog_handle(config):
+    """Storefront URLs use the blog HANDLE, not its id (an id URL 404s and looks
+    like it never posted). Also returns an admin URL and sets published_at."""
+    _configured(config)
+    config.shopify["blog_id"] = 7
+    client = FakeAdminClient()
+    client.list_blogs = lambda: {"blogs": [{"id": 7, "handle": "news"}]}
+    res = ShopifyConnector(config, client=client).publish_article(
+        {"title": "A Mediterranean Morning", "body": "…"})
+    assert res["url"] == "https://shop.myshopify.com/blogs/news/linen-throw-story"
+    assert res["admin_url"] == "https://shop.myshopify.com/admin/blogs/7/articles/555"
+    # The article is published with an explicit published_at (visible immediately).
+    _, payload = client.articles[0]
+    assert payload["article"]["published"] is True and payload["article"]["published_at"]
+
+
 def test_publish_article_fails_when_unverifiable(config):
     _configured(config)
     config.shopify["blog_id"] = 7
