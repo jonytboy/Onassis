@@ -47,7 +47,9 @@ class ContentEngine:
         self.studio = studio or ReelStudio()
         self.size = tuple(self.cfg.get("reel_size", (1080, 1920)))
         self.fps = int(self.cfg.get("reel_fps", 30))
-        self.per_slide_frames = int(self.cfg.get("reel_slide_frames", 24))
+        # ~2s/slide + a crossfade — readable and produced, not a rushed slideshow.
+        self.per_slide_frames = int(self.cfg.get("reel_slide_frames", 60))
+        self.xfade = int(self.cfg.get("reel_xfade_frames", 10))
 
     # --- Asset discovery --------------------------------------------
 
@@ -154,7 +156,7 @@ class ContentEngine:
             slides=slides, caption=caption, hashtags=self._hashtags(ctx), fmt=fmt,
             sound="trending soft/acoustic (add natively)", product_key=ctx["product_key"],
             campaign_id=ctx["campaign_id"], listing_url=ctx.get("listing_url"),
-            size=self.size, fps=self.fps)
+            size=self.size, fps=self.fps, xfade_frames=self.xfade)
 
     # --- Build ------------------------------------------------------
 

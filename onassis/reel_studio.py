@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from onassis.logger import get_logger
 
@@ -65,7 +65,7 @@ class Slide:
     text: str = ""
     caption: str | None = None
     pan: tuple = (0.0, 0.15, 0.25, 0.0)     # (x0,y0)->(x1,y1) fractional pan
-    frames: int = 24
+    frames: int = 60                        # ~2s/slide at 30fps (readable, not rushed)
     bold: bool = True
     text_y: float = 0.5
 
@@ -82,6 +82,7 @@ class ReelSpec:
     listing_url: str | None = None
     size: tuple = (1080, 1920)              # production 9:16
     fps: int = 30
+    xfade_frames: int = 10                  # crossfade between slides (~0.33s)
 
 
 def _load(image: Any, size: tuple) -> Image.Image:
@@ -131,56 +132,109 @@ def _wrap(draw, text: str, fnt, maxw: int) -> list[str]:
     return lines
 
 
-def _draw_text(frame: Image.Image, text: str, *, size: tuple, bold: bool,
-               y: float, caption: str | None) -> None:
-    if not text and not caption:
-        return
-    W, H = frame.size
-    d = ImageDraw.Draw(frame)
+def _ease(t: float) -> float:
+    """Smoothstep ease-in-out — cinematic motion, not a linear slide."""
+    t = max(0.0, min(1.0, t))
+    return t * t * (3 - 2 * t)
+
+
+def _text_overlay(size: tuple, text: str, *, bold: bool, y: float,
+                  caption: str | None) -> Image.Image:
+    """A transparent RGBA layer with the hook text on a soft scrim (for
+    readability over any photo) + an optional caption. Composited per-frame with
+    a fade so it reads cleanly and never blends messily across a cut."""
+    W, H = size
+    layer = Image.new("RGBA", size, (0, 0, 0, 0))
     if text:
-        fnt = _font(int(W * 0.085), bold=bold)
-        lines = _wrap(d, text, fnt, int(W * 0.84))
-        lh = int(W * 0.085) + 10
-        yy = int(H * y - lh * len(lines) / 2)
+        fnt = _font(int(W * 0.082), bold=bold)
+        d0 = ImageDraw.Draw(layer)
+        lines = _wrap(d0, text, fnt, int(W * 0.82))
+        lh = int(W * 0.082) + 16
+        block = lh * len(lines)
+        cy = int(H * y)
+        pad = int(W * 0.07)
+        scrim = Image.new("RGBA", size, (0, 0, 0, 0))
+        ImageDraw.Draw(scrim).rectangle(
+            [-40, cy - block // 2 - pad, W + 40, cy + block // 2 + pad],
+            fill=(15, 18, 22, 120))
+        scrim = scrim.filter(ImageFilter.GaussianBlur(38))
+        layer = Image.alpha_composite(layer, scrim)
+        d = ImageDraw.Draw(layer)
+        yy = cy - block // 2
         for ln in lines:
             tw = d.textlength(ln, font=fnt)
-            x = (W - tw) / 2
-            d.text((x + 3, yy + 3), ln, font=fnt, fill=(0, 0, 0))
-            d.text((x, yy), ln, font=fnt, fill=(255, 255, 255))
+            d.text(((W - tw) / 2, yy), ln, font=fnt, fill=(255, 255, 255, 255))
             yy += lh
     if caption:
-        cf = _font(int(W * 0.042))
+        cf = _font(int(W * 0.04))
+        d = ImageDraw.Draw(layer)
         cw = d.textlength(caption, font=cf)
-        d.text(((W - cw) / 2 + 2, int(H * 0.9) + 2), caption, font=cf, fill=(0, 0, 0))
-        d.text(((W - cw) / 2, int(H * 0.9)), caption, font=cf, fill=(255, 255, 255))
+        d.text(((W - cw) / 2, int(H * 0.9)), caption, font=cf, fill=(255, 255, 255, 235))
+    return layer
+
+
+def _apply_overlay(frame: Image.Image, overlay: Image.Image, alpha: float) -> Image.Image:
+    if alpha <= 0:
+        return frame
+    ov = overlay
+    if alpha < 1:
+        a = ov.split()[3].point(lambda p: int(p * alpha))
+        ov = Image.merge("RGBA", (*ov.split()[:3], a))
+    return Image.alpha_composite(frame.convert("RGBA"), ov).convert("RGB")
 
 
 def _ken_burns(src: Image.Image, i: int, n: int, pan: tuple, out: tuple) -> Image.Image:
     W, H = out
     sw, sh = src.size
-    s = _lerp(0.92, 0.80, i / max(1, n - 1))         # zoom in
-    cw = int(sw * s)
-    ch = int(cw * H / W)
-    ch = min(ch, sh)
-    cw = min(cw, sw)
+    t = _ease(i / max(1, n - 1))
+    s = _lerp(0.96, 0.86, t)                          # gentle, slow zoom in
+    cw = min(int(sw * s), sw)
+    ch = min(int(cw * H / W), sh)
     x0, y0, x1, y1 = pan
-    x = int(_lerp(x0, x1, i / max(1, n - 1)) * (sw - cw))
-    y = int(_lerp(y0, y1, i / max(1, n - 1)) * (sh - ch))
+    x = int(_lerp(x0, x1, t) * (sw - cw))
+    y = int(_lerp(y0, y1, t) * (sh - ch))
     return src.crop((x, y, x + cw, y + ch)).resize((W, H), Image.LANCZOS)
 
 
+def _blend_tail(a: list[Image.Image], b: list[Image.Image], n: int) -> list[Image.Image]:
+    """Crossfade the last ``n`` frames of ``a`` into the first ``n`` of ``b``."""
+    if n <= 0 or n >= len(a) or n >= len(b):
+        return a + b
+    mid = [Image.blend(a[len(a) - n + i], b[i], (i + 1) / (n + 1)) for i in range(n)]
+    return a[:-n] + mid + b[n:]
+
+
 def compose_frames(spec: ReelSpec) -> list[Image.Image]:
-    """Render a ReelSpec into 9:16 frames (pure Pillow — no ffmpeg)."""
-    frames: list[Image.Image] = []
+    """Render a ReelSpec into 9:16 frames (pure Pillow — no ffmpeg).
+
+    Eased Ken-Burns motion, a readable text scrim that fades in/out per slide,
+    and short crossfades between slides — so it feels produced, not a rushed
+    slideshow."""
+    slides: list[list[Image.Image]] = []
     for sl in spec.slides:
         src = _load(sl.image, spec.size)
         n = max(1, sl.frames)
+        overlay = _text_overlay(spec.size, sl.text, bold=sl.bold, y=sl.text_y,
+                                caption=sl.caption)
+        fade = max(1, int(n * 0.2))                   # text fades in and out
+        frames: list[Image.Image] = []
         for i in range(n):
             f = _ken_burns(src, i, n, sl.pan, spec.size)
-            _draw_text(f, sl.text, size=spec.size, bold=sl.bold, y=sl.text_y,
-                       caption=sl.caption)
-            frames.append(f)
-    return frames
+            if i < fade:
+                a = i / fade
+            elif i >= n - fade:
+                a = (n - 1 - i) / fade
+            else:
+                a = 1.0
+            frames.append(_apply_overlay(f, overlay, min(1.0, max(0.0, a))))
+        slides.append(frames)
+    if len(slides) == 1:
+        return slides[0]
+    xf = max(0, min(spec.xfade_frames, min(len(s) for s in slides) // 2))
+    out = list(slides[0])
+    for nxt in slides[1:]:
+        out = _blend_tail(out, nxt, xf)
+    return out
 
 
 def _ffmpeg_encode(frames: list[Image.Image], out_path: str, *, fps: int) -> str:

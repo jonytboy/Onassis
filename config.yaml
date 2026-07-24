@@ -291,7 +291,8 @@ catalogue:
 content:
   reel_size: [1080, 1920]        # 9:16
   reel_fps: 30
-  reel_slide_frames: 24          # frames per slide (≈0.8s at 30fps)
+  reel_slide_frames: 60          # frames per slide (≈2s at 30fps — readable, not rushed)
+  reel_xfade_frames: 10          # crossfade between slides (≈0.33s) for a produced feel
   public_base: null              # https base serving exports/ (falls back to gelato.file_base_url)
 
 # --- Make.com distribution (Sprint 43) -------------------------------
