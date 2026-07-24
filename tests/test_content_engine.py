@@ -242,3 +242,17 @@ def test_batch_build_respects_the_limit(config, db, tmp_path):
                        "product_key": key})
     r = _engine(config, db).build_batch(limit=2)
     assert r["built"] == 2                     # capped, though 3 formats exist
+
+
+def test_batch_build_is_idempotent(config, db, tmp_path):
+    """Re-running the batch builds only missing formats, so it never duplicates
+    clips — safe to run daily."""
+    cid, key = _build_package(config, tmp_path)
+    db.insert_product({"sku": f"{cid}-{key}", "name": "Mug", "campaign_id": cid,
+                       "product_key": key})
+    eng = _engine(config, db)
+    first = eng.build_batch()                  # builds all 3 formats
+    assert first["built"] == 3 and first["skipped"] == 0
+    again = eng.build_batch()                  # nothing new to build
+    assert again["built"] == 0 and again["skipped"] == 1
+    assert len(db.list_short_form(limit=100)) == 3   # no duplicates

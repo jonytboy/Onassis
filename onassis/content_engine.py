@@ -198,18 +198,36 @@ class ContentEngine:
         return {"ok": True, "clips": clips, "count": len(clips),
                 "queue_dir": str(out_dir)}
 
-    def build_batch(self, limit: int = 20, formats: list[str] | None = None) -> dict[str, Any]:
-        """Fill the daily queue: build clips for active products that have a
-        built listing package, newest first, up to ``limit`` clips."""
+    def build_batch(self, limit: int = 20, formats: list[str] | None = None,
+                    skip_existing: bool = True) -> dict[str, Any]:
+        """Build slideshow clips for active products that have a built listing
+        package, up to ``limit`` clips. Idempotent by default: ``skip_existing``
+        builds only the formats a product doesn't already have, so it's safe to
+        run repeatedly (e.g. daily) without re-rendering or duplicating clips.
+        Returns ``{built, skipped, no_package, clips}``."""
+        formats = formats or FORMATS
+        have: set = set()
+        if skip_existing:
+            for c in self.db.list_short_form(limit=2000):
+                have.add((c.get("product_key"), c.get("fmt")))
         made: list[dict[str, Any]] = []
+        skipped = no_package = 0
         for p in self.db.list_products():
             if len(made) >= limit:
                 break
             if not p.get("active", 1) or not p.get("product_key") or not p.get("campaign_id"):
                 continue
-            r = self.build_for_product(p["campaign_id"], p["product_key"], formats=formats)
+            key = p["product_key"]
+            need = [f for f in formats if (key, f) not in have]
+            if not need:
+                skipped += 1
+                continue
+            r = self.build_for_product(p["campaign_id"], key, formats=need)
+            if not r.get("ok") and "package" in (r.get("reason") or ""):
+                no_package += 1
             made.extend(r.get("clips", []))
-        return {"built": len(made[:limit]), "clips": made[:limit]}
+        return {"built": len(made[:limit]), "skipped": skipped,
+                "no_package": no_package, "clips": made[:limit]}
 
     def _public_base(self) -> str:
         return (self.cfg.get("public_base")
@@ -528,6 +546,30 @@ class ContentEngine:
         return {**base, "ok": True, "live_count": len(live), "checked": checked,
                 "rewritten": rewritten, "skipped": skipped, "reason": reason,
                 "details": details[:50]}
+
+    def reformat_shopify_descriptions(self) -> dict[str, Any]:
+        """Reformat the descriptions of our live Shopify products in place, so
+        posts published with a plain-text description get proper HTML. Targets
+        only products we published (from our publication records)."""
+        conn = getattr(self, "_shopify_conn", None)
+        if conn is None:
+            from onassis.connectors.shopify import ShopifyConnector
+            conn = self._shopify_conn = ShopifyConnector(self.config, self.db)
+        if not conn.can_publish:
+            return {"ok": False, "reason": "Shopify is not connected.",
+                    "checked": 0, "updated": 0, "skipped": 0}
+        ids, seen = [], set()
+        for pub in self.db.list_publications():
+            if pub.get("platform") != "shopify":
+                continue
+            lid = pub.get("listing_id")
+            if lid and str(lid) not in seen:
+                seen.add(str(lid))
+                ids.append(str(lid))
+        if not ids:
+            return {"ok": False, "reason": "No published Shopify products found.",
+                    "checked": 0, "updated": 0, "skipped": 0}
+        return {"ok": True, **conn.reformat_product_descriptions(ids)}
 
     def refill_blog_schedule(self, *, per_day: int | None = None,
                              horizon_days: int | None = None) -> dict[str, Any]:

@@ -170,6 +170,34 @@ class ShopifyConnector:
                 "url": url, "status": product.get("status", "draft"),
                 "images_uploaded": uploads["uploaded"], "images_failed": uploads["failed"]}
 
+    def reformat_product_descriptions(self, product_ids: list[str]) -> dict[str, Any]:
+        """Re-render each product's body_html as HTML in place — fixes products
+        published with a plain-text description that shows as one unformatted
+        block. Only writes when the reformat actually changes the body; products
+        already in HTML are left as-is. Returns ``{checked, updated, skipped}``."""
+        client = self._c()
+        checked = updated = skipped = 0
+        details = []
+        for pid in product_ids:
+            checked += 1
+            try:
+                p = (client.get_product(str(pid)) or {}).get("product") or {}
+                cur = p.get("body_html") or ""
+                new = _text_to_html(cur)
+                if new and new != cur:
+                    client.update_product(str(pid), {"product": {"id": pid,
+                                                                 "body_html": new}})
+                    updated += 1
+                    details.append({"id": pid, "ok": True})
+                else:
+                    skipped += 1
+                    details.append({"id": pid, "ok": True, "reason": "already formatted"})
+            except Exception as exc:  # noqa: BLE001 — record, keep going
+                skipped += 1
+                details.append({"id": pid, "ok": False, "reason": str(exc)})
+        return {"checked": checked, "updated": updated, "skipped": skipped,
+                "details": details[:50]}
+
     def product_details(self, product_id: str) -> dict[str, Any]:
         """Storefront URL + first image ``src`` for a published product (cached).
         Lets the blog link to the Shopify product and reuse its image as the

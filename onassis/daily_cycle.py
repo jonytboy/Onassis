@@ -157,13 +157,20 @@ class DailyCycle:
         try:
             from onassis.content_engine import ContentEngine
 
-            blog_sched = ContentEngine(self.config, self.db).refill_blog_schedule()
+            engine = ContentEngine(self.config, self.db)
+            blog_sched = engine.refill_blog_schedule()
             log.info("Blog schedule: +%d created, %d queued ahead (next %s → %s).",
                      blog_sched.get("created", 0), blog_sched.get("scheduled", 0),
                      blog_sched.get("next"), blog_sched.get("last"))
-        except Exception:  # scheduling is best-effort, never fail the push
+            # Build any missing per-product slideshow clips (idempotent — only
+            # products without clips yet, so steady-state this is a no-op).
+            clips = engine.build_batch(limit=int(self.config.content.get("clip_daily_limit", 12)
+                                                 if isinstance(self.config.content, dict) else 12))
+            log.info("Clips: +%d built, %d already had them, %d missing a package.",
+                     clips.get("built", 0), clips.get("skipped", 0), clips.get("no_package", 0))
+        except Exception:  # scheduling/clip build is best-effort, never fail the push
             blog_sched = {}
-            log.debug("blog scheduling skipped", exc_info=True)
+            log.debug("blog scheduling / clip build skipped", exc_info=True)
         traffic = self.traffic.run(today)
         # Native channel distribution (IG/FB/Blog/Email) ships what's due; when
         # Make is the distribution path, per-product campaigns already went out at

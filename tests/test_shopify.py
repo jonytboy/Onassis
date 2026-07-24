@@ -20,6 +20,7 @@ class FakeAdminClient:
         self.created = []
         self.images = []
         self.articles = []
+        self.products_by_id = {}
 
     def create_product(self, payload):
         if self.fail:
@@ -31,7 +32,13 @@ class FakeAdminClient:
         return {"product": product}
 
     def update_product(self, product_id, payload):
+        self.product_updates = getattr(self, "product_updates", [])
+        self.product_updates.append((str(product_id), payload))
         return {"product": {"id": product_id, "status": "active"}}
+
+    def get_product(self, product_id):
+        return {"product": self.products_by_id.get(str(product_id),
+                                                   {"id": product_id})}
 
     def add_product_image(self, product_id, image_path, *, position=1, alt_text=None):
         self.images.append((image_path, position))
@@ -202,6 +209,23 @@ def test_republish_hidden_makes_scheduled_articles_live(config):
     assert {aid for aid, _ in updated} == {"1", "2"}
     assert all(p["article"]["published"] is True and p["article"]["published_at"] is None
                for _, p in updated)
+
+
+def test_reformat_product_descriptions_in_place(config):
+    """Existing plain-text product descriptions are re-rendered as HTML in place;
+    ones already HTML are left untouched."""
+    _configured(config)
+    client = FakeAdminClient()
+    client.products_by_id = {
+        "100": {"id": 100, "body_html": "WHAT IT IS\nA soft throw.\n\nCosy and warm."},
+        "200": {"id": 200, "body_html": "<p>Already formatted.</p>"},
+    }
+    res = ShopifyConnector(config, client=client).reformat_product_descriptions(["100", "200"])
+    assert res["checked"] == 2 and res["updated"] == 1 and res["skipped"] == 1
+    # Only product 100 was rewritten, with real HTML.
+    updated = dict(client.product_updates)
+    assert "100" in updated and "200" not in updated
+    assert "<h3>What It Is</h3>" in updated["100"]["product"]["body_html"]
 
 
 def test_live_blog_articles_and_update(config):

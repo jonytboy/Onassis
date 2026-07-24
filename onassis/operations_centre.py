@@ -982,7 +982,10 @@ def build_operations_router(get_state) -> APIRouter:
             try:
                 result = engine.build_batch(limit=limit)
                 state.end_run("completed", result)
-                state.add_log(f"CONTENT: built {result['built']} clip(s).")
+                state.add_log(
+                    f"CONTENT: built {result['built']} clip(s); "
+                    f"{result.get('skipped', 0)} product(s) already had them, "
+                    f"{result.get('no_package', 0)} missing a listing package.")
             except Exception as exc:  # never crash the server on a render failure
                 state.end_run("failed", {"error": str(exc)})
                 state.add_log(f"CONTENT build crashed: {exc}", "error")

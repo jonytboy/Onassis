@@ -193,6 +193,10 @@ def _parse_args() -> argparse.Namespace:
              "product link, featured image, HTML body).",
     )
     parser.add_argument(
+        "--fix-product-descriptions", action="store_true",
+        help="One-off: reformat existing live Shopify product descriptions as HTML.",
+    )
+    parser.add_argument(
         "--serve", action="store_true", help="Run the REST API (Swagger at /docs)."
     )
     parser.add_argument("--host", default="0.0.0.0", help="API host (with --serve).")
@@ -863,6 +867,19 @@ def main() -> int:
             mark = "✓" if d.get("ok") else "•"
             note = "" if d.get("ok") else f"  ({d.get('reason', '')})"
             print(f"  {mark} {str(d.get('title'))[:60]}{note}")
+        return 0
+
+    if args.fix_product_descriptions:
+        from onassis.content_engine import ContentEngine
+        from onassis.integrations import apply_integration_overrides
+
+        apply_integration_overrides(config, db)
+        res = ContentEngine(config, db).reformat_shopify_descriptions()
+        if not res.get("ok"):
+            print(f"Description reformat skipped: {res.get('reason')}")
+            return 1
+        print(f"\nPRODUCT DESCRIPTIONS — {res['updated']} reformatted, "
+              f"{res['skipped']} unchanged (of {res['checked']} product(s)).")
         return 0
 
     if args.serve:
