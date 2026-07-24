@@ -235,6 +235,8 @@ class ShopifyConnector:
         published with a plain-text description that shows as one unformatted
         block. Only writes when the reformat actually changes the body; products
         already in HTML are left as-is. Returns ``{checked, updated, skipped}``."""
+        import re
+
         client = self._c()
         checked = updated = skipped = 0
         details = []
@@ -244,14 +246,18 @@ class ShopifyConnector:
                 p = (client.get_product(str(pid)) or {}).get("product") or {}
                 cur = p.get("body_html") or ""
                 new = _reformat_description(cur)
+                preview = re.sub(r"\s+", " ", cur)[:90]
                 if new and new != cur:
                     client.update_product(str(pid), {"product": {"id": pid,
                                                                  "body_html": new}})
                     updated += 1
-                    details.append({"id": pid, "ok": True})
+                    details.append({"id": pid, "ok": True, "changed": True,
+                                    "before": preview})
                 else:
                     skipped += 1
-                    details.append({"id": pid, "ok": True, "reason": "already formatted"})
+                    reason = ("empty body" if not cur else "already formatted")
+                    details.append({"id": pid, "ok": True, "changed": False,
+                                    "reason": reason, "before": preview})
             except Exception as exc:  # noqa: BLE001 — record, keep going
                 skipped += 1
                 details.append({"id": pid, "ok": False, "reason": str(exc)})
@@ -345,10 +351,27 @@ class ShopifyConnector:
                     r.raise_for_status()
                     fp = dest / f"shopify_{i}.jpg"
                     fp.write_bytes(r.content)
+                    self._downscale(fp)              # keep frames light for render
                     out.append(str(fp))
                 except Exception as exc:  # noqa: BLE001
                     log.warning("Shopify image download failed (%s): %s", url, exc)
         return out
+
+    @staticmethod
+    def _downscale(path: Any, max_side: int = 1600) -> None:
+        """Cap an image's longest side so the video renderer never chokes on a
+        huge source (a 4000px hero would bloat every frame)."""
+        try:
+            from PIL import Image
+
+            with Image.open(path) as im:
+                if max(im.size) <= max_side:
+                    return
+                im = im.convert("RGB")
+                im.thumbnail((max_side, max_side))
+                im.save(path, "JPEG", quality=88)
+        except Exception as exc:  # noqa: BLE001 — best effort
+            log.warning("Image downscale failed (%s): %s", path, exc)
 
     def product_details(self, product_id: str) -> dict[str, Any]:
         """Storefront URL + first image ``src`` for a published product (cached).

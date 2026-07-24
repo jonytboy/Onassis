@@ -249,10 +249,14 @@ def _ffmpeg_encode(frames: list[Image.Image], out_path: str, *, fps: int) -> str
             "-movflags", "+faststart", out_path,
         ]
         try:
-            subprocess.run(cmd, check=True, capture_output=True)
+            # Hard timeout so a wedged ffmpeg can never hang the whole build for
+            # hours — one clip failing is caught upstream and simply skipped.
+            subprocess.run(cmd, check=True, capture_output=True, timeout=120)
         except FileNotFoundError as exc:
             raise ReelError("ffmpeg is not installed — install it to render video "
                             "(apt-get install ffmpeg).") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise ReelError("ffmpeg timed out (>120s) — skipping this clip.") from exc
         except subprocess.CalledProcessError as exc:
             raise ReelError(f"ffmpeg failed: {exc.stderr[-300:].decode(errors='ignore')}") \
                 from exc

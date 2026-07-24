@@ -890,6 +890,11 @@ def main() -> int:
             return 1
         print(f"\nPRODUCT DESCRIPTIONS — {res['updated']} reformatted, "
               f"{res['skipped']} unchanged (of {res['checked']} product(s)).")
+        for d in res.get("details", []):
+            mark = "✓ changed" if d.get("changed") else f"· {d.get('reason', '')}"
+            print(f"  [{d.get('id')}] {mark}")
+            if d.get("before"):
+                print(f"      now: {d['before']}")
         return 0
 
     if args.attach_product_videos:
