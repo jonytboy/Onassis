@@ -1059,6 +1059,21 @@ def build_operations_router(get_state) -> APIRouter:
         return {**result, "attempted": len(pending), "requeued": requeued,
                 "details": details, "diagnosis": _blog_status(s)}
 
+    @router.post("/api/content/blog/republish")
+    def api_republish_blog(request: Request) -> Any:
+        """Make every article on the store's blog visible now — recovery for posts
+        stuck as hidden/scheduled (a future published_at from clock skew)."""
+        _require_operator(request)
+        s = request.app.state
+        try:
+            result = s.daily.shopify.connector.republish_hidden()
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc), "diagnosis": _blog_status(s)}
+        get_state(request.app).add_log(
+            f"Blog visibility fix: {result.get('fixed', 0)} article(s) re-published now, "
+            f"{result.get('already_live', 0)} already live.")
+        return {"ok": True, **result, "diagnosis": _blog_status(s)}
+
     @router.post("/api/content/blog/schedule")
     def api_schedule_blog(request: Request, payload: dict | None = None) -> Any:
         """Generate articles for the whole catalogue and schedule the full lot to

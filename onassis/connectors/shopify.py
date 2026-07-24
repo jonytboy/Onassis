@@ -15,7 +15,6 @@ lets the marketing Blog channel publish to the store's blog.
 from __future__ import annotations
 
 import base64
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -157,6 +156,51 @@ class ShopifyConnector:
         blogs = (self._c().list_blogs() or {}).get("blogs", [])
         return [{"id": str(b.get("id")), "title": b.get("title", "")} for b in blogs]
 
+    def republish_hidden(self, blog_id: str | None = None) -> dict[str, Any]:
+        """Make every article on the blog visible NOW — recovery for posts that
+        were created with a future ``published_at`` (a server clock ahead of
+        Shopify's) and are stuck as hidden/scheduled, so 'there's just no blog'.
+
+        For each article that isn't currently visible (unpublished, or a
+        ``published_at`` that isn't in the past) it PUTs ``published: true`` and
+        clears ``published_at`` so Shopify re-stamps it to now. Returns
+        ``{checked, fixed, already_live}``."""
+        blog_id = str(blog_id or self.cfg.get("blog_id") or "")
+        if not blog_id:
+            raise RuntimeError("No Shopify blog selected.")
+        client = self._c()
+        articles = (client.list_articles(blog_id) or {}).get("articles", [])
+        checked, fixed, live = 0, 0, 0
+        for a in articles:
+            checked += 1
+            if self._is_visible(a):
+                live += 1
+                continue
+            client.update_article(blog_id, str(a.get("id")),
+                                  {"article": {"id": a.get("id"), "published": True,
+                                               "published_at": None}})
+            fixed += 1
+        return {"checked": checked, "fixed": fixed, "already_live": live}
+
+    @staticmethod
+    def _is_visible(article: dict[str, Any]) -> bool:
+        """An article is live when it's published and its published_at is not in
+        the future. A missing/None published_at with published truthy counts live."""
+        from datetime import datetime, timezone
+
+        if article.get("published") is False:
+            return False
+        pub = article.get("published_at")
+        if not pub:
+            return bool(article.get("published", True))
+        try:
+            when = datetime.fromisoformat(str(pub).replace("Z", "+00:00"))
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
+            return when <= datetime.now(timezone.utc)
+        except ValueError:
+            return True   # unparseable → assume live, don't churn it
+
     def publish_article(self, article: dict[str, Any]) -> dict[str, Any]:
         """Publish a blog article to the store's blog and return a verifiable
         result ``{ok, id, handle, url, verified}``. ``article`` needs a
@@ -175,10 +219,12 @@ class ShopifyConnector:
             "article": {"title": article.get("title") or "New post",
                         "body_html": article.get("body") or "",
                         "tags": ", ".join(article.get("keywords") or []),
-                        # published + an explicit published_at so it is visible on
-                        # the storefront immediately (not held as a hidden draft).
-                        "published": True,
-                        "published_at": datetime.now(timezone.utc).isoformat()}})
+                        # published: true publishes immediately — Shopify stamps
+                        # published_at itself. Do NOT send our own published_at:
+                        # if the server clock is even slightly ahead of Shopify's,
+                        # Shopify reads it as a FUTURE time and hides the article
+                        # as 'scheduled' (the whole blog looks empty).
+                        "published": True}})
         art = (resp or {}).get("article") or {}
         art_id = art.get("id")
         if not art_id:
@@ -279,6 +325,13 @@ class ShopifyAdminClient:
 
     def get_article(self, blog_id: str, article_id: str) -> dict[str, Any]:
         return self._request("GET", f"/blogs/{blog_id}/articles/{article_id}.json", None)
+
+    def list_articles(self, blog_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/blogs/{blog_id}/articles.json?limit=250", None)
+
+    def update_article(self, blog_id: str, article_id: str,
+                       payload: dict[str, Any]) -> dict[str, Any]:
+        return self._put(f"/blogs/{blog_id}/articles/{article_id}.json", payload)
 
     # --- HTTP -------------------------------------------------------
 

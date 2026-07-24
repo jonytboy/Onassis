@@ -120,7 +120,7 @@ def test_publish_article_verifies_and_returns_url(config):
 
 def test_publish_article_url_uses_the_blog_handle(config):
     """Storefront URLs use the blog HANDLE, not its id (an id URL 404s and looks
-    like it never posted). Also returns an admin URL and sets published_at."""
+    like it never posted). Also returns an admin URL."""
     _configured(config)
     config.shopify["blog_id"] = 7
     client = FakeAdminClient()
@@ -129,9 +129,33 @@ def test_publish_article_url_uses_the_blog_handle(config):
         {"title": "A Mediterranean Morning", "body": "…"})
     assert res["url"] == "https://shop.myshopify.com/blogs/news/linen-throw-story"
     assert res["admin_url"] == "https://shop.myshopify.com/admin/blogs/7/articles/555"
-    # The article is published with an explicit published_at (visible immediately).
+    # Published immediately via `published: true`. We must NOT send our own
+    # published_at — a server clock ahead of Shopify's would make it a future
+    # (scheduled, hidden) post, emptying the blog.
     _, payload = client.articles[0]
-    assert payload["article"]["published"] is True and payload["article"]["published_at"]
+    assert payload["article"]["published"] is True
+    assert "published_at" not in payload["article"]
+
+
+def test_republish_hidden_makes_scheduled_articles_live(config):
+    """Recovery: articles stuck with a FUTURE published_at (clock skew) are
+    re-published to now; already-live ones are left alone."""
+    _configured(config)
+    config.shopify["blog_id"] = 7
+    client = FakeAdminClient()
+    updated = []
+    client.list_articles = lambda blog_id: {"articles": [
+        {"id": 1, "published": True, "published_at": "2999-01-01T00:00:00+00:00"},  # future → hidden
+        {"id": 2, "published": False, "published_at": None},                         # unpublished
+        {"id": 3, "published": True, "published_at": "2020-01-01T00:00:00+00:00"},   # already live
+    ]}
+    client.update_article = lambda blog_id, aid, payload: updated.append((aid, payload)) or {"article": {"id": aid}}
+    res = ShopifyConnector(config, client=client).republish_hidden()
+    assert res["checked"] == 3 and res["fixed"] == 2 and res["already_live"] == 1
+    # The two hidden ones were re-published with published_at cleared.
+    assert {aid for aid, _ in updated} == {"1", "2"}
+    assert all(p["article"]["published"] is True and p["article"]["published_at"] is None
+               for _, p in updated)
 
 
 def test_publish_article_fails_when_unverifiable(config):

@@ -336,6 +336,7 @@
           <button class="btn small" @click="generateBlog()">Generate articles</button>
           <button class="btn small" @click="scheduleBlog()">Schedule the lot</button>
           <button class="btn small" @click="publishBlog()">Publish blog now</button>
+          <button class="btn small" @click="fixBlogVisibility()">Fix visibility</button>
         </span></h2>
       <div class="note" x-text="blog?.diagnosis||'—'"></div>
       <div class="grid" style="margin-top:8px">
@@ -1279,6 +1280,11 @@ function ops(){
       const r=await this.post('/operations/api/content/blog/publish',{generate:true});
       const d=(r&&r.diagnosis)||{};
       this.showToast('Blog: '+((r&&r.posted)||0)+' posted, '+((r&&r.skipped)||0)+' skipped. '+(d.diagnosis||''));
+      this.loadTab('content'); this.pollLogs(); },
+    async fixBlogVisibility(){
+      const r=await this.post('/operations/api/content/blog/republish',{});
+      if(r&&r.ok) this.showToast('Blog visibility: re-published '+((r&&r.fixed)||0)+' hidden article(s), '+((r&&r.already_live)||0)+' already live.');
+      else this.showToast('Could not fix visibility: '+((r&&r.error)||'unknown'));
       this.loadTab('content'); this.pollLogs(); },
     async scheduleBlog(){
       const n=prompt('Schedule the whole blog backlog to drip out. How many articles per day?','2');
