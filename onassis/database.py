@@ -3241,10 +3241,16 @@ class Database:
             out.append(d)
         return out
 
-    def reset_failed_marketing_assets(self, channel: str | None = None) -> int:
-        """Re-queue failed deliveries for another attempt (Sprint 42 retry)."""
-        sql = "UPDATE marketing_assets SET status = 'pending', delivery_error = NULL WHERE status = 'failed'"
-        params: list[Any] = []
+    def reset_failed_marketing_assets(self, channel: str | None = None, *,
+                                      include_skipped: bool = False) -> int:
+        """Re-queue failed deliveries for another attempt (Sprint 42 retry). With
+        ``include_skipped`` a 'skipped' asset (e.g. the channel wasn't connected at
+        the time) is re-queued too — so re-connecting and retrying actually posts
+        articles that were passed over earlier."""
+        statuses = ["failed", "skipped"] if include_skipped else ["failed"]
+        sql = ("UPDATE marketing_assets SET status = 'pending', delivery_error = NULL "
+               "WHERE status IN (%s)" % ",".join("?" * len(statuses)))
+        params: list[Any] = list(statuses)
         if channel is not None:
             sql += " AND channel = ?"
             params.append(channel)

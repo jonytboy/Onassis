@@ -465,6 +465,29 @@ def test_blog_status_diagnoses_missing_blog_id(client):
     assert "Blog ID" in r["diagnosis"]
 
 
+def test_generate_blog_explains_a_zero(client):
+    """Generate never looks like a no-op: a zero result carries a message saying
+    why (no products, or all already have articles)."""
+    r = client.post("/operations/api/content/blog/generate", json={}).json()
+    assert r["generated"] == 0
+    assert "no active products" in r["message"].lower()
+
+
+def test_publish_blog_requeues_skipped_articles(client):
+    """'Publish blog now' re-attempts articles that were skipped/failed earlier
+    (e.g. Shopify wasn't connected at the time) — so the 'previous articles never
+    show' gap closes once the store is connected."""
+    db = client.app.state.db
+    db.insert_marketing_asset({"campaign_id": 1, "product_key": "mug", "channel": "blog",
+                               "payload": {"articles": [{"title": "T", "body": "B"}]}})
+    asset = db.list_marketing_assets(channel="blog")[0]
+    db.set_marketing_asset_delivery(asset["id"], "skipped", error="Shopify not connected")
+    # Shopify still isn't connected here, so it will skip again — but the point is
+    # the skipped asset is re-queued and re-attempted, not silently ignored.
+    r = client.post("/operations/api/content/blog/publish", json={}).json()
+    assert r["requeued"] >= 1
+
+
 def test_unbuildable_generic_product_is_flagged_not_publishable(client):
     """A product with no matching Gelato type (the anchor 'product' with a null
     product_key from create_from_opportunity) can never build a listing, so it

@@ -1243,7 +1243,7 @@ function ops(){
       else { alert('Could not start compile: '+((r&&r.detail)||r?.error||'unknown')); } },
     async generateBlog(){
       const r=await this.post('/operations/api/content/blog/generate',{});
-      this.showToast('Generated '+((r&&r.generated)||0)+' blog article set(s). Now click “Publish blog now”.');
+      this.showToast('Blog: '+((r&&r.message)||('generated '+((r&&r.generated)||0)+' article set(s).')));
       this.loadTab('content'); },
     async publishBlog(){
       // Generate any missing articles first, then post the whole backlog now.

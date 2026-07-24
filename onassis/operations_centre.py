@@ -1010,10 +1010,21 @@ def build_operations_router(get_state) -> APIRouter:
         cost, deterministic). Then 'Publish blog now' ships them to Shopify."""
         _require_operator(request)
         s = request.app.state
-        limit = int((payload or {}).get("limit", 50))
+        limit = int((payload or {}).get("limit", 1000))   # cover the whole catalogue
         result = s.content.generate_blog(limit=limit)
-        get_state(request.app).add_log(
-            f"Blog: generated {result.get('generated', 0)} article set(s).")
+        # Explain a zero so a click never looks like it did nothing.
+        made = result.get("generated", 0)
+        if made:
+            note = f"generated {made} article set(s)."
+        elif result.get("skipped_existing"):
+            note = (f"nothing new — all {result.get('skipped_existing')} product(s) "
+                    "already have articles. Click 'Publish blog now' to post them.")
+        elif not result.get("products"):
+            note = "no active products to write about yet."
+        else:
+            note = "no eligible products."
+        result["message"] = note
+        get_state(request.app).add_log(f"Blog: {note}")
         return {**result, "diagnosis": _blog_status(s)}
 
     @router.post("/api/content/blog/publish")
@@ -1025,6 +1036,9 @@ def build_operations_router(get_state) -> APIRouter:
         s = request.app.state
         if (payload or {}).get("generate"):
             s.content.generate_blog(limit=1000)   # cover the whole backlog
+        # Un-stick articles that failed or were skipped earlier (e.g. Shopify
+        # wasn't connected, or an earlier bad URL) so a retry actually posts them.
+        requeued = s.db.reset_failed_marketing_assets(channel="blog", include_skipped=True)
         pending = s.db.list_marketing_assets(channel="blog")
         pending = [a for a in pending if (a.get("status") or "pending") == "pending"]
         result = s.daily.distribution.distribute(channels=["blog"], due_on="2999-12-31")
@@ -1039,8 +1053,8 @@ def build_operations_router(get_state) -> APIRouter:
         get_state(request.app).add_log(
             f"Blog publish: {result.get('posted', 0)} posted, "
             f"{result.get('skipped', 0)} skipped, {result.get('failed', 0)} failed.")
-        return {**result, "attempted": len(pending), "details": details,
-                "diagnosis": _blog_status(s)}
+        return {**result, "attempted": len(pending), "requeued": requeued,
+                "details": details, "diagnosis": _blog_status(s)}
 
     @router.post("/api/content/blog/schedule")
     def api_schedule_blog(request: Request, payload: dict | None = None) -> Any:

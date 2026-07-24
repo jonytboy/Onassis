@@ -247,31 +247,51 @@ class ContentEngine:
     def generate_blog(self, limit: int = 50) -> dict[str, Any]:
         """Generate SEO blog articles for active products that don't have any yet
         (deterministic, $0). 'Publish blog now' then ships them to Shopify. This
-        decouples blog content from a full production run."""
+        decouples blog content from a full production run.
+
+        Every active product gets an article — a missing ``product_key`` or
+        ``campaign_id`` is no longer a silent skip (we derive a stable key from the
+        sku/id and treat the campaign as optional), so a bare ``0`` can only mean
+        'all products already have articles' or 'there are no active products'. The
+        result carries a breakdown so the operator sees exactly what happened."""
         from onassis.marketing import MarketingEngine
 
         me = MarketingEngine(self.config, self.db)
         have = {a.get("product_key") for a in self.db.list_marketing_assets(channel="blog")}
-        made = 0
-        for p in self.db.list_products():
+        made, skipped_existing, skipped_inactive = 0, 0, 0
+        products = self.db.list_products()
+        for p in products:
             if made >= limit:
                 break
-            key, cid = p.get("product_key"), p.get("campaign_id")
-            if not p.get("active", 1) or not key or not cid or key in have:
+            if not p.get("active", 1):
+                skipped_inactive += 1
                 continue
-            ctx = self._gather(cid, key) or {}
+            # A product may predate the campaign/product_key columns — derive a
+            # stable key so it still gets (and de-dupes) an article.
+            key = (p.get("product_key") or p.get("sku")
+                   or (f"product-{p.get('id')}" if p.get("id") else None))
+            if not key:
+                continue
+            cid = p.get("campaign_id")               # optional — asset allows NULL
+            if key in have:
+                skipped_existing += 1
+                continue
+            ctx = (self._gather(cid, key) if cid else None) or {}
             listing = {"title": ctx.get("title") or p.get("name") or key,
-                       "description": ctx.get("description") or "",
+                       "description": ctx.get("description") or p.get("description") or "",
                        "theme": ctx.get("theme") or "",
                        "product_name": ctx.get("product_name") or p.get("name") or key,
                        "tags": ctx.get("tags") or [], "product_key": key}
-            me.blog_only(listing, listing_url=ctx.get("listing_url") or self._product_url(cid, key),
+            me.blog_only(listing,
+                         listing_url=ctx.get("listing_url") or self._product_url(cid, key),
                          campaign_id=cid, product_key=key,
-                         image_url=self._hero_url(cid, key),
-                         videos=self._reel_urls(cid, key))
+                         image_url=self._hero_url(cid, key) if cid else None,
+                         videos=self._reel_urls(cid, key) if cid else None)
             have.add(key)
             made += 1
-        return {"generated": made}
+        return {"generated": made, "products": len(products),
+                "skipped_existing": skipped_existing,
+                "skipped_inactive": skipped_inactive}
 
     def schedule_blog_backlog(self, *, per_day: int = 2, start: str | None = None,
                               generate: bool = True) -> dict[str, Any]:

@@ -93,6 +93,21 @@ def test_generate_blog_creates_articles_on_demand(config, db, tmp_path):
     assert eng.generate_blog()["generated"] == 0
 
 
+def test_generate_blog_covers_products_without_a_campaign_key(config, db, tmp_path):
+    """A product that predates the campaign_id/product_key columns still gets an
+    article (key derived from the sku) — a missing key must not be a silent skip."""
+    config.listing = {**(config.listing or {}), "exports_dir": str(tmp_path / "exports")}
+    db.insert_product({"sku": "LINEN-THROW", "name": "Linen Throw"})   # no cid/key
+    eng = _engine(config, db)
+    r = eng.generate_blog()
+    assert r["generated"] == 1 and r["products"] == 1
+    assets = db.list_marketing_assets(channel="blog")
+    assert len(assets) == 1 and assets[0]["product_key"] == "LINEN-THROW"
+    assert assets[0]["payload"].get("articles")
+    # And it de-dupes on the derived key (no silent duplicate on a second run).
+    assert eng.generate_blog()["generated"] == 0
+
+
 def test_schedule_blog_backlog_drips_across_days(config, db, tmp_path):
     """The whole blog backlog can be generated and spread over future days so the
     daily run posts a steady trickle (not a same-day dump)."""
