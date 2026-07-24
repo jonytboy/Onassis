@@ -659,6 +659,12 @@ class DailyCycle:
                 return {"status": "blocked", "reason": res.get("detail"),
                         "campaign_id": ctx.get("campaign_id"), "products": []}
         stream = self._stream_products(ctx, ignore_cap=ignore_cap, go_live_override=go_live)
+        # Generate the per-product marketing kit (blog/pins/IG/FB/email, $0) so
+        # compiler-built products aren't left without any marketing to distribute.
+        try:
+            self._marketing_kits(ctx)
+        except Exception:  # marketing is best-effort — never fail the build on it
+            log.debug("marketing kit generation skipped", exc_info=True)
         from onassis.catalogue import category_of
         launched = (ctx.get("expansion") or {}).get("launched", [])
         products = [{"product_key": s["product_key"],
@@ -682,20 +688,43 @@ class DailyCycle:
             return {"status": "skipped", "detail": "no approved product campaign"}
         content = self.orchestrator.generate_marketing_content(brief)
         ctx["content_items"] = len(content["items"])
-
-        # A complete promotion kit per LIVE product, all linking back to Etsy.
-        cid = ctx["campaign_id"]
-        kits = 0
-        for product_key, listing_id in self._live_products(ctx):
-            listing = self._listing_json(cid, product_key)
-            if not listing:
-                continue
-            self.marketing.build(listing, listing_id=str(listing_id), campaign_id=cid,
-                                 product_key=product_key)
-            kits += 1
+        kits = self._marketing_kits(ctx)
         ctx["marketing_kits"] = kits
         return {"status": "ok", "detail": {"items": len(content["items"]),
                                            "marketing_kits": kits}}
+
+    def _marketing_kits(self, ctx: dict[str, Any]) -> int:
+        """Build the deterministic ($0) per-product marketing kit — Pinterest /
+        Instagram / Facebook / Blog / Email — for every BUILT product (draft or
+        live). Previously this only ran for live products, so content-first drafts
+        (and everything built by the Catalogue Compiler) never got a kit."""
+        cid = ctx.get("campaign_id")
+        if not cid:
+            return 0
+        kits = 0
+        for s in (ctx.get("expansion") or {}).get("launched", []):
+            key = s.get("product_key")
+            listing = self._listing_json(cid, key) if key else None
+            if not listing:
+                continue
+            url = listing.get("listing_url") or self._marketing_link(cid, key)
+            self.marketing.build(listing, listing_url=url, campaign_id=cid, product_key=key)
+            kits += 1
+        return kits
+
+    def _marketing_link(self, campaign_id: int, product_key: str) -> str:
+        """Best available public link for a built product (Etsy/Shopify), or ''."""
+        for platform in ("etsy", "shopify"):
+            pub = self.db.get_latest_publication(campaign_id, platform,
+                                                 product_id=f"{campaign_id}-{product_key}")
+            if pub:
+                url = pub.get("listing_url") or pub.get("url")
+                if url:
+                    return url
+                lid = pub.get("listing_id")
+                if platform == "etsy" and lid and str(lid).isdigit():
+                    return f"https://www.etsy.com/listing/{lid}"
+        return ""
 
     def _promote(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """Distribute the marketing via the Traffic Engine — schedule 5-10 pins/day

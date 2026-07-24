@@ -93,6 +93,21 @@ def test_generate_blog_creates_articles_on_demand(config, db, tmp_path):
     assert eng.generate_blog()["generated"] == 0
 
 
+def test_blog_embeds_the_products_videos(config, db, tmp_path):
+    """When clips exist, the blog articles embed them (short-form rides along in
+    the SEO content)."""
+    cid, key = _build_package(config, tmp_path)
+    db.insert_product({"sku": f"{cid}-{key}", "name": "Mug", "campaign_id": cid,
+                       "product_key": key})
+    config.gelato = {**(config.gelato or {}), "file_base_url": "https://cdn.onassis/exports"}
+    eng = _engine(config, db)
+    eng.build_for_product(cid, key)                       # produces clips
+    eng.generate_blog()
+    art = db.list_marketing_assets(channel="blog")[0]["payload"]["articles"][0]
+    assert "<video" in art["body"]
+    assert f"https://cdn.onassis/exports/reels/{cid}/{key}/" in art["body"]
+
+
 def test_distribute_marks_queued_clips_handed_off(config, db, tmp_path):
     cid, key = _build_package(config, tmp_path)
     eng = _engine(config, db)

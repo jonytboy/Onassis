@@ -211,6 +211,16 @@ class ContentEngine:
             made.extend(r.get("clips", []))
         return {"built": len(made[:limit]), "clips": made[:limit]}
 
+    def _reel_urls(self, campaign_id: int, product_key: str) -> list[str]:
+        """Public URLs of a product's rendered clips (for embedding in the blog)."""
+        base = (self.cfg.get("public_base")
+                or (self.config.gelato or {}).get("file_base_url") or "").rstrip("/")
+        if not base:
+            return []
+        clips = [c for c in self.db.list_short_form(limit=500)
+                 if c.get("product_key") == product_key and c.get("campaign_id") == campaign_id]
+        return [f"{base}/reels/{campaign_id}/{product_key}/{c['fmt']}.mp4" for c in clips]
+
     # --- Blog articles (on demand, deterministic) -------------------
 
     def generate_blog(self, limit: int = 50) -> dict[str, Any]:
@@ -235,7 +245,7 @@ class ContentEngine:
                        "product_name": ctx.get("product_name") or p.get("name") or key,
                        "tags": ctx.get("tags") or [], "product_key": key}
             me.blog_only(listing, listing_url=ctx.get("listing_url"),
-                         campaign_id=cid, product_key=key)
+                         campaign_id=cid, product_key=key, videos=self._reel_urls(cid, key))
             have.add(key)
             made += 1
         return {"generated": made}

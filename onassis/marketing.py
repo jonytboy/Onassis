@@ -77,8 +77,12 @@ class MarketingEngine:
             "blog": self._blog(ctx),
             "email": self._email(ctx),
         }
-        # Sanity: every asset points back to the listing.
-        assert self._all_link_back(kit, url), "a marketing asset is missing the Etsy link"
+        # Every asset should link back to the listing — but a draft product may
+        # not have a public URL yet, so this is a warning, not a hard failure
+        # (content-first drafts still get their marketing kit generated).
+        if url and not self._all_link_back(kit, url):
+            log.warning("Marketing kit for %s: some assets missing the listing link.",
+                        kit["product_key"])
 
         if store and self.db:
             for channel in CHANNELS:
@@ -92,13 +96,23 @@ class MarketingEngine:
 
     def blog_only(self, listing: dict[str, Any], *, listing_url: str | None = None,
                   listing_id: str | None = None, campaign_id: int | None = None,
-                  product_key: str | None = None, store: bool = True) -> dict[str, Any]:
+                  product_key: str | None = None, videos: list[str] | None = None,
+                  store: bool = True) -> dict[str, Any]:
         """Generate ONLY the SEO blog articles for a product (deterministic, $0) —
         so blog content can be produced on demand without a full production run or
-        the other channels."""
+        the other channels. ``videos`` (public mp4 URLs) are embedded at the top of
+        each article, so the short-form clips ride along in the SEO content."""
         url = listing_url or (f"https://www.etsy.com/listing/{listing_id}"
                               if listing_id else "")
         blog = self._blog(self._context(listing, url))
+        if videos:
+            embed = "".join(
+                f'<video controls playsinline width="100%" style="margin:12px 0" '
+                f'src="{v}"></video>' for v in videos[:2])
+            for art in blog.get("articles", []):
+                art["body"] = embed + "\n\n" + (art.get("body") or "")
+            blog["body"] = embed + "\n\n" + (blog.get("body") or "")
+            blog["videos"] = list(videos[:2])
         if store and self.db:
             self.db.insert_marketing_asset({
                 "campaign_id": campaign_id,
