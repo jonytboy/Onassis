@@ -331,6 +331,17 @@
   <!-- CONTENT (short-form video) -->
   <div x-show="tab==='content'">
     <div class="panel" style="margin-bottom:12px">
+      <h2>Shopify Blog <button class="btn small" style="float:right" @click="publishBlog()">Publish blog now</button></h2>
+      <div class="note" x-text="blog?.diagnosis||'—'"></div>
+      <div class="grid" style="margin-top:8px">
+        <div class="stat"><div class="k">Connected</div><div class="v sm"><span class="pill" :class="blog?.connected?'ok':'failed'" x-text="blog?.connected?'yes':'no'"></span></div></div>
+        <div class="stat"><div class="k">Blog ID</div><div class="v sm" x-text="blog?.blog_id||'not set'"></div></div>
+        <div class="stat"><div class="k">Articles</div><div class="v" x-text="blog?.assets??0"></div></div>
+        <div class="stat"><div class="k">Posted</div><div class="v sm" x-text="blog?.posted??0"></div></div>
+        <div class="stat"><div class="k">Skipped</div><div class="v sm" x-text="blog?.skipped??0"></div></div>
+      </div>
+    </div>
+    <div class="panel" style="margin-bottom:12px">
       <h2>Short-form video — TikTok / Reels
         <span style="float:right">
           <button class="btn small" @click="buildReels()">Build clips</button>
@@ -1052,7 +1063,7 @@ function ops(){
     productDetail:null, channelTests:null, testingChannels:false, regenerating:null,
     integrations:null, integrationDetail:null, integrationEdits:{}, integrationBusy:false,
     commercial:null, commercialProducts:null, cmo:null, cfo:null, distribution:null,
-    catalogue:null, collections:null, content:null, publishingAll:false, publishAllTotal:0, publishAllDone:0,
+    catalogue:null, collections:null, content:null, blog:null, publishingAll:false, publishAllTotal:0, publishAllDone:0,
     productSearch:'', productFilter:'all', productHealth:null, toast:'',
     productFilters:[['all','All'],['awaiting_approval','Awaiting Approval'],['ready_to_publish','Ready to Publish'],['draft_created','Draft Created'],['live','Live'],['failed','Failed'],['etsy','On Etsy'],['shopify','On Shopify'],['both','Etsy + Shopify'],['archived','Archived']],
     get running(){ return this.run?.status==='running'; },
@@ -1114,7 +1125,8 @@ function ops(){
       else if(t==='commercial'){ this.commercial=await this.get('/operations/api/commercial');
         this.commercialProducts=(await this.get('/operations/api/commercial/products')).products; }
       else if(t==='aicost'){ this.cfo=await this.get('/operations/api/cfo'); }
-      else if(t==='content'){ this.content=await this.get('/operations/api/content/reels'); }
+      else if(t==='content'){ this.content=await this.get('/operations/api/content/reels');
+        this.blog=await this.get('/operations/api/content/blog'); }
       else if(t==='catalogue'){ this.catalogue=await this.get('/operations/api/catalogue');
         this.collections=(await this.get('/operations/api/collections')).collections; }
       else if(t==='products'){ const d=await this.get('/operations/api/products?filter='+this.productFilter);
@@ -1224,6 +1236,11 @@ function ops(){
       const r=await this.post('/operations/api/catalogue/compile',{budget_usd:b,mode:'auto_draft'});
       if(r&&r.status==='started'){ this.showToast('Compiling catalogue (budget $'+b+') — watch the log.'); this.refreshRun(); this.pollLogs(); }
       else { alert('Could not start compile: '+((r&&r.detail)||r?.error||'unknown')); } },
+    async publishBlog(){
+      const r=await this.post('/operations/api/content/blog/publish',{});
+      const d=(r&&r.diagnosis)||{};
+      this.showToast('Blog: '+((r&&r.posted)||0)+' posted, '+((r&&r.skipped)||0)+' skipped. '+(d.diagnosis||''));
+      this.loadTab('content'); this.pollLogs(); },
     async runMarketing(){
       const r=await this.post('/operations/api/run-marketing',{});
       if(r&&r.status==='started'){ this.showToast('Marketing push started — pinning + distribution. Watch the log.'); this.refreshRun(); this.pollLogs(); }

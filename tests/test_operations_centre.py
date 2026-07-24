@@ -453,6 +453,18 @@ def test_archived_products_vanish_from_the_approval_workspace(client):
     assert sku not in all_skus
 
 
+def test_blog_status_diagnoses_missing_blog_id(client):
+    """With Shopify connected but no Blog ID, the diagnostic names the usual cause
+    — so 'blog not publishing despite integration working' is self-explaining."""
+    class _Conn:
+        can_publish = True
+    client.app.state.daily.shopify.connector = _Conn()
+    client.app.state.config.shopify = {"store_domain": "x.myshopify.com"}  # no blog_id
+    r = client.get("/operations/api/content/blog").json()
+    assert r["connected"] is True and r["blog_id"] is None
+    assert "Blog ID" in r["diagnosis"]
+
+
 def test_unbuildable_generic_product_is_flagged_not_publishable(client):
     """A product with no matching Gelato type (the anchor 'product' with a null
     product_key from create_from_opportunity) can never build a listing, so it

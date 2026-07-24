@@ -998,6 +998,24 @@ def build_operations_router(get_state) -> APIRouter:
         _require_operator(request)
         return request.app.state.content.distribute()
 
+    @router.get("/api/content/blog")
+    def api_blog_status(request: Request) -> Any:
+        """Why the Shopify blog is or isn't publishing — the exact diagnosis."""
+        _require_operator(request)
+        return _blog_status(request.app.state)
+
+    @router.post("/api/content/blog/publish")
+    def api_publish_blog(request: Request) -> Any:
+        """Publish all pending Shopify blog articles now (ignores the schedule),
+        returning the outcome + reasons."""
+        _require_operator(request)
+        s = request.app.state
+        result = s.daily.distribution.distribute(channels=["blog"], due_on="2999-12-31")
+        get_state(request.app).add_log(
+            f"Blog publish: {result.get('posted', 0)} posted, "
+            f"{result.get('skipped', 0)} skipped, {result.get('failed', 0)} failed.")
+        return {**result, "diagnosis": _blog_status(s)}
+
     @router.post("/api/run-marketing")
     def api_run_marketing(request: Request) -> Any:
         """Run the promotion push only (pins + due channel assets) — decoupled
@@ -1369,6 +1387,40 @@ def _cleanup_incomplete_products(state: Any, *, dry_run: bool = False) -> dict[s
         for item in to_archive:
             db.set_product_active(item["sku"], False)
     return {"archived": len(to_archive), "products": to_archive, "dry_run": dry_run}
+
+
+def _blog_status(state: Any) -> dict[str, Any]:
+    """Diagnose Shopify blog publishing: connection, Blog ID, asset counts, and
+    the exact reason nothing is posting."""
+    shop = state.config.shopify or {}
+    assets = state.db.list_marketing_assets(channel="blog")
+    by = {"posted": 0, "skipped": 0, "failed": 0, "pending": 0}
+    last_reason = None
+    for a in assets:
+        st = a.get("status") or "pending"
+        by[st] = by.get(st, 0) + 1
+        if st in ("skipped", "failed") and a.get("delivery_error"):
+            last_reason = a["delivery_error"]
+    try:
+        connected = bool(state.daily.shopify.connector.can_publish)
+    except Exception:
+        connected = False
+    blog_id = shop.get("blog_id")
+    if not connected:
+        diagnosis = "Shopify is not connected — connect it on Integrations → Shopify."
+    elif not blog_id:
+        diagnosis = ("No Blog ID set — go to Integrations → Shopify, click 'List blogs', "
+                     "and set the Blog ID. This is the usual cause.")
+    elif not assets:
+        diagnosis = ("Shopify + Blog ID are set, but no blog articles have been generated "
+                     "yet (marketing generates them for live products).")
+    elif by["posted"]:
+        diagnosis = f"{by['posted']} article(s) published."
+    else:
+        diagnosis = last_reason or "Blog articles are queued — click 'Publish blog now'."
+    return {"connected": connected, "blog_id": str(blog_id) if blog_id else None,
+            "assets": len(assets), **by, "last_reason": last_reason,
+            "diagnosis": diagnosis}
 
 
 def _buildable_keys(state: Any) -> set[str]:
