@@ -1000,9 +1000,12 @@ def build_operations_router(get_state) -> APIRouter:
 
     @router.get("/api/content/blog")
     def api_blog_status(request: Request) -> Any:
-        """Why the Shopify blog is or isn't publishing — the exact diagnosis."""
+        """Why the Shopify blog is or isn't publishing — the exact diagnosis,
+        plus the actual article list (title, status, clickable storefront/admin
+        links) so the operator can SEE and verify what was posted."""
         _require_operator(request)
-        return _blog_status(request.app.state)
+        s = request.app.state
+        return {**_blog_status(s), "articles": _blog_articles(s)}
 
     @router.post("/api/content/blog/generate")
     def api_generate_blog(request: Request, payload: dict | None = None) -> Any:
@@ -1476,6 +1479,34 @@ def _blog_status(state: Any) -> dict[str, Any]:
     return {"connected": connected, "blog_id": str(blog_id) if blog_id else None,
             "assets": len(assets), **by, "last_reason": last_reason,
             "diagnosis": diagnosis}
+
+
+def _blog_articles(state: Any, limit: int = 200) -> list[dict[str, Any]]:
+    """The blog article list for the dashboard — one row per generated article
+    set, with its status and the actual storefront/admin links so the operator
+    can click through and confirm it is live (the missing 'can I see it?' bit).
+
+    A posted article's storefront URLs are stored on the asset (delivery_ref,
+    ' | '-joined); a not-yet-posted one shows its titles and a 'pending' badge."""
+    shop = state.config.shopify or {}
+    domain = (shop.get("store_domain") or "").replace("https://", "").strip("/")
+    rows: list[dict[str, Any]] = []
+    for a in state.db.list_marketing_assets(channel="blog")[:limit]:
+        payload = a.get("payload") or {}
+        articles = payload.get("articles") or ([payload] if payload else [])
+        titles = [x.get("title") for x in articles if x.get("title")]
+        ref = a.get("delivery_ref") or ""
+        urls = [u.strip() for u in ref.split("|") if u.strip().startswith("http")]
+        rows.append({
+            "product_key": a.get("product_key"),
+            "titles": titles or [a.get("product_key") or "Untitled"],
+            "count": len(articles),
+            "status": a.get("status") or "pending",
+            "urls": urls,
+            "admin": (f"https://{domain}/admin/articles" if domain else ""),
+            "error": a.get("delivery_error"),
+        })
+    return rows
 
 
 def _buildable_keys(state: Any) -> set[str]:

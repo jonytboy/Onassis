@@ -345,6 +345,35 @@
         <div class="stat"><div class="k">Posted</div><div class="v sm" x-text="blog?.posted??0"></div></div>
         <div class="stat"><div class="k">Skipped</div><div class="v sm" x-text="blog?.skipped??0"></div></div>
       </div>
+      <template x-if="blog?.articles?.length">
+        <div style="margin-top:10px;max-height:340px;overflow:auto;border-top:1px solid var(--line);padding-top:8px">
+          <table style="width:100%;border-collapse:collapse;font-size:13px">
+            <thead><tr style="text-align:left;color:var(--muted)">
+              <th style="padding:4px 6px">Article</th><th style="padding:4px 6px">Status</th><th style="padding:4px 6px">View</th></tr></thead>
+            <tbody>
+              <template x-for="a in blog.articles" :key="a.product_key+ (a.titles?.[0]||'')">
+                <tr style="border-top:1px solid var(--line)">
+                  <td style="padding:4px 6px">
+                    <span x-text="a.titles?.[0]||a.product_key"></span>
+                    <span class="note" x-show="a.count>1" x-text="' +'+(a.count-1)+' more'"></span>
+                    <div class="note" x-show="a.error" style="color:var(--bad)" x-text="a.error"></div>
+                  </td>
+                  <td style="padding:4px 6px"><span class="pill" :class="a.status==='posted'?'ok':(a.status==='failed'?'failed':'')" x-text="a.status"></span></td>
+                  <td style="padding:4px 6px">
+                    <template x-if="a.urls?.length">
+                      <span><template x-for="(u,i) in a.urls" :key="u">
+                        <a :href="u" target="_blank" rel="noopener" style="margin-right:6px" x-text="'link '+(i+1)"></a>
+                      </template></span>
+                    </template>
+                    <span class="note" x-show="!a.urls?.length && a.status!=='posted'">not posted yet</span>
+                    <a x-show="!a.urls?.length && a.status==='posted' && a.admin" :href="a.admin" target="_blank" rel="noopener">admin</a>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </template>
     </div>
     <div class="panel" style="margin-bottom:12px">
       <h2>Short-form video — TikTok / Reels

@@ -465,6 +465,26 @@ def test_blog_status_diagnoses_missing_blog_id(client):
     assert "Blog ID" in r["diagnosis"]
 
 
+def test_blog_status_lists_articles_with_links(client):
+    """The blog status returns the actual article list with clickable storefront
+    links for posted articles — so the operator can SEE and verify what posted,
+    not just a count."""
+    db = client.app.state.db
+    db.insert_marketing_asset({"campaign_id": 1, "product_key": "mug", "channel": "blog",
+                               "payload": {"articles": [{"title": "A Coastal Morning"},
+                                                        {"title": "Gift Guide"}]}})
+    a = db.list_marketing_assets(channel="blog")[0]
+    db.set_marketing_asset_delivery(
+        a["id"], "posted", ref="https://shop.myshopify.com/blogs/news/a-coastal-morning")
+    r = client.get("/operations/api/content/blog").json()
+    arts = r["articles"]
+    assert len(arts) == 1
+    row = arts[0]
+    assert row["status"] == "posted" and row["count"] == 2
+    assert row["titles"][0] == "A Coastal Morning"
+    assert row["urls"] == ["https://shop.myshopify.com/blogs/news/a-coastal-morning"]
+
+
 def test_generate_blog_explains_a_zero(client):
     """Generate never looks like a no-op: a zero result carries a message saying
     why (no products, or all already have articles)."""
