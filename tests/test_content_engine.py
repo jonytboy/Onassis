@@ -63,7 +63,7 @@ def test_build_for_product_makes_one_clip_per_format(config, db, tmp_path):
 def test_build_skips_products_without_a_package(config, db, tmp_path):
     config.listing = {**(config.listing or {}), "exports_dir": str(tmp_path / "exports")}
     r = _engine(config, db).build_for_product(99, "ghost")
-    assert r["ok"] is False and "No built listing package" in r["reason"]
+    assert r["ok"] is False and "no Shopify images" in r["reason"]
     assert db.count_short_form() == 0
 
 
@@ -242,6 +242,46 @@ def test_batch_build_respects_the_limit(config, db, tmp_path):
                        "product_key": key})
     r = _engine(config, db).build_batch(limit=2)
     assert r["built"] == 2                     # capped, though 3 formats exist
+
+
+class _FakeShopifyMedia:
+    """Serves product images from 'Shopify' and writes them locally on download."""
+
+    can_publish = True
+
+    def __init__(self, n=4):
+        self._urls = [f"https://cdn.shopify.com/img{i}.jpg" for i in range(n)]
+
+    def product_media(self, product_id):
+        return {"title": "Riviera Mug", "description": "<p>A lovely mug.</p>",
+                "tags": ["mediterranean", "mug"], "images": self._urls}
+
+    def download_images(self, urls, dest_dir):
+        from pathlib import Path as _P
+        d = _P(dest_dir); d.mkdir(parents=True, exist_ok=True)
+        out = []
+        for i, _ in enumerate(urls):
+            fp = d / f"shopify_{i}.jpg"
+            Image.new("RGB", (600, 600), (180, 140, 110)).save(fp)
+            out.append(str(fp))
+        return out
+
+
+def test_build_from_shopify_images_when_no_local_package(config, db, tmp_path):
+    """A product with no local listing package still gets a slideshow built from
+    its Shopify product images (the ephemeral-container / imported-product case)."""
+    config.listing = {**(config.listing or {}), "exports_dir": str(tmp_path / "exports")}
+    cid, key = 8, "mug"
+    db.insert_product({"sku": "MUG", "name": "Riviera Mug", "campaign_id": cid,
+                       "product_key": key, "active": True})
+    db.insert_publication({"platform": "shopify", "campaign_id": cid,
+                           "product_id": f"{cid}-{key}", "listing_id": "9001",
+                           "status": "live", "mode": "live"})
+    eng = _engine(config, db)
+    eng._shopify_conn = _FakeShopifyMedia()
+    r = eng.build_for_product(cid, key)
+    assert r["ok"] and r["count"] == 3            # built from Shopify images
+    assert len(db.list_short_form(limit=10)) == 3
 
 
 def test_batch_build_is_idempotent(config, db, tmp_path):

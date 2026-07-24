@@ -197,6 +197,11 @@ def _parse_args() -> argparse.Namespace:
         help="One-off: reformat existing live Shopify product descriptions as HTML.",
     )
     parser.add_argument(
+        "--attach-product-videos", action="store_true",
+        help="One-off: attach each product's slideshow video to its Shopify "
+             "product page (idempotent).",
+    )
+    parser.add_argument(
         "--serve", action="store_true", help="Run the REST API (Swagger at /docs)."
     )
     parser.add_argument("--host", default="0.0.0.0", help="API host (with --serve).")
@@ -880,6 +885,19 @@ def main() -> int:
             return 1
         print(f"\nPRODUCT DESCRIPTIONS — {res['updated']} reformatted, "
               f"{res['skipped']} unchanged (of {res['checked']} product(s)).")
+        return 0
+
+    if args.attach_product_videos:
+        from onassis.content_engine import ContentEngine
+        from onassis.integrations import apply_integration_overrides
+
+        apply_integration_overrides(config, db)
+        res = ContentEngine(config, db).attach_videos_to_shopify()
+        if not res.get("ok"):
+            print(f"Attach videos skipped: {res.get('reason')}")
+            return 1
+        print(f"\nPRODUCT VIDEOS — {res['added']} attached, {res['skipped']} "
+              f"already had one / skipped (of {res['checked']} product(s)).")
         return 0
 
     if args.serve:

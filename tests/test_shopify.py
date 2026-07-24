@@ -40,6 +40,16 @@ class FakeAdminClient:
         return {"product": self.products_by_id.get(str(product_id),
                                                    {"id": product_id})}
 
+    def graphql(self, query, variables=None):
+        self.graphql_calls = getattr(self, "graphql_calls", [])
+        self.graphql_calls.append((query, variables))
+        if "productCreateMedia" in query:
+            return {"data": {"productCreateMedia":
+                             {"media": [{"status": "UPLOADED"}], "mediaUserErrors": []}}}
+        n = getattr(self, "existing_videos", {}).get(str((variables or {}).get("id")), 0)
+        return {"data": {"product": {"media":
+                {"edges": [{"node": {"mediaContentType": "VIDEO"}} for _ in range(n)]}}}}
+
     def add_product_image(self, product_id, image_path, *, position=1, alt_text=None):
         self.images.append((image_path, position))
         return {"image": {"id": len(self.images)}}
@@ -209,6 +219,22 @@ def test_republish_hidden_makes_scheduled_articles_live(config):
     assert {aid for aid, _ in updated} == {"1", "2"}
     assert all(p["article"]["published"] is True and p["article"]["published_at"] is None
                for _, p in updated)
+
+
+def test_attach_product_videos_is_idempotent(config):
+    """Videos attach via GraphQL; products that already have a video (or no url)
+    are skipped, so re-running never duplicates media."""
+    _configured(config)
+    client = FakeAdminClient()
+    client.existing_videos = {"gid://shopify/Product/200": 1}   # already has one
+    conn = ShopifyConnector(config, client=client)
+    res = conn.attach_product_videos([
+        {"product_id": "100", "video_url": "https://cdn/x.mp4", "alt": "A"},  # add
+        {"product_id": "200", "video_url": "https://cdn/y.mp4", "alt": "B"},  # skip
+        {"product_id": "300", "video_url": "", "alt": "C"},                   # skip (no url)
+    ])
+    assert res["checked"] == 3 and res["added"] == 1 and res["skipped"] == 2
+    assert any("productCreateMedia" in q for q, _ in client.graphql_calls)
 
 
 def test_reformat_product_descriptions_in_place(config):

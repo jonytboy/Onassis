@@ -87,6 +87,51 @@ class ContentEngine:
             "master": str(master) if master.exists() else None,
         }
 
+    def _shopify(self) -> Any:
+        conn = getattr(self, "_shopify_conn", None)
+        if conn is None:
+            from onassis.connectors.shopify import ShopifyConnector
+            conn = self._shopify_conn = ShopifyConnector(self.config, self.db)
+        return conn
+
+    def _gather_shopify(self, campaign_id: int, product_key: str) -> dict[str, Any] | None:
+        """Fallback imagery when there's no local listing package (e.g. the
+        container was recycled, or the product was imported): pull the product's
+        images straight from Shopify and build a slideshow context from them."""
+        import re
+
+        if not campaign_id:
+            return None
+        conn = self._shopify()
+        if not conn.can_publish:
+            return None
+        pub = self.db.get_latest_publication(
+            campaign_id, "shopify", product_id=f"{campaign_id}-{product_key}")
+        if not pub or not pub.get("listing_id"):
+            return None
+        media = conn.product_media(str(pub["listing_id"]))
+        imgs = media.get("images") or []
+        if not imgs:
+            return None
+        img_dir = self._exports_base() / str(campaign_id) / str(product_key) / "images"
+        paths = conn.download_images(imgs[:6], img_dir)
+        if not paths:
+            return None
+        # Map images onto the scene roles the slide templates look for.
+        roles = ["hero", "lifestyle", "room", "closeup", "scale", "product"]
+        by_scene = {roles[i % len(roles)]: p for i, p in enumerate(paths)}
+        tags = media.get("tags") or []
+        return {
+            "campaign_id": campaign_id, "product_key": product_key,
+            "title": media.get("title") or product_key,
+            "description": re.sub(r"<[^>]+>", " ", media.get("description") or "").strip(),
+            "theme": (tags[0] if tags else "") or "the Mediterranean",
+            "product_name": media.get("title") or product_key,
+            "tags": tags, "price": None,
+            "listing_url": self._product_url(campaign_id, product_key) or "",
+            "by_scene": by_scene, "master": paths[0],
+        }
+
     def _pick(self, ctx: dict[str, Any], roles: list[str], fallback: bool = True) -> str | None:
         for r in roles:
             if ctx["by_scene"].get(r):
@@ -168,9 +213,13 @@ class ContentEngine:
                           formats: list[str] | None = None) -> dict[str, Any]:
         """Render short-form clips for one product (one per format) into the queue."""
         ctx = self._gather(campaign_id, product_key)
+        # No local package (or no imagery in it)? Fall back to the product's
+        # Shopify images so imported / recycled products still get a slideshow.
+        if ctx is None or (not ctx["by_scene"] and not ctx.get("master")):
+            ctx = self._gather_shopify(campaign_id, product_key) or ctx
         if ctx is None:
-            return {"ok": False, "reason": "No built listing package for this product "
-                    "(build/publish it first).", "clips": []}
+            return {"ok": False, "reason": "No listing package and no Shopify images "
+                    "for this product.", "clips": []}
         if not ctx["by_scene"] and not ctx.get("master"):
             return {"ok": False, "reason": "No product imagery found to build video from.",
                     "clips": []}
@@ -546,6 +595,43 @@ class ContentEngine:
         return {**base, "ok": True, "live_count": len(live), "checked": checked,
                 "rewritten": rewritten, "skipped": skipped, "reason": reason,
                 "details": details[:50]}
+
+    def attach_videos_to_shopify(self) -> dict[str, Any]:
+        """Attach each product's slideshow video to its Shopify product page as
+        VIDEO media (using the public mp4 URL). Idempotent — products that
+        already have a video are skipped — so it's safe to run repeatedly and to
+        rewrite the whole catalogue at once."""
+        conn = self._shopify()
+        base = {"checked": 0, "added": 0, "skipped": 0, "details": []}
+        if not conn.can_publish:
+            return {**base, "ok": False, "reason": "Shopify is not connected."}
+        if not self._public_base():
+            return {**base, "ok": False,
+                    "reason": "No public base URL to host the video (set public_base "
+                              "so Shopify can fetch the mp4)."}
+        items = []
+        for p in self.db.list_products():
+            if not p.get("active", 1):
+                continue
+            key = (p.get("product_key") or p.get("sku")
+                   or (f"product-{p.get('id')}" if p.get("id") else None))
+            cid = p.get("campaign_id")
+            if not cid or not key:
+                continue
+            pub = self.db.get_latest_publication(
+                cid, "shopify", product_id=f"{cid}-{key}")
+            if not pub or not pub.get("listing_id"):
+                continue
+            urls = self._reel_urls(cid, key)
+            if not urls:
+                continue
+            items.append({"product_id": str(pub["listing_id"]), "video_url": urls[0],
+                          "alt": p.get("name") or key})
+        if not items:
+            return {**base, "ok": False,
+                    "reason": "No products with both a rendered clip and a Shopify "
+                              "listing yet — build clips first."}
+        return {"ok": True, **conn.attach_product_videos(items)}
 
     def reformat_shopify_descriptions(self) -> dict[str, Any]:
         """Reformat the descriptions of our live Shopify products in place, so

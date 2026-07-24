@@ -168,6 +168,11 @@ class DailyCycle:
                                                  if isinstance(self.config.content, dict) else 12))
             log.info("Clips: +%d built, %d already had them, %d missing a package.",
                      clips.get("built", 0), clips.get("skipped", 0), clips.get("no_package", 0))
+            # Attach each product's slideshow to its Shopify product page (idempotent).
+            vids = engine.attach_videos_to_shopify()
+            if vids.get("ok"):
+                log.info("Product videos: +%d attached, %d already had one.",
+                         vids.get("added", 0), vids.get("skipped", 0))
         except Exception:  # scheduling/clip build is best-effort, never fail the push
             blog_sched = {}
             log.debug("blog scheduling / clip build skipped", exc_info=True)

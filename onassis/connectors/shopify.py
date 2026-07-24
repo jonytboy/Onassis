@@ -198,6 +198,98 @@ class ShopifyConnector:
         return {"checked": checked, "updated": updated, "skipped": skipped,
                 "details": details[:50]}
 
+    _VIDEO_COUNT_Q = (
+        "query($id: ID!){ product(id:$id){ media(first:25){ edges{ node{ "
+        "mediaContentType } } } } }")
+    _ADD_MEDIA_M = (
+        "mutation($id: ID!, $media:[CreateMediaInput!]!){ productCreateMedia("
+        "productId:$id, media:$media){ media{ status } mediaUserErrors{ message } } }")
+
+    def _gid(self, product_id: str) -> str:
+        return f"gid://shopify/Product/{product_id}"
+
+    def product_video_count(self, product_id: str) -> int:
+        """How many VIDEO media a product already has (so we don't add twice)."""
+        data = self._c().graphql(self._VIDEO_COUNT_Q, {"id": self._gid(product_id)})
+        edges = ((((data or {}).get("data") or {}).get("product") or {})
+                 .get("media") or {}).get("edges") or []
+        return sum(1 for e in edges
+                   if ((e or {}).get("node") or {}).get("mediaContentType") == "VIDEO")
+
+    def add_product_video(self, product_id: str, video_url: str,
+                          alt: str = "") -> dict[str, Any]:
+        """Attach a hosted mp4 to a product as VIDEO media (Shopify ingests it
+        asynchronously from the public URL)."""
+        media = [{"originalSource": video_url, "mediaContentType": "VIDEO", "alt": alt}]
+        data = self._c().graphql(self._ADD_MEDIA_M,
+                                 {"id": self._gid(product_id), "media": media})
+        res = ((data or {}).get("data") or {}).get("productCreateMedia") or {}
+        errs = res.get("mediaUserErrors") or []
+        if errs:
+            raise RuntimeError("; ".join(e.get("message", "") for e in errs))
+        return {"ok": True, "media": res.get("media") or []}
+
+    def attach_product_videos(self, items: list[dict[str, Any]]) -> dict[str, Any]:
+        """Attach a video to each product in ``items`` ({product_id, video_url,
+        alt}). Idempotent: products that already have a video are skipped.
+        Returns ``{checked, added, skipped, details}``."""
+        checked = added = skipped = 0
+        details = []
+        for it in items:
+            checked += 1
+            pid, url = str(it.get("product_id")), it.get("video_url")
+            if not url:
+                skipped += 1
+                details.append({"id": pid, "ok": False, "reason": "no video url"})
+                continue
+            try:
+                if self.product_video_count(pid) > 0:
+                    skipped += 1
+                    details.append({"id": pid, "ok": True, "reason": "already has video"})
+                    continue
+                self.add_product_video(pid, url, it.get("alt", ""))
+                added += 1
+                details.append({"id": pid, "ok": True})
+            except Exception as exc:  # noqa: BLE001
+                skipped += 1
+                details.append({"id": pid, "ok": False, "reason": str(exc)})
+        return {"checked": checked, "added": added, "skipped": skipped,
+                "details": details[:50]}
+
+    def product_media(self, product_id: str) -> dict[str, Any]:
+        """Title, description, tags and ALL image srcs for a product — the source
+        material for building a slideshow when there's no local image package."""
+        p = (self._c().get_product(str(product_id)) or {}).get("product") or {}
+        imgs = [i.get("src") for i in (p.get("images") or []) if i.get("src")]
+        return {"title": p.get("title") or "", "handle": p.get("handle") or "",
+                "description": p.get("body_html") or "",
+                "tags": [t.strip() for t in (p.get("tags") or "").split(",") if t.strip()],
+                "images": imgs}
+
+    def download_images(self, urls: list[str], dest_dir: Any) -> list[str]:
+        """Download image URLs to ``dest_dir``; return the local file paths. Best
+        effort — a failed download is skipped, never fatal."""
+        import httpx
+
+        dest = Path(dest_dir)
+        dest.mkdir(parents=True, exist_ok=True)
+        out: list[str] = []
+        try:
+            client = httpx.Client(timeout=30.0, follow_redirects=True)
+        except Exception:  # pragma: no cover
+            return out
+        with client:
+            for i, url in enumerate(urls):
+                try:
+                    r = client.get(url)
+                    r.raise_for_status()
+                    fp = dest / f"shopify_{i}.jpg"
+                    fp.write_bytes(r.content)
+                    out.append(str(fp))
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("Shopify image download failed (%s): %s", url, exc)
+        return out
+
     def product_details(self, product_id: str) -> dict[str, Any]:
         """Storefront URL + first image ``src`` for a published product (cached).
         Lets the blog link to the Shopify product and reuse its image as the
@@ -510,6 +602,10 @@ class ShopifyAdminClient:
     def update_article(self, blog_id: str, article_id: str,
                        payload: dict[str, Any]) -> dict[str, Any]:
         return self._put(f"/blogs/{blog_id}/articles/{article_id}.json", payload)
+
+    def graphql(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._request("POST", "/graphql.json",
+                             {"query": query, "variables": variables or {}})
 
     # --- HTTP -------------------------------------------------------
 
