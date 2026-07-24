@@ -140,6 +140,17 @@ def test_reformat_reflows_a_single_p_blob_and_keeps_structured_html():
     structured = "<h3>A</h3><p>one</p><p>two</p>"
     assert _reformat_description(structured) == structured
 
+    # Labels buried inside SEVERAL <p> blocks are still lifted into headings
+    # (the real Shopify case), and the result is idempotent.
+    multi = ("<p>Intro sentence here. WHAT IT IS A generously sized mug.</p>"
+             "<p>The illustration is crisp. SIZE &amp; USE Holds 325ml. CARE "
+             "Dishwasher safe.</p>")
+    fixed = _reformat_description(multi)
+    for h in ("<h3>What It Is</h3>", "<h3>Care</h3>"):
+        assert h in fixed
+    assert ("<h3>Size & Use</h3>" in fixed or "<h3>Size &amp; Use</h3>" in fixed)
+    assert _reformat_description(fixed) == fixed        # idempotent
+
 
 def test_build_product_active_when_go_live():
     assert ShopifyConnector.build_product(_listing(), active=True)["product"]["status"] == "active"

@@ -42,21 +42,33 @@ def _sentence_groups(text: str, per: int = 2, maxlen: int = 260) -> list[str]:
 
 
 def _reformat_description(body: str) -> str:
-    """Bring a product description up to the current HTML formatting. Plain text
-    is formatted; a description that's already well-structured (2+ block
-    elements) is left alone; but an under-formatted one — a single ``<p>`` blob
-    from an earlier pass — is stripped back to text and re-flowed into real
-    paragraphs/headings. Returns the (possibly unchanged) body_html."""
+    """Bring a product description up to the current HTML formatting. Existing
+    headings and lists are kept verbatim, but paragraph text is re-flowed through
+    :func:`_text_to_html` — so inline ALL-CAPS labels (WHAT IT IS, MATERIALS &
+    FEEL, …) become their own headings and a run-on paragraph is split, even when
+    the copy is already spread across several ``<p>`` blocks. Idempotent: content
+    that's already structured re-flows to itself. Returns the body_html."""
     import html as _html
     import re
 
-    body = body or ""
-    blocks = len(re.findall(r"<(?:p|h[1-6]|ul|ol)\b", body, re.I))
-    if blocks >= 2:
-        return body                                   # already structured — keep
-    text = re.sub(r"(?i)</p\s*>|<br\s*/?>", "\n", body)
-    text = re.sub(r"(?i)<[^>]+>", "", text)
-    return _text_to_html(_html.unescape(text).strip())
+    body = (body or "").strip()
+    if not body:
+        return ""
+    if "<" not in body:                               # plain text
+        return _text_to_html(body)
+    out: list[str] = []
+    # Keep <h*>/<ul>/<ol> chunks as-is; reflow everything else (paragraphs/text).
+    for part in re.split(r"(?is)(<(?:h[1-6]|ul|ol)\b.*?</(?:h[1-6]|ul|ol)>)", body):
+        if not part or not part.strip():
+            continue
+        if re.match(r"(?is)^\s*<(?:h[1-6]|ul|ol)\b", part):
+            out.append(part.strip())
+        else:
+            text = re.sub(r"(?i)</p\s*>|<br\s*/?>", "\n\n", part)
+            text = _html.unescape(re.sub(r"(?i)<[^>]+>", "", text)).strip()
+            if text:
+                out.append(_text_to_html(text))
+    return "".join(out)
 
 
 def _text_to_html(text: str) -> str:
