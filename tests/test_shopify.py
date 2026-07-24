@@ -124,6 +124,23 @@ def test_text_to_html_splits_runon_blob_into_paragraphs():
     assert "<br>" not in html
 
 
+def test_reformat_reflows_a_single_p_blob_and_keeps_structured_html():
+    """A description already wrapped in one <p> (from an earlier pass) is
+    re-flowed into real paragraphs/headings; well-structured HTML is left alone;
+    and '&' / single-word labels become headings."""
+    from onassis.connectors.shopify import _reformat_description
+
+    blob = ("<p>Carries that feeling into your morning. MATERIALS &amp; FEEL Made "
+            "from durable stoneware. CARE Dishwasher safe.</p>")
+    out = _reformat_description(blob)
+    assert out.count("<p>") >= 2
+    assert "<h3>Materials &amp; Feel</h3>" in out or "<h3>Materials & Feel</h3>" in out
+    assert "<h3>Care</h3>" in out
+    # Already-structured content (2+ blocks) is returned unchanged.
+    structured = "<h3>A</h3><p>one</p><p>two</p>"
+    assert _reformat_description(structured) == structured
+
+
 def test_build_product_active_when_go_live():
     assert ShopifyConnector.build_product(_listing(), active=True)["product"]["status"] == "active"
 

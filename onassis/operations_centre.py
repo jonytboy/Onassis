@@ -137,7 +137,22 @@ class OperationsState:
 
     @property
     def is_running(self) -> bool:
-        return self.run.get("status") == "running"
+        if self.run.get("status") != "running":
+            return False
+        # Self-heal a stuck run: if a background job crashed without calling
+        # end_run, is_running would block every future run. Treat a run older
+        # than 20 minutes as timed-out so the operator isn't wedged on a 409.
+        started = self.run.get("started_at")
+        if started:
+            try:
+                age = (datetime.now(timezone.utc)
+                       - datetime.fromisoformat(started)).total_seconds()
+                if age > 1200:
+                    self.run["status"] = "timed_out"
+                    return False
+            except ValueError:
+                pass
+        return True
 
 
 class _RunLogHandler(logging.Handler):

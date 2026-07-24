@@ -848,3 +848,20 @@ def test_control_deploy_routes_through_service_not_shell(client, tmp_path):
                             remote="new111111111", behind=1)
     r = client.post("/operations/api/control/deploy").json()
     assert r["status"] == "success" and r["action"] == "deploy"
+
+
+def test_is_running_self_heals_a_stuck_run():
+    """A run left 'running' by a crashed background job is treated as timed-out
+    after 20 minutes, so the operator isn't wedged on a 409 forever."""
+    from datetime import datetime, timedelta, timezone
+
+    from onassis.operations_centre import OperationsState
+
+    st = OperationsState()
+    st.begin_run()
+    assert st.is_running is True                      # fresh run is active
+    # Back-date the start beyond the stale threshold.
+    st.run["started_at"] = (datetime.now(timezone.utc)
+                            - timedelta(minutes=25)).isoformat()
+    assert st.is_running is False                     # self-healed
+    assert st.run["status"] == "timed_out"

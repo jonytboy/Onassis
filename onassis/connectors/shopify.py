@@ -41,6 +41,24 @@ def _sentence_groups(text: str, per: int = 2, maxlen: int = 260) -> list[str]:
     return groups or [text.strip()]
 
 
+def _reformat_description(body: str) -> str:
+    """Bring a product description up to the current HTML formatting. Plain text
+    is formatted; a description that's already well-structured (2+ block
+    elements) is left alone; but an under-formatted one — a single ``<p>`` blob
+    from an earlier pass — is stripped back to text and re-flowed into real
+    paragraphs/headings. Returns the (possibly unchanged) body_html."""
+    import html as _html
+    import re
+
+    body = body or ""
+    blocks = len(re.findall(r"<(?:p|h[1-6]|ul|ol)\b", body, re.I))
+    if blocks >= 2:
+        return body                                   # already structured — keep
+    text = re.sub(r"(?i)</p\s*>|<br\s*/?>", "\n", body)
+    text = re.sub(r"(?i)<[^>]+>", "", text)
+    return _text_to_html(_html.unescape(text).strip())
+
+
 def _text_to_html(text: str) -> str:
     """Turn a plain-text description into readable HTML for Shopify's body_html.
     Produces real paragraphs whether the copy uses blank lines, single newlines,
@@ -56,17 +74,14 @@ def _text_to_html(text: str) -> str:
     if re.search(r"</?(p|br|ul|ol|li|h[1-6]|div)\b", text, re.I):
         return text                                   # already HTML — leave it
     bullet = re.compile(r"^\s*[-•*]\s+(.*)")
-    # A leading multi-word ALL-CAPS label to peel off as a heading. Label words
-    # are 2+ chars each, so a following sentence opener like "A" isn't swallowed.
-    head_re = re.compile(r"^([A-Z][A-Z0-9&'\-]{1,}(?: [A-Z0-9&'\-]{2,})*)\b[:\-—]?\s+(.+)$",
-                         re.S)
-    # Break before an inline ALL-CAPS label (2+ words) so it heads its own block:
-    # "…ritual. WHAT IT IS A generous…" → a new block starting at "WHAT IT IS".
-    # The lookbehind requires sentence punctuation / lowercase before it, so it
-    # only fires at the START of a label, never mid-label (…WHAT | IT IS…).
-    text = re.sub(
-        r"(?<=[.!?:;a-z])\s+((?:[A-Z][A-Z0-9&'\-]{1,} ){1,5}[A-Z][A-Z0-9&'\-]{1,})\b",
-        lambda m: "\n\n" + m.group(1).strip() + " ", text)
+    # A label token is a 2+char ALL-CAPS word or '&' (so "MATERIALS & FEEL" works);
+    # a 1-char opener like "A" is never a token, so it stays with the body.
+    tok = r"(?:[A-Z][A-Z0-9'\-]+|&)"
+    head_re = re.compile(rf"^({tok}(?: {tok})*)\b[:\-—]?\s+(.+)$", re.S)
+    # Break before an inline ALL-CAPS label that follows a sentence end and is
+    # followed by a capitalised word — a new section: "…turn. MATERIALS & FEEL Made…".
+    text = re.sub(rf"(?<=[.!?:;])\s+({tok}(?: {tok})*)(?=\s+[A-Z])",
+                  lambda m: "\n\n" + m.group(1).strip() + "\n", text)
 
     # Blocks: prefer blank-line splits, else single newlines, else the whole text.
     if re.search(r"\n\s*\n", text):
@@ -216,7 +231,7 @@ class ShopifyConnector:
             try:
                 p = (client.get_product(str(pid)) or {}).get("product") or {}
                 cur = p.get("body_html") or ""
-                new = _text_to_html(cur)
+                new = _reformat_description(cur)
                 if new and new != cur:
                     client.update_product(str(pid), {"product": {"id": pid,
                                                                  "body_html": new}})
