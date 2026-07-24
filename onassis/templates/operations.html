@@ -331,7 +331,11 @@
   <!-- CONTENT (short-form video) -->
   <div x-show="tab==='content'">
     <div class="panel" style="margin-bottom:12px">
-      <h2>Shopify Blog <button class="btn small" style="float:right" @click="publishBlog()">Publish blog now</button></h2>
+      <h2>Shopify Blog
+        <span style="float:right">
+          <button class="btn small" @click="generateBlog()">Generate articles</button>
+          <button class="btn small" @click="publishBlog()">Publish blog now</button>
+        </span></h2>
       <div class="note" x-text="blog?.diagnosis||'—'"></div>
       <div class="grid" style="margin-top:8px">
         <div class="stat"><div class="k">Connected</div><div class="v sm"><span class="pill" :class="blog?.connected?'ok':'failed'" x-text="blog?.connected?'yes':'no'"></span></div></div>
@@ -1236,6 +1240,10 @@ function ops(){
       const r=await this.post('/operations/api/catalogue/compile',{budget_usd:b,mode:'auto_draft'});
       if(r&&r.status==='started'){ this.showToast('Compiling catalogue (budget $'+b+') — watch the log.'); this.refreshRun(); this.pollLogs(); }
       else { alert('Could not start compile: '+((r&&r.detail)||r?.error||'unknown')); } },
+    async generateBlog(){
+      const r=await this.post('/operations/api/content/blog/generate',{});
+      this.showToast('Generated '+((r&&r.generated)||0)+' blog article set(s). Now click “Publish blog now”.');
+      this.loadTab('content'); },
     async publishBlog(){
       const r=await this.post('/operations/api/content/blog/publish',{});
       const d=(r&&r.diagnosis)||{};

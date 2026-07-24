@@ -90,6 +90,23 @@ class MarketingEngine:
                  kit["product_key"], len(kit["pinterest"]["pins"]), url or "(no url)")
         return kit
 
+    def blog_only(self, listing: dict[str, Any], *, listing_url: str | None = None,
+                  listing_id: str | None = None, campaign_id: int | None = None,
+                  product_key: str | None = None, store: bool = True) -> dict[str, Any]:
+        """Generate ONLY the SEO blog articles for a product (deterministic, $0) —
+        so blog content can be produced on demand without a full production run or
+        the other channels."""
+        url = listing_url or (f"https://www.etsy.com/listing/{listing_id}"
+                              if listing_id else "")
+        blog = self._blog(self._context(listing, url))
+        if store and self.db:
+            self.db.insert_marketing_asset({
+                "campaign_id": campaign_id,
+                "product_key": product_key or listing.get("product_key"),
+                "listing_id": listing_id, "listing_url": url,
+                "channel": "blog", "payload": blog})
+        return blog
+
     # --- Channels ----------------------------------------------------
 
     def _pinterest(self, c: dict[str, Any]) -> dict[str, Any]:

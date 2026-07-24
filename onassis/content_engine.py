@@ -77,6 +77,7 @@ class ContentEngine:
         return {
             "campaign_id": campaign_id, "product_key": product_key,
             "title": listing.get("title") or product_key,
+            "description": listing.get("description") or "",
             "theme": listing.get("theme") or "",
             "product_name": listing.get("product_name") or product_key,
             "tags": listing.get("tags") or listing.get("seo_keywords") or [],
@@ -209,6 +210,35 @@ class ContentEngine:
             r = self.build_for_product(p["campaign_id"], p["product_key"], formats=formats)
             made.extend(r.get("clips", []))
         return {"built": len(made[:limit]), "clips": made[:limit]}
+
+    # --- Blog articles (on demand, deterministic) -------------------
+
+    def generate_blog(self, limit: int = 50) -> dict[str, Any]:
+        """Generate SEO blog articles for active products that don't have any yet
+        (deterministic, $0). 'Publish blog now' then ships them to Shopify. This
+        decouples blog content from a full production run."""
+        from onassis.marketing import MarketingEngine
+
+        me = MarketingEngine(self.config, self.db)
+        have = {a.get("product_key") for a in self.db.list_marketing_assets(channel="blog")}
+        made = 0
+        for p in self.db.list_products():
+            if made >= limit:
+                break
+            key, cid = p.get("product_key"), p.get("campaign_id")
+            if not p.get("active", 1) or not key or not cid or key in have:
+                continue
+            ctx = self._gather(cid, key) or {}
+            listing = {"title": ctx.get("title") or p.get("name") or key,
+                       "description": ctx.get("description") or "",
+                       "theme": ctx.get("theme") or "",
+                       "product_name": ctx.get("product_name") or p.get("name") or key,
+                       "tags": ctx.get("tags") or [], "product_key": key}
+            me.blog_only(listing, listing_url=ctx.get("listing_url"),
+                         campaign_id=cid, product_key=key)
+            have.add(key)
+            made += 1
+        return {"generated": made}
 
     # --- Distribution (platform-agnostic) ---------------------------
 

@@ -76,6 +76,23 @@ def test_caption_and_hashtags_reflect_the_product(config, db, tmp_path):
     assert "#mediterraneanstyle" in gifting["hashtags"]
 
 
+def test_generate_blog_creates_articles_on_demand(config, db, tmp_path):
+    """Blog articles can be generated for existing products without a production
+    run (deterministic, no LLM) — closing the 'no articles to publish' gap."""
+    cid, key = _build_package(config, tmp_path)
+    db.insert_product({"sku": f"{cid}-{key}", "name": "Mug", "campaign_id": cid,
+                       "product_key": key})
+    eng = _engine(config, db)
+    assert db.count_marketing_assets(channel="blog") == 0
+    r = eng.generate_blog()
+    assert r["generated"] == 1
+    assets = db.list_marketing_assets(channel="blog")
+    assert len(assets) == 1
+    assert assets[0]["payload"].get("articles")          # real SEO articles
+    # Idempotent: a product that already has blog articles isn't duplicated.
+    assert eng.generate_blog()["generated"] == 0
+
+
 def test_distribute_marks_queued_clips_handed_off(config, db, tmp_path):
     cid, key = _build_package(config, tmp_path)
     eng = _engine(config, db)

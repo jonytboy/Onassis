@@ -1004,6 +1004,18 @@ def build_operations_router(get_state) -> APIRouter:
         _require_operator(request)
         return _blog_status(request.app.state)
 
+    @router.post("/api/content/blog/generate")
+    def api_generate_blog(request: Request, payload: dict | None = None) -> Any:
+        """Generate SEO blog articles for products that don't have any (no LLM
+        cost, deterministic). Then 'Publish blog now' ships them to Shopify."""
+        _require_operator(request)
+        s = request.app.state
+        limit = int((payload or {}).get("limit", 50))
+        result = s.content.generate_blog(limit=limit)
+        get_state(request.app).add_log(
+            f"Blog: generated {result.get('generated', 0)} article set(s).")
+        return {**result, "diagnosis": _blog_status(s)}
+
     @router.post("/api/content/blog/publish")
     def api_publish_blog(request: Request) -> Any:
         """Publish all pending Shopify blog articles now (ignores the schedule),
