@@ -440,22 +440,79 @@ class ContentEngine:
         """Rewrite the store's EXISTING blog articles in place with the current
         content — Shopify product link, featured image and HTML body — so posts
         published before those improvements are brought up to date without being
-        deleted or re-created. Matches live articles to catalogue content by
-        title; unmatched articles are left alone."""
-        pool = self._blog_pool()
-        if not pool:
-            return {"ok": False, "reason": "No active products to rebuild content from.",
-                    "checked": 0, "rewritten": 0, "skipped": 0}
-        by_title = {v["article"]["title"]: v["article"] for v in pool}
+        deleted or re-created.
+
+        Live articles are matched to a product by the Etsy listing URL embedded
+        in the article body (robust against title drift), then to the specific
+        angle by title, falling back to the product's first article. Articles we
+        can't map are reported and left untouched."""
+        import re
+
         conn = getattr(self, "_shopify_conn", None)
         if conn is None:
             from onassis.connectors.shopify import ShopifyConnector
             conn = self._shopify_conn = ShopifyConnector(self.config, self.db)
         if not conn.can_publish:
             return {"ok": False, "reason": "Shopify is not connected.",
-                    "checked": 0, "rewritten": 0, "skipped": 0}
-        res = conn.rewrite_blog_articles(by_title)
-        return {"ok": True, **res}
+                    "checked": 0, "rewritten": 0, "skipped": 0, "details": []}
+        pool = self._blog_pool()
+        if not pool:
+            return {"ok": False, "reason": "No active products to rebuild content from.",
+                    "checked": 0, "rewritten": 0, "skipped": 0, "details": []}
+
+        def _norm(t: str | None) -> str:
+            return " ".join((t or "").split()).strip().lower().rstrip(".!—-")
+
+        def _etsy_id(text: str | None) -> str:
+            m = re.search(r"etsy\.com/listing/(\d+)", text or "")
+            return m.group(1) if m else ""
+
+        # Index the freshly-built content: which Etsy id belongs to which
+        # product, that product's articles, and a global title fallback.
+        etsy_to_pk: dict[str, str] = {}
+        by_pk: dict[str, list[dict]] = {}
+        by_title: dict[str, dict] = {}
+        for v in pool:
+            art, pk = v["article"], v["product_key"]
+            by_pk.setdefault(pk, []).append(art)
+            by_title[_norm(art.get("title"))] = art
+            eid = _etsy_id(art.get("etsy_url"))
+            if eid:
+                etsy_to_pk.setdefault(eid, pk)
+
+        try:
+            live = conn.live_blog_articles()
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "reason": str(exc),
+                    "checked": 0, "rewritten": 0, "skipped": 0, "details": []}
+
+        checked = rewritten = skipped = 0
+        details = []
+        for a in live:
+            checked += 1
+            title, aid = a.get("title"), a.get("id")
+            candidates = by_pk.get(etsy_to_pk.get(_etsy_id(a.get("body_html")), ""), [])
+            match = (next((c for c in candidates if _norm(c["title"]) == _norm(title)), None)
+                     or (candidates[0] if candidates else by_title.get(_norm(title))))
+            if not match:
+                skipped += 1
+                details.append({"id": aid, "title": title, "ok": False,
+                                "reason": "no product match (no Etsy link / unknown listing)"})
+                continue
+            fields = {"body_html": match.get("body") or "",
+                      "tags": ", ".join(match.get("keywords") or [])}
+            if match.get("image"):
+                fields["image"] = {"src": match["image"]}
+            try:
+                conn.update_blog_article(str(aid), fields)
+                rewritten += 1
+                details.append({"id": aid, "title": title, "ok": True})
+            except Exception as exc:  # noqa: BLE001
+                skipped += 1
+                details.append({"id": aid, "title": title, "ok": False,
+                                "reason": str(exc)})
+        return {"ok": True, "checked": checked, "rewritten": rewritten,
+                "skipped": skipped, "details": details[:50]}
 
     def refill_blog_schedule(self, *, per_day: int | None = None,
                              horizon_days: int | None = None) -> dict[str, Any]:

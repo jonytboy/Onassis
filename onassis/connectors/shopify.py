@@ -263,45 +263,20 @@ class ShopifyConnector:
         return {"checked": checked, "fixed": fixed, "already_live": live,
                 "blog_id": blog_id, "note": note, "details": details[:50]}
 
-    def rewrite_blog_articles(self, articles_by_title: dict[str, dict[str, Any]],
-                              *, blog_id: str | None = None) -> dict[str, Any]:
-        """Update EXISTING live articles in place with a fresh body/image/links —
-        matched by title. Never creates or deletes; articles with no match are
-        left untouched. For fixing posts published before a content change (e.g.
-        adding the Shopify product link + featured image). Returns
-        ``{checked, rewritten, skipped, details}``."""
+    def live_blog_articles(self, *, blog_id: str | None = None) -> list[dict[str, Any]]:
+        """Raw articles on the selected blog (id, title, handle, body_html) — the
+        ground truth for repairing posts published before a content change."""
         blog_id = str(blog_id or self.cfg.get("blog_id") or "")
         if not blog_id:
             raise RuntimeError("No Shopify blog selected.")
+        return (self._c().list_articles(blog_id) or {}).get("articles", [])
 
-        def _norm(t: str | None) -> str:
-            return " ".join((t or "").split()).strip().lower()
-
-        client = self._c()
-        want = {_norm(k): v for k, v in articles_by_title.items()}
-        live = (client.list_articles(blog_id) or {}).get("articles", [])
-        checked = rewritten = skipped = 0
-        details = []
-        for a in live:
-            checked += 1
-            match = want.get(_norm(a.get("title")))
-            if not match:
-                skipped += 1
-                continue
-            art = {"id": a.get("id"), "body_html": match.get("body") or "",
-                   "tags": ", ".join(match.get("keywords") or [])}
-            if match.get("image"):
-                art["image"] = {"src": match["image"]}
-            try:
-                client.update_article(blog_id, str(a.get("id")), {"article": art})
-                rewritten += 1
-                details.append({"id": a.get("id"), "title": a.get("title"), "ok": True})
-            except Exception as exc:  # noqa: BLE001 — record, keep going
-                skipped += 1
-                details.append({"id": a.get("id"), "title": a.get("title"),
-                                "ok": False, "error": str(exc)})
-        return {"checked": checked, "rewritten": rewritten, "skipped": skipped,
-                "blog_id": blog_id, "details": details[:50]}
+    def update_blog_article(self, article_id: str, fields: dict[str, Any],
+                            *, blog_id: str | None = None) -> dict[str, Any]:
+        """PUT new fields onto one existing article (body_html/image/tags)."""
+        blog_id = str(blog_id or self.cfg.get("blog_id") or "")
+        art = {"id": article_id, **fields}
+        return self._c().update_article(blog_id, str(article_id), {"article": art})
 
     @staticmethod
     def _is_visible(article: dict[str, Any]) -> bool:

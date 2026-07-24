@@ -851,6 +851,10 @@ def main() -> int:
             return 1
         print(f"\nBLOG REWRITE — {res['rewritten']} live article(s) updated, "
               f"{res['skipped']} left unchanged (of {res['checked']} on the blog).")
+        for d in res.get("details", []):
+            mark = "✓" if d.get("ok") else "•"
+            note = "" if d.get("ok") else f"  ({d.get('reason', '')})"
+            print(f"  {mark} {str(d.get('title'))[:60]}{note}")
         return 0
 
     if args.serve:

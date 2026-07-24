@@ -108,6 +108,52 @@ def test_generate_blog_covers_products_without_a_campaign_key(config, db, tmp_pa
     assert eng.generate_blog()["generated"] == 0
 
 
+class _FakeShopifyConn:
+    """Stand-in for the Shopify connector: serves live articles and records the
+    in-place updates the rewrite makes."""
+
+    can_publish = True
+
+    def __init__(self, live):
+        self._live = live
+        self.updates = []
+
+    def live_blog_articles(self):
+        return self._live
+
+    def update_blog_article(self, article_id, fields, *, blog_id=None):
+        self.updates.append((str(article_id), fields))
+        return {"article": {"id": article_id}}
+
+
+def test_rewrite_live_articles_matches_by_embedded_etsy_link(config, db):
+    """Live posts are matched to a product by the Etsy listing URL in their body
+    (robust to title drift), not by a regenerated title. Matched posts get the
+    fresh HTML body + Shopify link; unmappable ones are reported, not touched."""
+    cid = 5
+    db.insert_product({"sku": "MUG", "name": "Riviera Mug", "campaign_id": cid,
+                       "product_key": "mug", "active": True})
+    db.insert_publication({"platform": "etsy", "campaign_id": cid,
+                           "product_id": f"{cid}-mug", "listing_id": "4538228548",
+                           "status": "live", "mode": "live"})
+    eng = _engine(config, db)
+    live = [
+        # Title has drifted from what we'd generate now, but the body carries the
+        # Etsy listing link — so it still maps to the mug product.
+        {"id": 11, "title": "Totally Different Old Title",
+         "body_html": "See https://www.etsy.com/listing/4538228548 for details."},
+        {"id": 22, "title": "Unrelated", "body_html": "no product link here"},
+    ]
+    eng._shopify_conn = _FakeShopifyConn(live)
+    res = eng.rewrite_live_blog_articles()
+    assert res["ok"] and res["checked"] == 2
+    assert res["rewritten"] == 1 and res["skipped"] == 1        # matched by Etsy id
+    updated_id, fields = eng._shopify_conn.updates[0]
+    assert updated_id == "11"
+    assert "<h2>" in fields["body_html"]                        # fresh HTML body
+    assert "/products/" in fields["body_html"] or "etsy.com" in fields["body_html"]
+
+
 def test_refill_blog_schedule_fills_forward_and_recycles(config, db, tmp_path):
     """The evergreen queue keeps a forward schedule filled — one post per day over
     the horizon — cycling the catalogue's content when unique variants run out, and

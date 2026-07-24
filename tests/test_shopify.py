@@ -189,27 +189,21 @@ def test_republish_hidden_makes_scheduled_articles_live(config):
                for _, p in updated)
 
 
-def test_rewrite_blog_articles_updates_matches_in_place(config):
-    """Existing live posts are rewritten in place, matched by title (case/space
-    insensitive); unmatched posts are left untouched, never deleted."""
+def test_live_blog_articles_and_update(config):
+    """Connector primitives for the in-place rewrite: list live articles and PUT
+    new fields (body/image) onto one, using the configured blog."""
     _configured(config)
     config.shopify["blog_id"] = 7
     client = FakeAdminClient()
-    client.live_articles = [
-        {"id": 1, "title": "Riviera Mug: Mediterranean for Your Home"},   # match
-        {"id": 2, "title": "  riviera mug: mediterranean for your home "},  # match (normalised)
-        {"id": 3, "title": "Some Unrelated Post"},                        # no match → skip
-    ]
-    new = {"Riviera Mug: Mediterranean for Your Home":
-           {"body": "<h2>Hi</h2>", "keywords": ["mug"],
-            "image": "https://cdn/x.jpg"}}
-    res = ShopifyConnector(config, client=client).rewrite_blog_articles(new)
-    assert res["checked"] == 3 and res["rewritten"] == 2 and res["skipped"] == 1
-    # Both matches got the new HTML body + featured image; the odd one wasn't touched.
-    touched = {aid for _, aid, _ in client.updates}
-    assert touched == {"1", "2"}
-    body = client.updates[0][2]["article"]
-    assert body["body_html"] == "<h2>Hi</h2>" and body["image"]["src"] == "https://cdn/x.jpg"
+    client.live_articles = [{"id": 1, "title": "A", "body_html": "x"}]
+    conn = ShopifyConnector(config, client=client)
+    assert [a["id"] for a in conn.live_blog_articles()] == [1]
+    conn.update_blog_article("1", {"body_html": "<h2>Hi</h2>",
+                                   "image": {"src": "https://cdn/x.jpg"}})
+    blog_id, aid, payload = client.updates[0]
+    assert blog_id == "7" and aid == "1"
+    assert payload["article"]["body_html"] == "<h2>Hi</h2>"
+    assert payload["article"]["image"]["src"] == "https://cdn/x.jpg"
 
 
 def test_publish_article_fails_when_unverifiable(config):
