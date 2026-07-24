@@ -123,6 +123,33 @@ class ShopifyConnector:
                 "url": url, "status": product.get("status", "draft"),
                 "images_uploaded": uploads["uploaded"], "images_failed": uploads["failed"]}
 
+    def product_details(self, product_id: str) -> dict[str, Any]:
+        """Storefront URL + first image ``src`` for a published product (cached).
+        Lets the blog link to the Shopify product and reuse its image as the
+        article's featured image instead of the theme's placeholder."""
+        cache = getattr(self, "_prod_cache", None)
+        if cache is None:
+            cache = self._prod_cache = {}
+        pid = str(product_id)
+        if pid in cache:
+            return cache[pid]
+        out = {"url": "", "image_url": ""}
+        try:
+            p = (self._c().get_product(pid) or {}).get("product") or {}
+            handle = p.get("handle") or ""
+            domain = self.cfg.get("store_domain") or ""
+            if domain and handle:
+                out["url"] = f"https://{domain}/products/{handle}"
+            imgs = p.get("images") or []
+            if imgs:
+                out["image_url"] = imgs[0].get("src") or ""
+            elif p.get("image"):
+                out["image_url"] = (p["image"] or {}).get("src") or ""
+        except Exception as exc:  # best-effort — never block the blog on this
+            log.warning("Shopify product details fetch failed (%s): %s", pid, exc)
+        cache[pid] = out
+        return out
+
     def set_active(self, product_id: str) -> dict[str, Any]:
         """Take a draft product live on Shopify."""
         return self._c().update_product(product_id, {"product": {"id": product_id,
@@ -269,16 +296,20 @@ class ShopifyConnector:
             raise RuntimeError("No Shopify blog selected — pick one on the "
                                "Integrations page (Shopify → list blogs).")
         client = self._c()
-        resp = client.create_article(str(blog_id), {
-            "article": {"title": article.get("title") or "New post",
-                        "body_html": article.get("body") or "",
-                        "tags": ", ".join(article.get("keywords") or []),
-                        # published: true publishes immediately — Shopify stamps
-                        # published_at itself. Do NOT send our own published_at:
-                        # if the server clock is even slightly ahead of Shopify's,
-                        # Shopify reads it as a FUTURE time and hides the article
-                        # as 'scheduled' (the whole blog looks empty).
-                        "published": True}})
+        body = {"title": article.get("title") or "New post",
+                "body_html": article.get("body") or "",
+                "tags": ", ".join(article.get("keywords") or []),
+                # published: true publishes immediately — Shopify stamps
+                # published_at itself. Do NOT send our own published_at:
+                # if the server clock is even slightly ahead of Shopify's,
+                # Shopify reads it as a FUTURE time and hides the article
+                # as 'scheduled' (the whole blog looks empty).
+                "published": True}
+        # A featured image so the theme shows the product, not its placeholder.
+        img = article.get("image")
+        if img:
+            body["image"] = {"src": img}
+        resp = client.create_article(str(blog_id), {"article": body})
         art = (resp or {}).get("article") or {}
         art_id = art.get("id")
         if not art_id:
@@ -360,6 +391,9 @@ class ShopifyAdminClient:
 
     def create_product(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/products.json", payload)
+
+    def get_product(self, product_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/products/{product_id}.json", None)
 
     def update_product(self, product_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self._put(f"/products/{product_id}.json", payload)

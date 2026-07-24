@@ -99,14 +99,18 @@ class MarketingEngine:
     def blog_only(self, listing: dict[str, Any], *, listing_url: str | None = None,
                   listing_id: str | None = None, campaign_id: int | None = None,
                   product_key: str | None = None, image_url: str | None = None,
-                  videos: list[str] | None = None, store: bool = True) -> dict[str, Any]:
+                  videos: list[str] | None = None, also_url: str | None = None,
+                  store: bool = True) -> dict[str, Any]:
         """Generate ONLY the SEO blog articles for a product (deterministic, $0) —
         so blog content can be produced on demand without a full production run or
         the other channels. ``image_url`` (hero) and ``videos`` (mp4 URLs) are
-        embedded, and every article links to the product for SEO."""
+        embedded, ``listing_url`` is the primary shop link (Shopify) and ``also_url``
+        an optional secondary (Etsy); every article links to the product for SEO."""
         url = listing_url or (f"https://www.etsy.com/listing/{listing_id}"
                               if listing_id else "")
-        blog = self._blog(self._context(listing, url), image_url=image_url, videos=videos)
+        ctx = self._context(listing, url)
+        ctx["also_url"] = also_url or ""
+        blog = self._blog(ctx, image_url=image_url, videos=videos)
         if store and self.db:
             self.db.insert_marketing_asset({
                 "campaign_id": campaign_id,
@@ -230,38 +234,52 @@ class MarketingEngine:
 
     def _blog(self, c: dict[str, Any], *, image_url: str | None = None,
               videos: list[str] | None = None) -> dict[str, Any]:
-        url = c["url"]
-        # Media + a prominent product link at the top (HTML, since the body is
-        # published as body_html) — pictures, clips and the SEO link the operator
-        # asked for.
+        url = c["url"]                       # primary shop link (Shopify preferred)
+        also = c.get("also_url") or ""       # optional secondary (Etsy)
+        # Media + a prominent product link at the top. The body is published as
+        # Shopify body_html, so everything here is real HTML (no raw markdown).
         media = ""
         if image_url:
-            media += (f'<img src="{image_url}" alt="{c["title_short"]}" '
-                      f'style="width:100%;border-radius:8px;margin:8px 0"/>')
+            media += (f'<p><img src="{image_url}" alt="{c["title_short"]}" '
+                      f'style="width:100%;border-radius:8px;margin:8px 0"/></p>')
         for v in (videos or [])[:2]:
-            media += (f'<video controls playsinline width="100%" '
-                      f'style="margin:8px 0" src="{v}"></video>')
-        link_html = (f'<p><a href="{url}" rel="noopener">Shop {c["title_short"]} →</a></p>'
-                     if url else "")
+            media += (f'<p><video controls playsinline width="100%" '
+                      f'style="margin:8px 0" src="{v}"></video></p>')
+        links = []
+        if url:
+            links.append(f'<a href="{url}" rel="noopener">'
+                         f'Shop {c["title_short"]} on our store →</a>')
+        if also and also != url:
+            links.append(f'<a href="{also}" rel="noopener">Also on Etsy →</a>')
+        link_html = (f'<p class="shop-links">{" &nbsp;·&nbsp; ".join(links)}</p>'
+                     if links else "")
+        # A few deterministic sentence stems so sections read differently rather
+        # than repeating one identical paragraph under every heading.
+        stems = [
+            f"{c['hook']} {c['blurb']}",
+            f"{c['use']} It's {c['title_short'].lower()} at its most inviting.",
+            (f"Made for {c['audience']} who love {c['theme']}, it earns its place "
+             f"in the everyday."),
+            f"{c['blurb']} Bring it home and let it quietly set the tone.",
+        ]
         articles = []
         for slug_key, title_tpl, headings in self._BLOG_ANGLES:
             title = title_tpl.format(title=c["title_short"], theme=c["theme"].title())
-            link_txt = f" Shop it here: {url}." if url else ""
-            sections = [{
-                "heading": h,
-                "body": (f"{c['hook']} {c['blurb']} {c['use']} "
-                         f"{c['title_short']} for {c['audience']} who love {c['theme']}."
-                         f"{link_txt}").strip(),
-            } for h in headings]
+            sections = [{"heading": h.format(title=c["title_short"],
+                                             theme=c["theme"].title()),
+                         "body": f"{stems[i % len(stems)]}"}
+                        for i, h in enumerate(headings)]
             body = (media + link_html
-                    + "\n\n".join(f"## {s['heading']}\n{s['body']}" for s in sections)
-                    + (f"\n\n{link_html}" if link_html else ""))
+                    + "".join(f"<h2>{s['heading']}</h2><p>{s['body']}</p>"
+                              for s in sections)
+                    + link_html)
             articles.append({
                 "angle": slug_key, "title": title, "slug": _slug(title),
                 "meta_description": f"{c['blurb']} Shop {c['title_short']}."[:160],
                 "keywords": c["keywords"], "sections": sections,
                 "image": image_url, "videos": list((videos or [])[:2]),
-                "body": body, "word_count": len(body.split()), "cta_link": url,
+                "body": body, "word_count": len(body.split()),
+                "cta_link": url, "etsy_url": also,
             })
         primary = articles[0]
         return {**primary, "articles": articles, "article_count": len(articles),

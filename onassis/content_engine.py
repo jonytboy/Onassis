@@ -233,6 +233,37 @@ class ContentEngine:
                     return f"https://www.etsy.com/listing/{lid}"
         return None
 
+    def _blog_media(self, campaign_id: int | None,
+                    product_key: str) -> tuple[str, str, str]:
+        """Best links + image for a product's blog article: the Shopify product
+        link and image (so the theme shows the product, not a placeholder, and
+        the CTA points at our own store) with the Etsy listing kept as a
+        secondary link. Returns ``(shop_url, etsy_url, image_url)`` — any may be
+        empty. Falls back to the hero image when the store has none."""
+        image_url = (self._hero_url(campaign_id, product_key) or "") if campaign_id else ""
+        shop_url, etsy_url = "", ""
+        if not campaign_id:
+            return shop_url, etsy_url, image_url
+        pid = f"{campaign_id}-{product_key}"
+        ep = self.db.get_latest_publication(campaign_id, "etsy", product_id=pid)
+        if ep:
+            etsy_url = ep.get("listing_url") or ep.get("url") or ""
+            lid = ep.get("listing_id")
+            if not etsy_url and lid and str(lid).isdigit():
+                etsy_url = f"https://www.etsy.com/listing/{lid}"
+        sp = self.db.get_latest_publication(campaign_id, "shopify", product_id=pid)
+        if sp and sp.get("listing_id"):
+            conn = getattr(self, "_shopify_conn", None)
+            if conn is None:
+                from onassis.connectors.shopify import ShopifyConnector
+                conn = self._shopify_conn = ShopifyConnector(self.config, self.db)
+            if conn.can_publish:
+                d = conn.product_details(str(sp["listing_id"]))
+                shop_url = d.get("url") or ""
+                if not image_url:
+                    image_url = d.get("image_url") or ""
+        return shop_url, etsy_url, image_url
+
     def _reel_urls(self, campaign_id: int, product_key: str) -> list[str]:
         """Public URLs of a product's rendered clips (for embedding in the blog)."""
         base = self._public_base()
@@ -282,10 +313,12 @@ class ContentEngine:
                        "theme": ctx.get("theme") or "",
                        "product_name": ctx.get("product_name") or p.get("name") or key,
                        "tags": ctx.get("tags") or [], "product_key": key}
+            shop_url, etsy_url, image_url = self._blog_media(cid, key)
             me.blog_only(listing,
-                         listing_url=ctx.get("listing_url") or self._product_url(cid, key),
-                         campaign_id=cid, product_key=key,
-                         image_url=self._hero_url(cid, key) if cid else None,
+                         listing_url=(shop_url or ctx.get("listing_url")
+                                      or self._product_url(cid, key)),
+                         also_url=etsy_url, campaign_id=cid, product_key=key,
+                         image_url=image_url or None,
                          videos=self._reel_urls(cid, key) if cid else None)
             have.add(key)
             made += 1
@@ -390,10 +423,12 @@ class ContentEngine:
                        "theme": ctx.get("theme") or "",
                        "product_name": ctx.get("product_name") or p.get("name") or key,
                        "tags": ctx.get("tags") or [], "product_key": key}
+            shop_url, etsy_url, image_url = self._blog_media(cid, key)
             blog = me.blog_only(
-                listing, listing_url=ctx.get("listing_url") or self._product_url(cid, key),
-                campaign_id=cid, product_key=key,
-                image_url=self._hero_url(cid, key) if cid else None,
+                listing, listing_url=(shop_url or ctx.get("listing_url")
+                                      or self._product_url(cid, key)),
+                also_url=etsy_url, campaign_id=cid, product_key=key,
+                image_url=image_url or None,
                 videos=self._reel_urls(cid, key) if cid else None, store=False)
             for art in blog.get("articles", []):
                 pool.append({"product_key": key, "campaign_id": cid,
