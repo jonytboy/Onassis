@@ -436,6 +436,27 @@ class ContentEngine:
                              "angle": art.get("angle"), "article": art})
         return pool
 
+    def rewrite_live_blog_articles(self) -> dict[str, Any]:
+        """Rewrite the store's EXISTING blog articles in place with the current
+        content — Shopify product link, featured image and HTML body — so posts
+        published before those improvements are brought up to date without being
+        deleted or re-created. Matches live articles to catalogue content by
+        title; unmatched articles are left alone."""
+        pool = self._blog_pool()
+        if not pool:
+            return {"ok": False, "reason": "No active products to rebuild content from.",
+                    "checked": 0, "rewritten": 0, "skipped": 0}
+        by_title = {v["article"]["title"]: v["article"] for v in pool}
+        conn = getattr(self, "_shopify_conn", None)
+        if conn is None:
+            from onassis.connectors.shopify import ShopifyConnector
+            conn = self._shopify_conn = ShopifyConnector(self.config, self.db)
+        if not conn.can_publish:
+            return {"ok": False, "reason": "Shopify is not connected.",
+                    "checked": 0, "rewritten": 0, "skipped": 0}
+        res = conn.rewrite_blog_articles(by_title)
+        return {"ok": True, **res}
+
     def refill_blog_schedule(self, *, per_day: int | None = None,
                              horizon_days: int | None = None) -> dict[str, Any]:
         """Keep a rolling FORWARD blog schedule filled so there are always upcoming

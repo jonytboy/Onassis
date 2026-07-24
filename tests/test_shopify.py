@@ -49,6 +49,14 @@ class FakeAdminClient:
         return {"article": {"id": int(article_id), "handle": "linen-throw-story",
                             "url": f"https://shop.myshopify.com/blogs/{blog_id}/linen-throw-story"}}
 
+    def list_articles(self, blog_id):
+        return {"articles": list(getattr(self, "live_articles", []))}
+
+    def update_article(self, blog_id, article_id, payload):
+        self.updates = getattr(self, "updates", [])
+        self.updates.append((blog_id, article_id, payload))
+        return {"article": {"id": int(article_id)}}
+
 
 def _configured(config):
     config.shopify = {"store_domain": "shop.myshopify.com", "client_id": "cid",
@@ -179,6 +187,29 @@ def test_republish_hidden_makes_scheduled_articles_live(config):
     assert {aid for aid, _ in updated} == {"1", "2"}
     assert all(p["article"]["published"] is True and p["article"]["published_at"] is None
                for _, p in updated)
+
+
+def test_rewrite_blog_articles_updates_matches_in_place(config):
+    """Existing live posts are rewritten in place, matched by title (case/space
+    insensitive); unmatched posts are left untouched, never deleted."""
+    _configured(config)
+    config.shopify["blog_id"] = 7
+    client = FakeAdminClient()
+    client.live_articles = [
+        {"id": 1, "title": "Riviera Mug: Mediterranean for Your Home"},   # match
+        {"id": 2, "title": "  riviera mug: mediterranean for your home "},  # match (normalised)
+        {"id": 3, "title": "Some Unrelated Post"},                        # no match → skip
+    ]
+    new = {"Riviera Mug: Mediterranean for Your Home":
+           {"body": "<h2>Hi</h2>", "keywords": ["mug"],
+            "image": "https://cdn/x.jpg"}}
+    res = ShopifyConnector(config, client=client).rewrite_blog_articles(new)
+    assert res["checked"] == 3 and res["rewritten"] == 2 and res["skipped"] == 1
+    # Both matches got the new HTML body + featured image; the odd one wasn't touched.
+    touched = {aid for _, aid, _ in client.updates}
+    assert touched == {"1", "2"}
+    body = client.updates[0][2]["article"]
+    assert body["body_html"] == "<h2>Hi</h2>" and body["image"]["src"] == "https://cdn/x.jpg"
 
 
 def test_publish_article_fails_when_unverifiable(config):

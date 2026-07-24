@@ -1059,6 +1059,18 @@ def build_operations_router(get_state) -> APIRouter:
         return {**result, "attempted": len(pending), "requeued": requeued,
                 "details": details, "diagnosis": _blog_status(s)}
 
+    @router.post("/api/content/blog/rewrite-live")
+    def api_rewrite_live_blog(request: Request) -> Any:
+        """Rewrite existing live blog articles in place — Shopify product link,
+        featured image and HTML body — bringing older posts up to date."""
+        _require_operator(request)
+        s = request.app.state
+        result = s.content.rewrite_live_blog_articles()
+        get_state(request.app).add_log(
+            f"Blog rewrite: {result.get('rewritten', 0)} live article(s) updated, "
+            f"{result.get('skipped', 0)} unchanged.")
+        return {**result, "diagnosis": _blog_status(s), "articles": _blog_articles(s)}
+
     @router.post("/api/content/blog/fill-schedule")
     def api_fill_blog_schedule(request: Request, payload: dict | None = None) -> Any:
         """Fill the forward blog schedule (evergreen) so there are always upcoming

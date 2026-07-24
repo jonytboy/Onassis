@@ -333,12 +333,21 @@
     <div class="panel" style="margin-bottom:12px">
       <h2>Shopify Blog
         <span style="float:right">
-          <button class="btn small" @click="generateBlog()">Generate articles</button>
-          <button class="btn small" @click="fillBlogSchedule()">Fill schedule</button>
-          <button class="btn small" @click="publishBlog()">Publish blog now</button>
-          <button class="btn small" @click="fixBlogVisibility()">Fix visibility</button>
-          <button class="btn small" @click="diagnoseBlog()">Diagnose</button>
+          <button class="btn small" @click="blogMaint=!blogMaint"
+                  x-text="blogMaint?'Maintenance ▴':'Maintenance ▾'"></button>
         </span></h2>
+      <!-- One-off catch-up / recovery tools — hidden by default so they don't
+           clutter the dashboard. The daily run fills + publishes on its own. -->
+      <div x-show="blogMaint" class="note"
+           style="margin:6px 0;padding:8px;border:1px dashed var(--line);border-radius:6px">
+        <div style="margin-bottom:6px;opacity:.75">One-off tools — normal posting is automatic; you only need these to catch up or debug.</div>
+        <button class="btn small" @click="generateBlog()">Generate articles</button>
+        <button class="btn small" @click="fillBlogSchedule()">Fill schedule</button>
+        <button class="btn small" @click="publishBlog()">Publish blog now</button>
+        <button class="btn small" @click="rewriteBlog()">Rewrite live posts</button>
+        <button class="btn small" @click="fixBlogVisibility()">Fix visibility</button>
+        <button class="btn small" @click="diagnoseBlog()">Diagnose</button>
+      </div>
       <template x-if="blogDx">
         <div class="note" style="margin:6px 0;padding:8px;border:1px solid var(--line);border-radius:6px">
           <div><b>Store:</b> <span x-text="blogDx.store_domain||'?'"></span> · <b>Selected blog:</b> <span x-text="blogDx.selected_blog_id||'none'"></span></div>
@@ -1119,7 +1128,7 @@ function ops(){
     productDetail:null, channelTests:null, testingChannels:false, regenerating:null,
     integrations:null, integrationDetail:null, integrationEdits:{}, integrationBusy:false,
     commercial:null, commercialProducts:null, cmo:null, cfo:null, distribution:null,
-    catalogue:null, collections:null, content:null, blog:null, blogDx:null, publishingAll:false, publishAllTotal:0, publishAllDone:0,
+    catalogue:null, collections:null, content:null, blog:null, blogDx:null, blogMaint:false, publishingAll:false, publishAllTotal:0, publishAllDone:0,
     productSearch:'', productFilter:'all', productHealth:null, toast:'',
     productFilters:[['all','All'],['awaiting_approval','Awaiting Approval'],['ready_to_publish','Ready to Publish'],['draft_created','Draft Created'],['live','Live'],['failed','Failed'],['etsy','On Etsy'],['shopify','On Shopify'],['both','Etsy + Shopify'],['archived','Archived']],
     get running(){ return this.run?.status==='running'; },
@@ -1310,6 +1319,12 @@ function ops(){
       const r=await this.post('/operations/api/content/blog/republish',{});
       if(r&&r.ok) this.showToast('Blog visibility ('+((r&&r.checked)||0)+' on blog): '+((r&&r.note)||''));
       else this.showToast('Could not fix visibility: '+((r&&r.error)||'unknown'));
+      this.loadTab('content'); this.pollLogs(); },
+    async rewriteBlog(){
+      if(!confirm('Rewrite existing live blog posts in place — Shopify product link, featured image and formatting? Existing posts are updated, not deleted.')) return;
+      const r=await this.post('/operations/api/content/blog/rewrite-live',{});
+      if(r&&r.ok) this.showToast('Rewrote '+r.rewritten+' live post(s); '+r.skipped+' left unchanged.');
+      else this.showToast('Could not rewrite posts: '+((r&&r.reason)||'unknown error'));
       this.loadTab('content'); this.pollLogs(); },
     async fillBlogSchedule(){
       const n=prompt('Fill the forward blog schedule (evergreen). How many posts per day?','1');

@@ -188,6 +188,11 @@ def _parse_args() -> argparse.Namespace:
         "--mode", default=None, help="Publishing mode (dry_run | draft).",
     )
     parser.add_argument(
+        "--blog-rewrite", action="store_true",
+        help="One-off: rewrite existing live blog articles in place (Shopify "
+             "product link, featured image, HTML body).",
+    )
+    parser.add_argument(
         "--serve", action="store_true", help="Run the REST API (Swagger at /docs)."
     )
     parser.add_argument("--host", default="0.0.0.0", help="API host (with --serve).")
@@ -835,6 +840,17 @@ def main() -> int:
             print(f"Error: {exc}")
             return 1
         print(f"Campaign #{updated['id']} is now '{updated['status']}'.")
+        return 0
+
+    if args.blog_rewrite:
+        from onassis.content_engine import ContentEngine
+
+        res = ContentEngine(config, db).rewrite_live_blog_articles()
+        if not res.get("ok"):
+            print(f"Blog rewrite skipped: {res.get('reason')}")
+            return 1
+        print(f"\nBLOG REWRITE — {res['rewritten']} live article(s) updated, "
+              f"{res['skipped']} left unchanged (of {res['checked']} on the blog).")
         return 0
 
     if args.serve:
