@@ -131,6 +131,7 @@ def test_rewrite_live_articles_matches_by_embedded_etsy_link(config, db):
     (robust to title drift), not by a regenerated title. Matched posts get the
     fresh HTML body + Shopify link; unmappable ones are reported, not touched."""
     cid = 5
+    config.shopify = {**(config.shopify or {}), "blog_id": "7"}
     db.insert_product({"sku": "MUG", "name": "Riviera Mug", "campaign_id": cid,
                        "product_key": "mug", "active": True})
     db.insert_publication({"platform": "etsy", "campaign_id": cid,

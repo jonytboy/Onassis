@@ -844,13 +844,21 @@ def main() -> int:
 
     if args.blog_rewrite:
         from onassis.content_engine import ContentEngine
+        from onassis.integrations import apply_integration_overrides
 
+        # Overlay the operator's UI-saved settings (Blog ID, tokens) — otherwise
+        # the CLI reads config.yaml only and targets the wrong/empty blog.
+        apply_integration_overrides(config, db)
         res = ContentEngine(config, db).rewrite_live_blog_articles()
         if not res.get("ok"):
             print(f"Blog rewrite skipped: {res.get('reason')}")
             return 1
-        print(f"\nBLOG REWRITE — {res['rewritten']} live article(s) updated, "
-              f"{res['skipped']} left unchanged (of {res['checked']} on the blog).")
+        print(f"\nBLOG REWRITE — blog {res.get('blog_id')}, "
+              f"{res.get('live_count', 0)} live article(s), "
+              f"{res.get('products', 0)} product(s) in catalogue.")
+        print(f"  {res['rewritten']} updated, {res['skipped']} left unchanged.")
+        if res.get("reason"):
+            print(f"  {res['reason']}")
         for d in res.get("details", []):
             mark = "✓" if d.get("ok") else "•"
             note = "" if d.get("ok") else f"  ({d.get('reason', '')})"

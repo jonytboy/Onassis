@@ -452,13 +452,22 @@ class ContentEngine:
         if conn is None:
             from onassis.connectors.shopify import ShopifyConnector
             conn = self._shopify_conn = ShopifyConnector(self.config, self.db)
+        blog_id = str((self.config.shopify or {}).get("blog_id") or "")
+        base = {"blog_id": blog_id or None, "live_count": 0, "products": 0,
+                "checked": 0, "rewritten": 0, "skipped": 0, "details": []}
         if not conn.can_publish:
-            return {"ok": False, "reason": "Shopify is not connected.",
-                    "checked": 0, "rewritten": 0, "skipped": 0, "details": []}
+            return {**base, "ok": False, "reason": "Shopify is not connected."}
+        if not blog_id:
+            return {**base, "ok": False,
+                    "reason": "No Shopify blog selected (set the Blog ID on "
+                              "Integrations → Shopify)."}
         pool = self._blog_pool()
+        base["products"] = len({v["product_key"] for v in pool})
         if not pool:
-            return {"ok": False, "reason": "No active products to rebuild content from.",
-                    "checked": 0, "rewritten": 0, "skipped": 0, "details": []}
+            return {**base, "ok": False,
+                    "reason": "No active products to rebuild content from — the "
+                              "catalogue has no active product to regenerate an "
+                              "article from."}
 
         def _norm(t: str | None) -> str:
             return " ".join((t or "").split()).strip().lower().rstrip(".!—-")
@@ -483,8 +492,8 @@ class ContentEngine:
         try:
             live = conn.live_blog_articles()
         except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "reason": str(exc),
-                    "checked": 0, "rewritten": 0, "skipped": 0, "details": []}
+            return {**base, "ok": False, "reason": str(exc)}
+        base["live_count"] = len(live)
 
         checked = rewritten = skipped = 0
         details = []
@@ -511,8 +520,14 @@ class ContentEngine:
                 skipped += 1
                 details.append({"id": aid, "title": title, "ok": False,
                                 "reason": str(exc)})
-        return {"ok": True, "checked": checked, "rewritten": rewritten,
-                "skipped": skipped, "details": details[:50]}
+        reason = (f"Matched {rewritten} of {checked} live article(s) on blog "
+                  f"{blog_id}." if checked else
+                  f"The selected blog ({blog_id}) has no articles — the posts may "
+                  f"be on a different blog. Use Diagnose to see which blog holds "
+                  f"them, then set that Blog ID on Integrations → Shopify.")
+        return {**base, "ok": True, "live_count": len(live), "checked": checked,
+                "rewritten": rewritten, "skipped": skipped, "reason": reason,
+                "details": details[:50]}
 
     def refill_blog_schedule(self, *, per_day: int | None = None,
                              horizon_days: int | None = None) -> dict[str, Any]:

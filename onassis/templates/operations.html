@@ -1323,8 +1323,8 @@ function ops(){
     async rewriteBlog(){
       if(!confirm('Rewrite existing live blog posts in place — Shopify product link, featured image and formatting? Existing posts are updated, not deleted.')) return;
       const r=await this.post('/operations/api/content/blog/rewrite-live',{});
-      if(r&&r.ok) this.showToast('Rewrote '+r.rewritten+' live post(s); '+r.skipped+' left unchanged.');
-      else this.showToast('Could not rewrite posts: '+((r&&r.reason)||'unknown error'));
+      if(r&&r.ok&&r.rewritten>0) this.showToast('Rewrote '+r.rewritten+' live post(s); '+r.skipped+' unchanged.');
+      else this.showToast((r&&r.reason)||'Could not rewrite posts.');
       this.loadTab('content'); this.pollLogs(); },
     async fillBlogSchedule(){
       const n=prompt('Fill the forward blog schedule (evergreen). How many posts per day?','1');

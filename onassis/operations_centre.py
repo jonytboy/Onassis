@@ -1067,8 +1067,9 @@ def build_operations_router(get_state) -> APIRouter:
         s = request.app.state
         result = s.content.rewrite_live_blog_articles()
         get_state(request.app).add_log(
-            f"Blog rewrite: {result.get('rewritten', 0)} live article(s) updated, "
-            f"{result.get('skipped', 0)} unchanged.")
+            f"Blog rewrite: {result.get('rewritten', 0)} updated, "
+            f"{result.get('skipped', 0)} unchanged of {result.get('live_count', 0)} "
+            f"on blog {result.get('blog_id') or '?'}. {result.get('reason', '')}")
         return {**result, "diagnosis": _blog_status(s), "articles": _blog_articles(s)}
 
     @router.post("/api/content/blog/fill-schedule")
