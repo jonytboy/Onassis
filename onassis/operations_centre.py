@@ -1469,11 +1469,15 @@ def _blog_status(state: Any) -> dict[str, Any]:
     assets = state.db.list_marketing_assets(channel="blog")
     by = {"posted": 0, "skipped": 0, "failed": 0, "pending": 0}
     last_reason = None
+    scheduled_dates: list[str] = []
     for a in assets:
         st = a.get("status") or "pending"
         by[st] = by.get(st, 0) + 1
         if st in ("skipped", "failed") and a.get("delivery_error"):
             last_reason = a["delivery_error"]
+        # A pending asset with a future date is scheduled to drip out later.
+        if st == "pending" and a.get("scheduled_date"):
+            scheduled_dates.append(a["scheduled_date"])
     try:
         connected = bool(state.daily.shopify.connector.can_publish)
     except Exception:
@@ -1491,9 +1495,13 @@ def _blog_status(state: Any) -> dict[str, Any]:
         diagnosis = f"{by['posted']} article(s) published."
     else:
         diagnosis = last_reason or "Blog articles are queued — click 'Publish blog now'."
+    scheduled_dates.sort()
+    schedule = {"count": len(scheduled_dates),
+                "next": scheduled_dates[0] if scheduled_dates else None,
+                "last": scheduled_dates[-1] if scheduled_dates else None}
     return {"connected": connected, "blog_id": str(blog_id) if blog_id else None,
             "assets": len(assets), **by, "last_reason": last_reason,
-            "diagnosis": diagnosis}
+            "scheduled": schedule, "diagnosis": diagnosis}
 
 
 def _blog_articles(state: Any, limit: int = 200) -> list[dict[str, Any]]:
@@ -1517,6 +1525,8 @@ def _blog_articles(state: Any, limit: int = 200) -> list[dict[str, Any]]:
             "titles": titles or [a.get("product_key") or "Untitled"],
             "count": len(articles),
             "status": a.get("status") or "pending",
+            "scheduled_date": a.get("scheduled_date"),   # YYYY-MM-DD or None (=asap)
+            "posted_at": a.get("delivered_at"),
             "urls": urls,
             "admin": (f"https://{domain}/admin/articles" if domain else ""),
             "error": a.get("delivery_error"),

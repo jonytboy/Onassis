@@ -344,13 +344,14 @@
         <div class="stat"><div class="k">Blog ID</div><div class="v sm" x-text="blog?.blog_id||'not set'"></div></div>
         <div class="stat"><div class="k">Articles</div><div class="v" x-text="blog?.assets??0"></div></div>
         <div class="stat"><div class="k">Posted</div><div class="v sm" x-text="blog?.posted??0"></div></div>
-        <div class="stat"><div class="k">Skipped</div><div class="v sm" x-text="blog?.skipped??0"></div></div>
+        <div class="stat"><div class="k">Pending</div><div class="v sm" x-text="blog?.pending??0"></div></div>
+        <div class="stat"><div class="k">Scheduled</div><div class="v sm" x-text="(blog?.scheduled?.count||0)+(blog?.scheduled?.next?(' · next '+blog.scheduled.next):'')"></div></div>
       </div>
       <template x-if="blog?.articles?.length">
         <div style="margin-top:10px;max-height:340px;overflow:auto;border-top:1px solid var(--line);padding-top:8px">
           <table style="width:100%;border-collapse:collapse;font-size:13px">
             <thead><tr style="text-align:left;color:var(--muted)">
-              <th style="padding:4px 6px">Article</th><th style="padding:4px 6px">Status</th><th style="padding:4px 6px">View</th></tr></thead>
+              <th style="padding:4px 6px">Article</th><th style="padding:4px 6px">Status</th><th style="padding:4px 6px">When</th><th style="padding:4px 6px">View</th></tr></thead>
             <tbody>
               <template x-for="a in blog.articles" :key="a.product_key+ (a.titles?.[0]||'')">
                 <tr style="border-top:1px solid var(--line)">
@@ -360,6 +361,11 @@
                     <div class="note" x-show="a.error" style="color:var(--bad)" x-text="a.error"></div>
                   </td>
                   <td style="padding:4px 6px"><span class="pill" :class="a.status==='posted'?'ok':(a.status==='failed'?'failed':'')" x-text="a.status"></span></td>
+                  <td style="padding:4px 6px" class="note">
+                    <span x-show="a.status==='posted'" x-text="a.posted_at?('posted '+(a.posted_at||'').slice(0,10)):'posted'"></span>
+                    <span x-show="a.status!=='posted' && a.scheduled_date" x-text="'due '+a.scheduled_date"></span>
+                    <span x-show="a.status!=='posted' && !a.scheduled_date">asap</span>
+                  </td>
                   <td style="padding:4px 6px">
                     <template x-if="a.urls?.length">
                       <span><template x-for="(u,i) in a.urls" :key="u">

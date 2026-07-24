@@ -483,6 +483,24 @@ def test_blog_status_lists_articles_with_links(client):
     assert row["status"] == "posted" and row["count"] == 2
     assert row["titles"][0] == "A Coastal Morning"
     assert row["urls"] == ["https://shop.myshopify.com/blogs/news/a-coastal-morning"]
+    assert "posted_at" in row and "scheduled_date" in row
+
+
+def test_blog_status_summarises_the_schedule(client):
+    """The status shows the drip schedule — how many are queued and the next date
+    — so 'no way of seeing a schedule' is answered."""
+    db = client.app.state.db
+    db.insert_marketing_asset({"campaign_id": 1, "product_key": "a", "channel": "blog",
+                               "payload": {"articles": [{"title": "A"}]}})
+    db.insert_marketing_asset({"campaign_id": 1, "product_key": "b", "channel": "blog",
+                               "payload": {"articles": [{"title": "B"}]}})
+    for a in db.list_marketing_assets(channel="blog"):
+        db.schedule_marketing_asset(a["id"], "2026-09-01" if a["product_key"] == "a"
+                                    else "2026-09-03")
+    r = client.get("/operations/api/content/blog").json()
+    assert r["scheduled"]["count"] == 2
+    assert r["scheduled"]["next"] == "2026-09-01"
+    assert r["scheduled"]["last"] == "2026-09-03"
 
 
 def test_generate_blog_explains_a_zero(client):
