@@ -294,6 +294,8 @@ content:
   reel_slide_frames: 60          # frames per slide (≈2s at 30fps — readable, not rushed)
   reel_xfade_frames: 10          # crossfade between slides (≈0.33s) for a produced feel
   public_base: null              # https base serving exports/ (falls back to gelato.file_base_url)
+  blog_per_day: 1                # blog article sets published per day (evergreen drip)
+  blog_horizon_days: 21          # keep this many days of blog schedule filled ahead
 
 # --- Make.com distribution (Sprint 43) -------------------------------
 # The single marketing distribution engine: ONASSIS posts one complete campaign

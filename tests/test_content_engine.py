@@ -108,6 +108,24 @@ def test_generate_blog_covers_products_without_a_campaign_key(config, db, tmp_pa
     assert eng.generate_blog()["generated"] == 0
 
 
+def test_ensure_blog_schedule_drips_and_is_idempotent(config, db, tmp_path):
+    """ensure_blog_schedule dates unscheduled pending articles forward at
+    per_day, and re-running is a no-op (it never re-drips what it already
+    placed) — safe to call every daily run."""
+    config.content = {**(config.content or {}), "reel_slide_frames": 2, "blog_per_day": 1}
+    for i in range(3):
+        db.insert_product({"sku": f"P{i}", "name": f"Product {i}"})
+    eng = _engine(config, db)
+    r = eng.ensure_blog_schedule()          # generates + schedules 3 across 3 days
+    assert r["newly_scheduled"] == 3 and r["scheduled"] == 3
+    assert r["next"] and r["last"] and r["next"] <= r["last"]
+    # Each day holds exactly per_day (=1) — three distinct dates.
+    dates = [a["scheduled_date"] for a in db.list_marketing_assets(channel="blog")]
+    assert len(set(dates)) == 3 and all(d for d in dates)
+    # Idempotent: nothing new to schedule on a second pass.
+    assert eng.ensure_blog_schedule(generate=False)["newly_scheduled"] == 0
+
+
 def test_schedule_blog_backlog_drips_across_days(config, db, tmp_path):
     """The whole blog backlog can be generated and spread over future days so the
     daily run posts a steady trickle (not a same-day dump)."""

@@ -323,6 +323,52 @@ class ContentEngine:
                 "first_date": start_dt.strftime("%Y-%m-%d"),
                 "last_date": last.strftime("%Y-%m-%d")}
 
+    def ensure_blog_schedule(self, *, per_day: int | None = None,
+                             horizon_days: int | None = None,
+                             generate: bool = True) -> dict[str, Any]:
+        """Keep a rolling forward blog schedule filled — the evergreen drip.
+
+        Unlike ``schedule_blog_backlog`` (a one-shot re-space that the operator
+        triggers), this is idempotent and safe to run every day: it generates any
+        missing articles, then gives every *unscheduled* pending asset a future
+        date so the daily run posts a steady trickle instead of dumping the lot.
+        Assets already scheduled for the future are left where they are, so the
+        calendar you can see stays stable. Returns the schedule summary."""
+        from datetime import date, datetime, timedelta, timezone
+
+        if generate:
+            self.generate_blog(limit=1000)
+        per_day = max(1, int(per_day if per_day is not None
+                             else self.cfg.get("blog_per_day", 1)))
+        today = datetime.now(timezone.utc).date()
+        today_s = today.strftime("%Y-%m-%d")
+        pending = [a for a in self.db.list_marketing_assets(channel="blog")
+                   if (a.get("status") or "pending") == "pending"]
+        # Slots already claimed by future-dated assets (don't double-book a day).
+        used: dict[str, int] = {}
+        unscheduled = []
+        for a in pending:
+            sd = a.get("scheduled_date")
+            if sd and sd >= today_s:
+                used[sd] = used.get(sd, 0) + 1
+            else:                         # NULL, or a stale past date → re-drip
+                unscheduled.append(a)
+        unscheduled.sort(key=lambda a: a.get("id") or 0)   # oldest first
+        cursor = today
+        newly = 0
+        for a in unscheduled:
+            while used.get(cursor.strftime("%Y-%m-%d"), 0) >= per_day:
+                cursor = cursor + timedelta(days=1)
+            day = cursor.strftime("%Y-%m-%d")
+            self.db.schedule_marketing_asset(a["id"], day)
+            used[day] = used.get(day, 0) + 1
+            newly += 1
+        dates = sorted(used)
+        return {"per_day": per_day, "newly_scheduled": newly,
+                "scheduled": sum(used.values()),
+                "next": dates[0] if dates else None,
+                "last": dates[-1] if dates else None}
+
     # --- Distribution (platform-agnostic) ---------------------------
 
     def distribute(self, limit: int = 50) -> dict[str, Any]:

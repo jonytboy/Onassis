@@ -151,6 +151,20 @@ class DailyCycle:
         # marketing kit (incl. blog) for any active product that has none yet, so
         # content keeps flowing even with no new products.
         self.backfill_marketing()
+        # Keep a rolling forward blog schedule: give freshly-generated articles a
+        # future date so the blog DRIPS (a steady daily trickle you can see on the
+        # calendar) instead of dumping the whole backlog in one run.
+        try:
+            from onassis.content_engine import ContentEngine
+
+            blog_sched = ContentEngine(self.config, self.db).ensure_blog_schedule(
+                generate=False)
+            log.info("Blog schedule: %d newly scheduled, %d queued (next %s).",
+                     blog_sched.get("newly_scheduled", 0), blog_sched.get("scheduled", 0),
+                     blog_sched.get("next"))
+        except Exception:  # scheduling is best-effort, never fail the push
+            blog_sched = {}
+            log.debug("blog scheduling skipped", exc_info=True)
         traffic = self.traffic.run(today)
         # Native channel distribution (IG/FB/Blog/Email) ships what's due; when
         # Make is the distribution path, per-product campaigns already went out at
@@ -169,7 +183,8 @@ class DailyCycle:
         log.info("=== marketing push DONE — %d pin(s) posted, %d queued evergreen ===",
                  posted, ever)
         return {"status": "ok", "traffic": traffic, "channels": channels,
-                "funnel": funnel, "pins_posted": posted, "evergreen_scheduled": ever}
+                "funnel": funnel, "pins_posted": posted, "evergreen_scheduled": ever,
+                "blog_schedule": blog_sched}
 
     def run(self, mode: str = "production") -> dict[str, Any]:
         """Run the full cycle. ``mode`` is 'production' or 'dry_run'."""
