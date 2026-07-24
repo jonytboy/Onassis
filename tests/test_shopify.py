@@ -137,6 +137,29 @@ def test_publish_article_url_uses_the_blog_handle(config):
     assert "published_at" not in payload["article"]
 
 
+def test_blog_diagnostics_reveals_posts_on_the_wrong_blog(config):
+    """The diagnostic reads every blog + its article count, so posts that landed
+    on a different blog than the selected one are obvious."""
+    _configured(config)
+    config.shopify["blog_id"] = 7                     # operator selected blog 7…
+    client = FakeAdminClient()
+    client.list_blogs = lambda: {"blogs": [{"id": 7, "handle": "news", "title": "News"},
+                                           {"id": 9, "handle": "journal", "title": "Journal"}]}
+    # …but every article actually lives on blog 9.
+    def _articles(blog_id):
+        if str(blog_id) == "9":
+            return {"articles": [{"id": 1, "title": "Morning", "handle": "morning",
+                                  "published": True, "published_at": "2020-01-01T00:00:00+00:00"}]}
+        return {"articles": []}
+    client.list_articles = _articles
+    dx = ShopifyConnector(config, client=client).blog_diagnostics()
+    assert dx["selected_blog_id"] == "7"
+    by_id = {b["id"]: b for b in dx["blogs"]}
+    assert by_id["7"]["articles"] == 0 and by_id["7"]["selected"] is True
+    assert by_id["9"]["articles"] == 1                # the posts are here!
+    assert dx["selected_articles"] == []             # nothing on the selected blog
+
+
 def test_republish_hidden_makes_scheduled_articles_live(config):
     """Recovery: articles stuck with a FUTURE published_at (clock skew) are
     re-published to now; already-live ones are left alone."""

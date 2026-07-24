@@ -337,7 +337,22 @@
           <button class="btn small" @click="scheduleBlog()">Schedule the lot</button>
           <button class="btn small" @click="publishBlog()">Publish blog now</button>
           <button class="btn small" @click="fixBlogVisibility()">Fix visibility</button>
+          <button class="btn small" @click="diagnoseBlog()">Diagnose</button>
         </span></h2>
+      <template x-if="blogDx">
+        <div class="note" style="margin:6px 0;padding:8px;border:1px solid var(--line);border-radius:6px">
+          <div><b>Store:</b> <span x-text="blogDx.store_domain||'?'"></span> · <b>Selected blog:</b> <span x-text="blogDx.selected_blog_id||'none'"></span></div>
+          <div style="margin-top:4px"><b>Blogs on the store</b> (posts must land on the one your storefront shows):</div>
+          <template x-for="b in (blogDx.blogs||[])" :key="b.id">
+            <div x-text="(b.selected?'▶ ':'   ')+b.title+' (id '+b.id+', handle '+b.handle+') — '+(b.articles==null?'?':b.articles)+' article(s)'"></div>
+          </template>
+          <div x-show="!(blogDx.blogs||[]).length" style="color:var(--bad)">No blogs found on the store.</div>
+          <div style="margin-top:4px" x-show="(blogDx.selected_articles||[]).length"><b>Articles on the selected blog:</b></div>
+          <template x-for="a in (blogDx.selected_articles||[])" :key="a.id||a.error">
+            <div><span x-text="a.title||a.error"></span> — <span x-text="a.visible?'VISIBLE':'hidden'"></span> <span x-text="a.published_at?('('+String(a.published_at).slice(0,10)+')'):''"></span> <a x-show="a.url" :href="a.url" target="_blank" rel="noopener">open</a></div>
+          </template>
+        </div>
+      </template>
       <div class="note" x-text="blog?.diagnosis||'—'"></div>
       <div class="grid" style="margin-top:8px">
         <div class="stat"><div class="k">Connected</div><div class="v sm"><span class="pill" :class="blog?.connected?'ok':'failed'" x-text="blog?.connected?'yes':'no'"></span></div></div>
@@ -1104,7 +1119,7 @@ function ops(){
     productDetail:null, channelTests:null, testingChannels:false, regenerating:null,
     integrations:null, integrationDetail:null, integrationEdits:{}, integrationBusy:false,
     commercial:null, commercialProducts:null, cmo:null, cfo:null, distribution:null,
-    catalogue:null, collections:null, content:null, blog:null, publishingAll:false, publishAllTotal:0, publishAllDone:0,
+    catalogue:null, collections:null, content:null, blog:null, blogDx:null, publishingAll:false, publishAllTotal:0, publishAllDone:0,
     productSearch:'', productFilter:'all', productHealth:null, toast:'',
     productFilters:[['all','All'],['awaiting_approval','Awaiting Approval'],['ready_to_publish','Ready to Publish'],['draft_created','Draft Created'],['live','Live'],['failed','Failed'],['etsy','On Etsy'],['shopify','On Shopify'],['both','Etsy + Shopify'],['archived','Archived']],
     get running(){ return this.run?.status==='running'; },
@@ -1287,9 +1302,13 @@ function ops(){
       const d=(r&&r.diagnosis)||{};
       this.showToast('Blog: '+((r&&r.posted)||0)+' posted, '+((r&&r.skipped)||0)+' skipped. '+(d.diagnosis||''));
       this.loadTab('content'); this.pollLogs(); },
+    async diagnoseBlog(){
+      const r=await this.get('/operations/api/content/blog/diagnose');
+      if(r&&r.ok){ this.blogDx=r; this.showToast('Read '+((r.blogs||[]).length)+' blog(s) from Shopify — see the breakdown below.'); }
+      else this.showToast('Diagnose failed: '+((r&&r.error)||'unknown')); },
     async fixBlogVisibility(){
       const r=await this.post('/operations/api/content/blog/republish',{});
-      if(r&&r.ok) this.showToast('Blog visibility: re-published '+((r&&r.fixed)||0)+' hidden article(s), '+((r&&r.already_live)||0)+' already live.');
+      if(r&&r.ok) this.showToast('Blog visibility ('+((r&&r.checked)||0)+' on blog): '+((r&&r.note)||''));
       else this.showToast('Could not fix visibility: '+((r&&r.error)||'unknown'));
       this.loadTab('content'); this.pollLogs(); },
     async scheduleBlog(){

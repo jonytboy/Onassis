@@ -1059,6 +1059,17 @@ def build_operations_router(get_state) -> APIRouter:
         return {**result, "attempted": len(pending), "requeued": requeued,
                 "details": details, "diagnosis": _blog_status(s)}
 
+    @router.get("/api/content/blog/diagnose")
+    def api_diagnose_blog(request: Request) -> Any:
+        """Read the live Shopify truth — every blog + article counts — so we can
+        see WHERE the posts actually landed when 'there's just no blog'."""
+        _require_operator(request)
+        s = request.app.state
+        try:
+            return {"ok": True, **s.daily.shopify.connector.blog_diagnostics()}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)}
+
     @router.post("/api/content/blog/republish")
     def api_republish_blog(request: Request) -> Any:
         """Make every article on the store's blog visible now — recovery for posts
@@ -1069,9 +1080,7 @@ def build_operations_router(get_state) -> APIRouter:
             result = s.daily.shopify.connector.republish_hidden()
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc), "diagnosis": _blog_status(s)}
-        get_state(request.app).add_log(
-            f"Blog visibility fix: {result.get('fixed', 0)} article(s) re-published now, "
-            f"{result.get('already_live', 0)} already live.")
+        get_state(request.app).add_log(f"Blog visibility fix: {result.get('note', '')}")
         return {"ok": True, **result, "diagnosis": _blog_status(s)}
 
     @router.post("/api/content/blog/schedule")

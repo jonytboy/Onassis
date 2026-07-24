@@ -156,6 +156,45 @@ class ShopifyConnector:
         blogs = (self._c().list_blogs() or {}).get("blogs", [])
         return [{"id": str(b.get("id")), "title": b.get("title", "")} for b in blogs]
 
+    def blog_diagnostics(self) -> dict[str, Any]:
+        """Read the ground truth from Shopify so 'it says posted but there's no
+        blog' can be pinned down: every blog on the store with its article count,
+        which blog is selected, and the selected blog's articles with their real
+        published state + storefront URL. This reveals the usual culprit — posts
+        landing on a DIFFERENT blog than the one the storefront theme shows."""
+        client = self._c()
+        domain = self.cfg.get("store_domain") or ""
+        selected = str(self.cfg.get("blog_id") or "")
+        blogs_raw = (client.list_blogs() or {}).get("blogs", [])
+        blogs = []
+        for b in blogs_raw:
+            bid = str(b.get("id"))
+            try:
+                arts = (client.list_articles(bid) or {}).get("articles", [])
+                count = len(arts)
+            except Exception:
+                count = None
+            blogs.append({"id": bid, "title": b.get("title", ""),
+                          "handle": b.get("handle", ""), "articles": count,
+                          "selected": bid == selected})
+        sel_articles = []
+        if selected:
+            try:
+                for a in (client.list_articles(selected) or {}).get("articles", [])[:25]:
+                    handle = a.get("handle") or ""
+                    bhandle = self._blog_handle(selected) or selected
+                    sel_articles.append({
+                        "id": a.get("id"), "title": a.get("title"),
+                        "published": a.get("published"),
+                        "published_at": a.get("published_at"),
+                        "visible": self._is_visible(a),
+                        "url": (f"https://{domain}/blogs/{bhandle}/{handle}"
+                                if (domain and handle) else "")})
+            except Exception as exc:  # noqa: BLE001
+                sel_articles = [{"error": str(exc)}]
+        return {"store_domain": domain, "selected_blog_id": selected,
+                "blogs": blogs, "selected_articles": sel_articles}
+
     def republish_hidden(self, blog_id: str | None = None) -> dict[str, Any]:
         """Make every article on the blog visible NOW — recovery for posts that
         were created with a future ``published_at`` (a server clock ahead of
@@ -170,17 +209,32 @@ class ShopifyConnector:
             raise RuntimeError("No Shopify blog selected.")
         client = self._c()
         articles = (client.list_articles(blog_id) or {}).get("articles", [])
+        domain = self.cfg.get("store_domain") or ""
         checked, fixed, live = 0, 0, 0
+        details = []
         for a in articles:
             checked += 1
-            if self._is_visible(a):
+            was_live = self._is_visible(a)
+            if not was_live:
+                client.update_article(blog_id, str(a.get("id")),
+                                      {"article": {"id": a.get("id"), "published": True,
+                                                   "published_at": None}})
+                fixed += 1
+            else:
                 live += 1
-                continue
-            client.update_article(blog_id, str(a.get("id")),
-                                  {"article": {"id": a.get("id"), "published": True,
-                                               "published_at": None}})
-            fixed += 1
-        return {"checked": checked, "fixed": fixed, "already_live": live}
+            details.append({
+                "id": a.get("id"), "title": a.get("title"),
+                "was_visible": was_live, "published_at": a.get("published_at"),
+                "admin_url": (f"https://{domain}/admin/blogs/{blog_id}/articles/{a.get('id')}"
+                              if domain else "")})
+        # 0 articles on this blog while our records say we posted some ⇒ the wrong
+        # blog is selected (the posts went to a different blog). Name that clearly.
+        note = ("No articles exist on the selected blog (id %s) — the posts likely "
+                "went to a DIFFERENT blog. Re-pick the blog on Integrations → Shopify."
+                % blog_id) if checked == 0 else (
+                    f"{fixed} re-published, {live} already live.")
+        return {"checked": checked, "fixed": fixed, "already_live": live,
+                "blog_id": blog_id, "note": note, "details": details[:50]}
 
     @staticmethod
     def _is_visible(article: dict[str, Any]) -> bool:
