@@ -1059,6 +1059,20 @@ def build_operations_router(get_state) -> APIRouter:
         return {**result, "attempted": len(pending), "requeued": requeued,
                 "details": details, "diagnosis": _blog_status(s)}
 
+    @router.post("/api/content/blog/fill-schedule")
+    def api_fill_blog_schedule(request: Request, payload: dict | None = None) -> Any:
+        """Fill the forward blog schedule (evergreen) so there are always upcoming
+        posts — cycles the catalogue's content across the next horizon of days."""
+        _require_operator(request)
+        s = request.app.state
+        per_day = (payload or {}).get("per_day")
+        result = s.content.refill_blog_schedule(
+            per_day=int(per_day) if per_day else None)
+        get_state(request.app).add_log(
+            f"Blog schedule filled: +{result.get('created', 0)} post(s), "
+            f"{result.get('scheduled', 0)} queued through {result.get('last')}.")
+        return {**result, "diagnosis": _blog_status(s), "articles": _blog_articles(s)}
+
     @router.get("/api/content/blog/diagnose")
     def api_diagnose_blog(request: Request) -> Any:
         """Read the live Shopify truth — every blog + article counts — so we can

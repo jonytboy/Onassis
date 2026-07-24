@@ -108,6 +108,21 @@ def test_generate_blog_covers_products_without_a_campaign_key(config, db, tmp_pa
     assert eng.generate_blog()["generated"] == 0
 
 
+def test_refill_blog_schedule_fills_forward_and_recycles(config, db, tmp_path):
+    """The evergreen queue keeps a forward schedule filled — one post per day over
+    the horizon — cycling the catalogue's content when unique variants run out, and
+    it's idempotent (never over-fills past the horizon)."""
+    db.insert_product({"sku": "MUG", "name": "Mug"})     # one product → 4 angles = 4 variants
+    eng = _engine(config, db)
+    r = eng.refill_blog_schedule(per_day=1, horizon_days=10)
+    assert r["created"] == 10 and r["scheduled"] == 10   # 10-day horizon filled
+    assert r["pool"] == 4 and r["next"] and r["last"]    # recycles the 4 variants
+    dates = [a["scheduled_date"] for a in db.list_marketing_assets(channel="blog")]
+    assert len(set(dates)) == 10                         # exactly one per day
+    # Idempotent — a second pass adds nothing (queue already full to the horizon).
+    assert eng.refill_blog_schedule(per_day=1, horizon_days=10)["created"] == 0
+
+
 def test_ensure_blog_schedule_drips_and_is_idempotent(config, db, tmp_path):
     """ensure_blog_schedule dates unscheduled pending articles forward at
     per_day, and re-running is a no-op (it never re-drips what it already

@@ -369,6 +369,99 @@ class ContentEngine:
                 "next": dates[0] if dates else None,
                 "last": dates[-1] if dates else None}
 
+    def _blog_pool(self) -> list[dict[str, Any]]:
+        """Every single-article blog variant (one per product × angle) the catalogue
+        can produce right now — the content the evergreen schedule cycles through."""
+        from onassis.marketing import MarketingEngine
+
+        me = MarketingEngine(self.config, self.db)
+        pool: list[dict[str, Any]] = []
+        for p in self.db.list_products():
+            if not p.get("active", 1):
+                continue
+            key = (p.get("product_key") or p.get("sku")
+                   or (f"product-{p.get('id')}" if p.get("id") else None))
+            if not key:
+                continue
+            cid = p.get("campaign_id")
+            ctx = (self._gather(cid, key) if cid else None) or {}
+            listing = {"title": ctx.get("title") or p.get("name") or key,
+                       "description": ctx.get("description") or p.get("description") or "",
+                       "theme": ctx.get("theme") or "",
+                       "product_name": ctx.get("product_name") or p.get("name") or key,
+                       "tags": ctx.get("tags") or [], "product_key": key}
+            blog = me.blog_only(
+                listing, listing_url=ctx.get("listing_url") or self._product_url(cid, key),
+                campaign_id=cid, product_key=key,
+                image_url=self._hero_url(cid, key) if cid else None,
+                videos=self._reel_urls(cid, key) if cid else None, store=False)
+            for art in blog.get("articles", []):
+                pool.append({"product_key": key, "campaign_id": cid,
+                             "listing_url": blog.get("cta_link") or "",
+                             "angle": art.get("angle"), "article": art})
+        return pool
+
+    def refill_blog_schedule(self, *, per_day: int | None = None,
+                             horizon_days: int | None = None) -> dict[str, Any]:
+        """Keep a rolling FORWARD blog schedule filled so there are always upcoming
+        posts to see — the evergreen engine. Fills every empty slot in the next
+        ``horizon_days`` at ``per_day`` a day: existing unscheduled articles first,
+        then fresh product×angle variants, then (once those are used) cycling back
+        through the catalogue — exactly 'cycle back to the beginning'. Idempotent:
+        it only tops the queue up to the horizon, never past it."""
+        from datetime import datetime, timedelta, timezone
+
+        per_day = max(1, int(per_day if per_day is not None
+                             else self.cfg.get("blog_per_day", 1)))
+        horizon = max(1, int(horizon_days if horizon_days is not None
+                             else self.cfg.get("blog_horizon_days", 21)))
+        today = datetime.now(timezone.utc).date()
+        today_s = today.strftime("%Y-%m-%d")
+        pending = [a for a in self.db.list_marketing_assets(channel="blog")
+                   if (a.get("status") or "pending") == "pending"]
+        used: dict[str, int] = {}
+        have_variants: set = set()
+        to_place = []                       # already-generated pending, needs a date
+        for a in pending:
+            sd = a.get("scheduled_date")
+            pl = a.get("payload") or {}
+            if sd and sd >= today_s:
+                used[sd] = used.get(sd, 0) + 1
+                have_variants.add((a.get("product_key"), pl.get("angle")))
+            else:
+                to_place.append(a)
+        to_place.sort(key=lambda a: a.get("id") or 0)
+        pool = self._blog_pool()
+        # Fresh (not already queued) variants first, then the whole pool to recycle.
+        fresh = [v for v in pool if (v["product_key"], v["angle"]) not in have_variants]
+        rotation = fresh + pool
+        created, ri = 0, 0
+        for d_offset in range(horizon):
+            day = (today + timedelta(days=d_offset)).strftime("%Y-%m-%d")
+            while used.get(day, 0) < per_day:
+                if to_place:
+                    self.db.schedule_marketing_asset(to_place.pop(0)["id"], day)
+                elif rotation:
+                    v = rotation[ri % len(rotation)]
+                    ri += 1
+                    art = v["article"]
+                    aid = self.db.insert_marketing_asset({
+                        "campaign_id": v["campaign_id"], "product_key": v["product_key"],
+                        "listing_url": v["listing_url"], "channel": "blog",
+                        "payload": {**art, "articles": [art], "angle": v["angle"],
+                                    "evergreen": True}})
+                    self.db.schedule_marketing_asset(aid, day)
+                    created += 1
+                else:
+                    break                    # nothing to schedule at all
+                used[day] = used.get(day, 0) + 1
+            if not to_place and not rotation:
+                break
+        dates = sorted(used)
+        return {"per_day": per_day, "horizon_days": horizon, "created": created,
+                "scheduled": sum(used.values()), "pool": len(pool),
+                "next": dates[0] if dates else None, "last": dates[-1] if dates else None}
+
     # --- Distribution (platform-agnostic) ---------------------------
 
     def distribute(self, limit: int = 50) -> dict[str, Any]:

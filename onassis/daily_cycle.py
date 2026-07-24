@@ -157,11 +157,10 @@ class DailyCycle:
         try:
             from onassis.content_engine import ContentEngine
 
-            blog_sched = ContentEngine(self.config, self.db).ensure_blog_schedule(
-                generate=False)
-            log.info("Blog schedule: %d newly scheduled, %d queued (next %s).",
-                     blog_sched.get("newly_scheduled", 0), blog_sched.get("scheduled", 0),
-                     blog_sched.get("next"))
+            blog_sched = ContentEngine(self.config, self.db).refill_blog_schedule()
+            log.info("Blog schedule: +%d created, %d queued ahead (next %s → %s).",
+                     blog_sched.get("created", 0), blog_sched.get("scheduled", 0),
+                     blog_sched.get("next"), blog_sched.get("last"))
         except Exception:  # scheduling is best-effort, never fail the push
             blog_sched = {}
             log.debug("blog scheduling skipped", exc_info=True)
