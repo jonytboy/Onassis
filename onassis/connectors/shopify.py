@@ -24,6 +24,53 @@ from onassis.logger import get_logger
 log = get_logger(__name__)
 
 
+def _text_to_html(text: str) -> str:
+    """Turn a plain-text description into readable HTML for Shopify's body_html.
+    Blank lines become paragraphs, single newlines become line breaks, bullet
+    lines (-, •, *) become a list, and a short ALL-CAPS line becomes a heading.
+    Text that already looks like HTML is passed through untouched."""
+    import re
+
+    text = (text or "").strip()
+    if not text:
+        return ""
+    if re.search(r"</?(p|br|ul|ol|li|h[1-6]|div)\b", text, re.I):
+        return text                                   # already HTML — leave it
+    bullet = re.compile(r"^\s*[-•*]\s+(.*)")
+
+    def _is_heading(ln: str) -> bool:                 # short ALL-CAPS label
+        return len(ln) <= 48 and ln == ln.upper() and any(c.isalpha() for c in ln)
+
+    out: list[str] = []
+    para: list[str] = []
+    items: list[str] = []
+
+    def _flush_para() -> None:
+        if para:
+            out.append("<p>" + "<br>".join(para) + "</p>")
+            para.clear()
+
+    def _flush_items() -> None:
+        if items:
+            out.append("<ul>" + "".join(f"<li>{i}</li>" for i in items) + "</ul>")
+            items.clear()
+
+    for raw in text.splitlines():
+        ln = raw.strip()
+        if not ln:                                    # blank line ends a block
+            _flush_para(); _flush_items(); continue
+        mb = bullet.match(ln)
+        if mb:
+            _flush_para(); items.append(mb.group(1).strip()); continue
+        _flush_items()
+        if _is_heading(ln):
+            _flush_para(); out.append(f"<h3>{ln.title()}</h3>")
+        else:
+            para.append(ln)
+    _flush_para(); _flush_items()
+    return "".join(out)
+
+
 class ShopifyConnector:
     """Create/publish products (and blog articles) on a Shopify store."""
 
@@ -90,7 +137,7 @@ class ShopifyConnector:
         price = listing.get("price") or listing.get("retail_price") or 0
         return {"product": {
             "title": (listing.get("title") or listing.get("product_name") or "New product"),
-            "body_html": listing.get("description") or "",
+            "body_html": _text_to_html(listing.get("description") or ""),
             "tags": tags,
             "status": "active" if active else "draft",
             "vendor": listing.get("brand") or "",

@@ -78,6 +78,21 @@ def test_build_product_maps_listing():
     assert p["variants"][0]["price"] == "30.00" and p["variants"][0]["sku"] == "1-mug"
 
 
+def test_build_product_formats_description_as_html():
+    from onassis.connectors.shopify import _text_to_html
+
+    listing = {**_listing(), "description":
+               "WHAT IT IS\nA soft linen throw.\n\nMade for slow mornings.\n\n"
+               "- breathable linen\n- stonewashed finish"}
+    body = ShopifyConnector.build_product(listing)["product"]["body_html"]
+    assert "<h3>What It Is</h3>" in body          # caps line → heading
+    assert "<p>A soft linen throw." in body       # paragraph
+    assert "<ul><li>breathable linen</li>" in body  # bullets → list
+    # Already-HTML descriptions are passed through unchanged.
+    assert _text_to_html("<p>hi</p>") == "<p>hi</p>"
+    assert _text_to_html("") == ""
+
+
 def test_build_product_active_when_go_live():
     assert ShopifyConnector.build_product(_listing(), active=True)["product"]["status"] == "active"
 
