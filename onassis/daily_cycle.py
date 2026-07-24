@@ -147,6 +147,10 @@ class DailyCycle:
         traffic metrics and logs the funnel. It creates NO products and spends no
         LLM/image credit."""
         log.info("=== ONASSIS marketing push START ===")
+        # Keep the content pool growing with the catalogue: generate the ($0)
+        # marketing kit (incl. blog) for any active product that has none yet, so
+        # content keeps flowing even with no new products.
+        self.backfill_marketing()
         traffic = self.traffic.run(today)
         # Native channel distribution (IG/FB/Blog/Email) ships what's due; when
         # Make is the distribution path, per-product campaigns already went out at
@@ -708,9 +712,42 @@ class DailyCycle:
             if not listing:
                 continue
             url = listing.get("listing_url") or self._marketing_link(cid, key)
-            self.marketing.build(listing, listing_url=url, campaign_id=cid, product_key=key)
+            self.marketing.build(listing, listing_url=url, campaign_id=cid, product_key=key,
+                                 image_url=self._hero_url(cid, key))
             kits += 1
         return kits
+
+    def _hero_url(self, campaign_id: int, product_key: str) -> str | None:
+        base = ((getattr(self.config, "content", None) or {}).get("public_base")
+                or (self.config.gelato or {}).get("file_base_url") or "").rstrip("/")
+        return f"{base}/{campaign_id}/{product_key}/images/hero.jpg" if base else None
+
+    def backfill_marketing(self, limit: int = 100) -> int:
+        """Generate the ($0) marketing kit for active products that have no blog
+        articles yet — so content (blog/pins/IG/FB/email) keeps flowing as the
+        catalogue grows, without a production run. Idempotent."""
+        have = {a.get("product_key") for a in self.db.list_marketing_assets(channel="blog")}
+        made = 0
+        for p in self.db.list_products():
+            if made >= limit:
+                break
+            key, cid = p.get("product_key"), p.get("campaign_id")
+            if not p.get("active", 1) or not key or not cid or key in have:
+                continue
+            listing = self._listing_json(cid, key)
+            if not listing:
+                continue
+            url = listing.get("listing_url") or self._marketing_link(cid, key)
+            try:
+                self.marketing.build(listing, listing_url=url, campaign_id=cid,
+                                     product_key=key, image_url=self._hero_url(cid, key))
+                have.add(key)
+                made += 1
+            except Exception:  # one product never blocks the rest
+                log.debug("marketing backfill failed for %s", key, exc_info=True)
+        if made:
+            log.info("Marketing backfill: generated kits for %d product(s).", made)
+        return made
 
     def _marketing_link(self, campaign_id: int, product_key: str) -> str:
         """Best available public link for a built product (Etsy/Shopify), or ''."""

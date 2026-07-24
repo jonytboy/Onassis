@@ -211,10 +211,31 @@ class ContentEngine:
             made.extend(r.get("clips", []))
         return {"built": len(made[:limit]), "clips": made[:limit]}
 
+    def _public_base(self) -> str:
+        return (self.cfg.get("public_base")
+                or (self.config.gelato or {}).get("file_base_url") or "").rstrip("/")
+
+    def _hero_url(self, campaign_id: int, product_key: str) -> str | None:
+        base = self._public_base()
+        return f"{base}/{campaign_id}/{product_key}/images/hero.jpg" if base else None
+
+    def _product_url(self, campaign_id: int, product_key: str) -> str | None:
+        """Best public product link (Etsy/Shopify) for the article's SEO link."""
+        for platform in ("etsy", "shopify"):
+            pub = self.db.get_latest_publication(campaign_id, platform,
+                                                 product_id=f"{campaign_id}-{product_key}")
+            if pub:
+                url = pub.get("listing_url") or pub.get("url")
+                if url:
+                    return url
+                lid = pub.get("listing_id")
+                if platform == "etsy" and lid and str(lid).isdigit():
+                    return f"https://www.etsy.com/listing/{lid}"
+        return None
+
     def _reel_urls(self, campaign_id: int, product_key: str) -> list[str]:
         """Public URLs of a product's rendered clips (for embedding in the blog)."""
-        base = (self.cfg.get("public_base")
-                or (self.config.gelato or {}).get("file_base_url") or "").rstrip("/")
+        base = self._public_base()
         if not base:
             return []
         clips = [c for c in self.db.list_short_form(limit=500)
@@ -244,8 +265,10 @@ class ContentEngine:
                        "theme": ctx.get("theme") or "",
                        "product_name": ctx.get("product_name") or p.get("name") or key,
                        "tags": ctx.get("tags") or [], "product_key": key}
-            me.blog_only(listing, listing_url=ctx.get("listing_url"),
-                         campaign_id=cid, product_key=key, videos=self._reel_urls(cid, key))
+            me.blog_only(listing, listing_url=ctx.get("listing_url") or self._product_url(cid, key),
+                         campaign_id=cid, product_key=key,
+                         image_url=self._hero_url(cid, key),
+                         videos=self._reel_urls(cid, key))
             have.add(key)
             made += 1
         return {"generated": made}

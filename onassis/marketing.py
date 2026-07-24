@@ -61,8 +61,10 @@ class MarketingEngine:
 
     def build(self, listing: dict[str, Any], *, listing_url: str | None = None,
               listing_id: str | None = None, campaign_id: int | None = None,
-              product_key: str | None = None, store: bool = True) -> dict[str, Any]:
-        """Produce every channel asset for one live product. All link to Etsy."""
+              product_key: str | None = None, image_url: str | None = None,
+              videos: list[str] | None = None, store: bool = True) -> dict[str, Any]:
+        """Produce every channel asset for one product. All link to the listing.
+        ``image_url``/``videos`` (public URLs) are embedded in the blog articles."""
         url = listing_url or (f"https://www.etsy.com/listing/{listing_id}"
                               if listing_id else "")
         ctx = self._context(listing, url)
@@ -74,7 +76,7 @@ class MarketingEngine:
             "instagram": self._instagram(ctx),
             "facebook": self._facebook(ctx),
             "tiktok": self._tiktok(ctx),
-            "blog": self._blog(ctx),
+            "blog": self._blog(ctx, image_url=image_url, videos=videos),
             "email": self._email(ctx),
         }
         # Every asset should link back to the listing — but a draft product may
@@ -96,23 +98,15 @@ class MarketingEngine:
 
     def blog_only(self, listing: dict[str, Any], *, listing_url: str | None = None,
                   listing_id: str | None = None, campaign_id: int | None = None,
-                  product_key: str | None = None, videos: list[str] | None = None,
-                  store: bool = True) -> dict[str, Any]:
+                  product_key: str | None = None, image_url: str | None = None,
+                  videos: list[str] | None = None, store: bool = True) -> dict[str, Any]:
         """Generate ONLY the SEO blog articles for a product (deterministic, $0) —
         so blog content can be produced on demand without a full production run or
-        the other channels. ``videos`` (public mp4 URLs) are embedded at the top of
-        each article, so the short-form clips ride along in the SEO content."""
+        the other channels. ``image_url`` (hero) and ``videos`` (mp4 URLs) are
+        embedded, and every article links to the product for SEO."""
         url = listing_url or (f"https://www.etsy.com/listing/{listing_id}"
                               if listing_id else "")
-        blog = self._blog(self._context(listing, url))
-        if videos:
-            embed = "".join(
-                f'<video controls playsinline width="100%" style="margin:12px 0" '
-                f'src="{v}"></video>' for v in videos[:2])
-            for art in blog.get("articles", []):
-                art["body"] = embed + "\n\n" + (art.get("body") or "")
-            blog["body"] = embed + "\n\n" + (blog.get("body") or "")
-            blog["videos"] = list(videos[:2])
+        blog = self._blog(self._context(listing, url), image_url=image_url, videos=videos)
         if store and self.db:
             self.db.insert_marketing_asset({
                 "campaign_id": campaign_id,
@@ -234,28 +228,44 @@ class MarketingEngine:
             "link": c["url"],
         }
 
-    def _blog(self, c: dict[str, Any]) -> dict[str, Any]:
+    def _blog(self, c: dict[str, Any], *, image_url: str | None = None,
+              videos: list[str] | None = None) -> dict[str, Any]:
+        url = c["url"]
+        # Media + a prominent product link at the top (HTML, since the body is
+        # published as body_html) — pictures, clips and the SEO link the operator
+        # asked for.
+        media = ""
+        if image_url:
+            media += (f'<img src="{image_url}" alt="{c["title_short"]}" '
+                      f'style="width:100%;border-radius:8px;margin:8px 0"/>')
+        for v in (videos or [])[:2]:
+            media += (f'<video controls playsinline width="100%" '
+                      f'style="margin:8px 0" src="{v}"></video>')
+        link_html = (f'<p><a href="{url}" rel="noopener">Shop {c["title_short"]} →</a></p>'
+                     if url else "")
         articles = []
         for slug_key, title_tpl, headings in self._BLOG_ANGLES:
             title = title_tpl.format(title=c["title_short"], theme=c["theme"].title())
+            link_txt = f" Shop it here: {url}." if url else ""
             sections = [{
                 "heading": h,
                 "body": (f"{c['hook']} {c['blurb']} {c['use']} "
-                         f"{c['title_short']} for {c['audience']} who love {c['theme']}. "
-                         f"Shop it on Etsy: {c['url']}.").strip(),
+                         f"{c['title_short']} for {c['audience']} who love {c['theme']}."
+                         f"{link_txt}").strip(),
             } for h in headings]
-            body = "\n\n".join(f"## {s['heading']}\n{s['body']}" for s in sections)
+            body = (media + link_html
+                    + "\n\n".join(f"## {s['heading']}\n{s['body']}" for s in sections)
+                    + (f"\n\n{link_html}" if link_html else ""))
             articles.append({
                 "angle": slug_key, "title": title, "slug": _slug(title),
-                "meta_description": f"{c['blurb']} Shop {c['title_short']} on Etsy."[:160],
+                "meta_description": f"{c['blurb']} Shop {c['title_short']}."[:160],
                 "keywords": c["keywords"], "sections": sections,
-                "body": body, "word_count": len(body.split()), "cta_link": c["url"],
+                "image": image_url, "videos": list((videos or [])[:2]),
+                "body": body, "word_count": len(body.split()), "cta_link": url,
             })
         primary = articles[0]
-        # Keep the primary article's fields at the top level (back-compat) plus
-        # the full set of SEO articles this product generates.
         return {**primary, "articles": articles, "article_count": len(articles),
-                "cta_link": c["url"]}
+                "image": image_url, "videos": list((videos or [])[:2]), "cta_link": url}
 
     def _email(self, c: dict[str, Any]) -> dict[str, Any]:
         subject = f"New: {c['title_short']} ✨"
