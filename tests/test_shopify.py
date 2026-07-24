@@ -110,6 +110,20 @@ def test_build_product_formats_description_as_html():
     assert _text_to_html("") == ""
 
 
+def test_text_to_html_splits_runon_blob_into_paragraphs():
+    """A description with no line breaks still becomes multiple paragraphs, and an
+    inline ALL-CAPS label is lifted into a heading."""
+    from onassis.connectors.shopify import _text_to_html
+
+    blob = ("Bring the slow calm of the coast home. It is soft and warm. "
+            "WHAT IT IS A generous rounded ceramic mug. Made for slow mornings. "
+            "Style it in a light-filled corner and let it set the mood.")
+    html = _text_to_html(blob)
+    assert html.count("<p>") >= 2                  # real paragraphs, not one blob
+    assert "<h3>What It Is</h3>" in html           # inline caps label → heading
+    assert "<br>" not in html
+
+
 def test_build_product_active_when_go_live():
     assert ShopifyConnector.build_product(_listing(), active=True)["product"]["status"] == "active"
 

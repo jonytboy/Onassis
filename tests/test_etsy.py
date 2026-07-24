@@ -403,3 +403,34 @@ def test_sync_updates_revenue_engine_and_cash(connector):
     after = connector.profit.cash_balance()
     assert after > before                         # net profit raised cash
     assert summary["metrics"]["net_profit"] == connector.revenue.company_profit()["net_profit"]
+
+
+class _VideoStubClient:
+    """Stub with the listing-video surface — records uploads, no network."""
+
+    def __init__(self, existing=None):
+        self._existing = existing or {}          # listing_id -> [videos]
+        self.uploads = []
+
+    def get_listing_videos(self, listing_id):
+        return self._existing.get(listing_id, [])
+
+    def upload_listing_video(self, listing_id, video_path, *, name=None):
+        self.uploads.append((listing_id, video_path, name))
+        return {"video_id": 1}
+
+
+def test_attach_listing_videos_is_idempotent(config, db, tmp_path):
+    """Uploads a video per listing; skips listings that already have one or whose
+    local clip is missing — safe to re-run without duplicating."""
+    clip = tmp_path / "style_slide.mp4"
+    clip.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+    client = _VideoStubClient(existing={20: [{"video_id": 9}]})   # 20 already has one
+    conn = EtsyConnector(config, db, client=client)
+    res = conn.attach_listing_videos([
+        {"listing_id": 10, "video_path": str(clip), "name": "Mug"},     # upload
+        {"listing_id": 20, "video_path": str(clip), "name": "Bowl"},    # skip (has one)
+        {"listing_id": 30, "video_path": str(tmp_path / "gone.mp4"), "name": "X"},  # skip (missing)
+    ])
+    assert res["checked"] == 3 and res["added"] == 1 and res["skipped"] == 2
+    assert client.uploads == [(10, str(clip), "Mug")]

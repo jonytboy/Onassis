@@ -202,6 +202,11 @@ def _parse_args() -> argparse.Namespace:
              "product page (idempotent).",
     )
     parser.add_argument(
+        "--attach-etsy-videos", action="store_true",
+        help="One-off: upload each product's slideshow video to its Etsy listing "
+             "(idempotent; build clips first).",
+    )
+    parser.add_argument(
         "--serve", action="store_true", help="Run the REST API (Swagger at /docs)."
     )
     parser.add_argument("--host", default="0.0.0.0", help="API host (with --serve).")
@@ -898,6 +903,19 @@ def main() -> int:
             return 1
         print(f"\nPRODUCT VIDEOS — {res['added']} attached, {res['skipped']} "
               f"already had one / skipped (of {res['checked']} product(s)).")
+        return 0
+
+    if args.attach_etsy_videos:
+        from onassis.content_engine import ContentEngine
+        from onassis.integrations import apply_integration_overrides
+
+        apply_integration_overrides(config, db)
+        res = ContentEngine(config, db).attach_videos_to_etsy()
+        if not res.get("ok"):
+            print(f"Attach Etsy videos skipped: {res.get('reason')}")
+            return 1
+        print(f"\nETSY VIDEOS — {res['added']} uploaded, {res['skipped']} "
+              f"already had one / skipped (of {res['checked']} listing(s)).")
         return 0
 
     if args.serve:

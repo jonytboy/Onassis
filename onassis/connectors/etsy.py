@@ -90,6 +90,37 @@ class EtsyConnector(RevenueConnector):
             )
         return self._client
 
+    def attach_listing_videos(self, items: list[dict[str, Any]]) -> dict[str, Any]:
+        """Upload a video to each listing in ``items`` ({listing_id, video_path,
+        name}). Idempotent: listings that already have a video — or whose local
+        clip is missing — are skipped. Returns ``{checked, added, skipped}``."""
+        from pathlib import Path
+
+        checked = added = skipped = 0
+        details = []
+        for it in items:
+            checked += 1
+            lid, vp = it.get("listing_id"), it.get("video_path")
+            if not lid or not vp or not Path(vp).exists():
+                skipped += 1
+                details.append({"listing_id": lid, "ok": False,
+                                "reason": "no local clip on disk"})
+                continue
+            try:
+                if self.client.get_listing_videos(lid):
+                    skipped += 1
+                    details.append({"listing_id": lid, "ok": True,
+                                    "reason": "already has video"})
+                    continue
+                self.client.upload_listing_video(lid, vp, name=it.get("name"))
+                added += 1
+                details.append({"listing_id": lid, "ok": True})
+            except Exception as exc:  # noqa: BLE001
+                skipped += 1
+                details.append({"listing_id": lid, "ok": False, "reason": str(exc)})
+        return {"checked": checked, "added": added, "skipped": skipped,
+                "details": details[:50]}
+
     # --- RevenueConnector contract ----------------------------------
 
     def fetch_orders(self) -> list[dict[str, Any]]:

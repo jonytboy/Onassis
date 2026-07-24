@@ -633,6 +633,46 @@ class ContentEngine:
                               "listing yet — build clips first."}
         return {"ok": True, **conn.attach_product_videos(items)}
 
+    def attach_videos_to_etsy(self) -> dict[str, Any]:
+        """Upload each product's slideshow video to its Etsy listing. Idempotent
+        (skips listings that already have a video). Needs the clip rendered
+        locally — run the clip build first (the daily cycle does)."""
+        from onassis.connectors.etsy import EtsyConnector
+
+        conn = getattr(self, "_etsy_conn", None)
+        if conn is None:
+            conn = self._etsy_conn = EtsyConnector(self.config, self.db)
+        base = {"checked": 0, "added": 0, "skipped": 0, "details": []}
+        if not conn.is_configured:
+            return {**base, "ok": False, "reason": "Etsy is not connected."}
+        clip_by_key: dict[str, str] = {}
+        for c in self.db.list_short_form(limit=2000):
+            k = c.get("product_key")
+            if k and k not in clip_by_key and c.get("path"):
+                clip_by_key[k] = c["path"]
+        items = []
+        for p in self.db.list_products():
+            if not p.get("active", 1):
+                continue
+            key = (p.get("product_key") or p.get("sku")
+                   or (f"product-{p.get('id')}" if p.get("id") else None))
+            cid = p.get("campaign_id")
+            if not cid or not key:
+                continue
+            pub = self.db.get_latest_publication(cid, "etsy", product_id=f"{cid}-{key}")
+            if not pub or not pub.get("listing_id"):
+                continue
+            vp = clip_by_key.get(key)
+            if not vp:
+                continue
+            items.append({"listing_id": pub["listing_id"], "video_path": vp,
+                          "name": p.get("name") or key})
+        if not items:
+            return {**base, "ok": False,
+                    "reason": "No products with both a rendered clip and an Etsy "
+                              "listing yet — build clips first."}
+        return {"ok": True, **conn.attach_listing_videos(items)}
+
     def reformat_shopify_descriptions(self) -> dict[str, Any]:
         """Reformat the descriptions of our live Shopify products in place, so
         posts published with a plain-text description get proper HTML. Targets

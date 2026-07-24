@@ -440,3 +440,35 @@ class EtsyDraftClient(EtsyClient):
                 f"Etsy uploadListingImage returned HTTP {resp.status_code}: {detail}"
             )
         return resp.json()
+
+    def get_listing_videos(self, listing_id: int | str) -> list[dict[str, Any]]:
+        """Videos already on a listing (getListingVideos) — so we don't add two."""
+        try:
+            data = self._get(f"/listings/{listing_id}/videos")
+        except EtsyApiError:
+            return []
+        return data.get("results") or []
+
+    def upload_listing_video(
+        self, listing_id: int | str, video_path: str, *, name: str | None = None,
+    ) -> dict[str, Any]:
+        """Attach one mp4 to a listing (uploadListingVideo). POST multipart to
+        ``/shops/{shop_id}/listings/{listing_id}/videos`` — the video bytes go as
+        a file part (httpx sets the multipart boundary)."""
+        from pathlib import Path
+
+        url = (f"{self.base_url}/shops/{self.resolve_shop_id()}"
+               f"/listings/{listing_id}/videos")
+        path = Path(video_path)
+        data: dict[str, Any] = {"name": (name or path.stem)[:70]}
+        with path.open("rb") as fh:
+            files = {"video": (path.name, fh, "video/mp4")}
+            resp = httpx.post(url, headers=self._headers(), data=data, files=files,
+                              timeout=max(self.timeout, 120.0))
+        if resp.status_code >= 400:
+            detail = _response_detail(resp)
+            log.error("Etsy uploadListingVideo failed: HTTP %s\n%s",
+                      resp.status_code, detail)
+            raise EtsyApiError(
+                f"Etsy uploadListingVideo returned HTTP {resp.status_code}: {detail}")
+        return resp.json()

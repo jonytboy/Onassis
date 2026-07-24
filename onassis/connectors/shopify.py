@@ -24,11 +24,30 @@ from onassis.logger import get_logger
 log = get_logger(__name__)
 
 
+def _sentence_groups(text: str, per: int = 2, maxlen: int = 260) -> list[str]:
+    """Split a run-on paragraph into ~``per``-sentence chunks (so a description
+    with no line breaks still reads as paragraphs, not one wall of text)."""
+    import re
+
+    sents = [s for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s]
+    groups: list[str] = []
+    cur: list[str] = []
+    for s in sents:
+        cur.append(s)
+        if len(cur) >= per or sum(len(x) for x in cur) >= maxlen:
+            groups.append(" ".join(cur)); cur = []
+    if cur:
+        groups.append(" ".join(cur))
+    return groups or [text.strip()]
+
+
 def _text_to_html(text: str) -> str:
     """Turn a plain-text description into readable HTML for Shopify's body_html.
-    Blank lines become paragraphs, single newlines become line breaks, bullet
-    lines (-, •, *) become a list, and a short ALL-CAPS line becomes a heading.
-    Text that already looks like HTML is passed through untouched."""
+    Produces real paragraphs whether the copy uses blank lines, single newlines,
+    or none at all (a run-on blob is split by sentences); bullet lines become a
+    list, and ALL-CAPS labels — on their own line OR inline (e.g. '…ritual. WHAT
+    IT IS A generous…') — become headings. Text that already looks like HTML is
+    passed through untouched."""
     import re
 
     text = (text or "").strip()
@@ -37,37 +56,51 @@ def _text_to_html(text: str) -> str:
     if re.search(r"</?(p|br|ul|ol|li|h[1-6]|div)\b", text, re.I):
         return text                                   # already HTML — leave it
     bullet = re.compile(r"^\s*[-•*]\s+(.*)")
+    # A leading multi-word ALL-CAPS label to peel off as a heading. Label words
+    # are 2+ chars each, so a following sentence opener like "A" isn't swallowed.
+    head_re = re.compile(r"^([A-Z][A-Z0-9&'\-]{1,}(?: [A-Z0-9&'\-]{2,})*)\b[:\-—]?\s+(.+)$",
+                         re.S)
+    # Break before an inline ALL-CAPS label (2+ words) so it heads its own block:
+    # "…ritual. WHAT IT IS A generous…" → a new block starting at "WHAT IT IS".
+    # The lookbehind requires sentence punctuation / lowercase before it, so it
+    # only fires at the START of a label, never mid-label (…WHAT | IT IS…).
+    text = re.sub(
+        r"(?<=[.!?:;a-z])\s+((?:[A-Z][A-Z0-9&'\-]{1,} ){1,5}[A-Z][A-Z0-9&'\-]{1,})\b",
+        lambda m: "\n\n" + m.group(1).strip() + " ", text)
 
-    def _is_heading(ln: str) -> bool:                 # short ALL-CAPS label
-        return len(ln) <= 48 and ln == ln.upper() and any(c.isalpha() for c in ln)
+    # Blocks: prefer blank-line splits, else single newlines, else the whole text.
+    if re.search(r"\n\s*\n", text):
+        blocks = re.split(r"\n\s*\n", text)
+    elif "\n" in text:
+        blocks = text.split("\n")
+    else:
+        blocks = [text]
 
     out: list[str] = []
-    para: list[str] = []
-    items: list[str] = []
 
-    def _flush_para() -> None:
-        if para:
-            out.append("<p>" + "<br>".join(para) + "</p>")
-            para.clear()
+    def _emit_paragraph(s: str) -> None:
+        s = s.strip()
+        if not s:
+            return
+        m = head_re.match(s)
+        if m and m.group(1) == m.group(1).upper():     # inline caps label → heading
+            out.append(f"<h3>{m.group(1).title()}</h3>")
+            s = m.group(2).strip()
+        chunks = _sentence_groups(s) if len(s) > 300 else [s]
+        out.extend(f"<p>{c}</p>" for c in chunks if c)
 
-    def _flush_items() -> None:
-        if items:
-            out.append("<ul>" + "".join(f"<li>{i}</li>" for i in items) + "</ul>")
-            items.clear()
-
-    for raw in text.splitlines():
-        ln = raw.strip()
-        if not ln:                                    # blank line ends a block
-            _flush_para(); _flush_items(); continue
-        mb = bullet.match(ln)
-        if mb:
-            _flush_para(); items.append(mb.group(1).strip()); continue
-        _flush_items()
-        if _is_heading(ln):
-            _flush_para(); out.append(f"<h3>{ln.title()}</h3>")
+    for block in blocks:
+        lines = [ln.strip() for ln in block.splitlines() if ln.strip()]
+        if not lines:
+            continue
+        if all(bullet.match(ln) for ln in lines):
+            out.append("<ul>" + "".join(f"<li>{bullet.match(ln).group(1).strip()}</li>"
+                                        for ln in lines) + "</ul>")
+        elif len(lines) == 1 and len(lines[0]) <= 48 and lines[0] == lines[0].upper() \
+                and any(c.isalpha() for c in lines[0]):
+            out.append(f"<h3>{lines[0].title()}</h3>")
         else:
-            para.append(ln)
-    _flush_para(); _flush_items()
+            _emit_paragraph(" ".join(lines))
     return "".join(out)
 
 

@@ -168,11 +168,16 @@ class DailyCycle:
                                                  if isinstance(self.config.content, dict) else 12))
             log.info("Clips: +%d built, %d already had them, %d missing a package.",
                      clips.get("built", 0), clips.get("skipped", 0), clips.get("no_package", 0))
-            # Attach each product's slideshow to its Shopify product page (idempotent).
+            # Attach each product's slideshow to its Shopify product page + Etsy
+            # listing (both idempotent — only products without a video yet).
             vids = engine.attach_videos_to_shopify()
             if vids.get("ok"):
-                log.info("Product videos: +%d attached, %d already had one.",
+                log.info("Shopify videos: +%d attached, %d already had one.",
                          vids.get("added", 0), vids.get("skipped", 0))
+            evids = engine.attach_videos_to_etsy()
+            if evids.get("ok"):
+                log.info("Etsy videos: +%d uploaded, %d already had one.",
+                         evids.get("added", 0), evids.get("skipped", 0))
         except Exception:  # scheduling/clip build is best-effort, never fail the push
             blog_sched = {}
             log.debug("blog scheduling / clip build skipped", exc_info=True)
