@@ -84,6 +84,11 @@ SCHEMA: list[Setting] = [
     Setting("tiktok_enabled", "TikTok", "bool",
             lambda c: bool(_cfg(c, "marketing", "tiktok_enabled", False)),
             group="Channels", help="Publish product videos to TikTok."),
+    Setting("tiktok_via_make", "TikTok via Make/Buffer", "bool",
+            lambda c: bool(_cfg(c, "marketing", "tiktok_via_make", False)),
+            group="Channels",
+            help="Send TikTok videos to the Make.com webhook (→ Buffer → TikTok) "
+                 "instead of the direct TikTok API."),
 ]
 _BY_KEY = {s.key: s for s in SCHEMA}
 

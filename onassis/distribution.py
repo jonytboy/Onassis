@@ -45,6 +45,8 @@ class ChannelDistributor:
         self.email = email or EmailSender(config)
         self.shopify = shopify or ShopifyConnector(config, db)   # blog target
         self.settings = BusinessSettings(db, config)
+        from onassis.connectors.make import MakeConnector
+        self.make = MakeConnector(config)                        # TikTok via Buffer
 
     # --- Capability -------------------------------------------------
 
@@ -52,10 +54,18 @@ class ChannelDistributor:
         return {
             "instagram": self.instagram.can_publish,
             "facebook": self.facebook.can_publish,
-            "tiktok": self.tiktok.can_publish,
+            "tiktok": self.tiktok.can_publish or self._tiktok_via_make(),
             "email": self.email.can_publish,
             "blog": self.shopify.can_publish and bool((self.config.shopify or {}).get("blog_id")),
         }.get(channel, False)
+
+    def _tiktok_via_make(self) -> bool:
+        """Route TikTok through the Make.com webhook (→ Buffer → TikTok) instead
+        of the direct API — set when the operator has a Make/Buffer path."""
+        try:
+            return bool(self.settings.get("tiktok_via_make")) and self.make.is_configured
+        except Exception:
+            return False
 
     def _enabled(self, channel: str) -> bool:
         """Respect the operator's channel toggles (Business Settings)."""
@@ -129,8 +139,15 @@ class ChannelDistributor:
                     r = self.facebook.post(post.get("body") or "", post.get("link") or url)
             elif channel == "tiktok":
                 post = payload.get("post") or {}
-                r = self.tiktok.post_video(post.get("video_url") or "",
-                                           post.get("body") or "")
+                if self._tiktok_via_make():
+                    r = self.make.send({"platform": "tiktok", "type": "video",
+                                        "video_url": post.get("video_url") or "",
+                                        "caption": post.get("body") or ""})
+                    r = {"ok": r.get("ok"), "ref": r.get("status"),
+                         "skipped": r.get("status") == "not_configured"}
+                else:
+                    r = self.tiktok.post_video(post.get("video_url") or "",
+                                               post.get("body") or "")
             elif channel == "instagram":
                 caption = (payload.get("captions") or [""])[0]
                 r = self.instagram.post(caption, image_url=payload.get("image_url"))

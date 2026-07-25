@@ -233,3 +233,25 @@ def test_tiktok_video_asset_posts_when_forced(config, db):
     out = dist.distribute(channels=["tiktok"], force=True)
     assert out["by_channel"]["tiktok"]["posted"] == 1
     assert tt.videos == [("https://cdn/x.mp4", "Mug ✨")]
+
+
+def test_tiktok_via_make_routes_to_the_webhook(config, db):
+    """With tiktok_via_make on + Make configured, a TikTok video is sent to the
+    Make.com webhook (→ Buffer → TikTok), not the direct API."""
+    class _Make:
+        is_configured = True
+        def __init__(self): self.sent = []
+        def send(self, payload): self.sent.append(payload); return {"ok": True, "status": "sent"}
+    tt = FakeTikTok()
+    dist = ChannelDistributor(config, db, instagram=FakeInstagram(), facebook=FakeFacebook(),
+                              email=FakeEmail(), shopify=FakeShopifyBlog(), tiktok=tt)
+    dist.make = _Make()
+    db.set_setting("business.tiktok_via_make", True)
+    assert dist.can_distribute("tiktok") is True          # via Make counts as available
+    _seed(db, "tiktok", {"post": {"video_url": "https://cdn/x.mp4", "body": "Tee ✨"}})
+    out = dist.distribute(channels=["tiktok"], force=True)
+    assert out["by_channel"]["tiktok"]["posted"] == 1
+    assert not tt.videos                                   # direct API NOT used
+    sent = dist.make.sent[0]
+    assert sent["platform"] == "tiktok" and sent["video_url"] == "https://cdn/x.mp4"
+    assert sent["caption"] == "Tee ✨"
