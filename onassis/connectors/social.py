@@ -21,6 +21,33 @@ from onassis.logger import get_logger
 log = get_logger(__name__)
 
 
+def mint_page_token(app_id: str, app_secret: str, short_token: str,
+                    page_id: str | None = None, api_version: str = "v21.0",
+                    client: Any | None = None) -> dict[str, Any]:
+    """Turn a short-lived user token into a NEVER-EXPIRING Page access token: a
+    Page token derived from a long-lived user token doesn't expire. Returns
+    ``{ok, page_token, page_name, pages}`` — ``pages`` lists every managed Page so
+    the operator can spot the right id."""
+    client = client or MetaGraphClient(access_token=None, api_version=api_version)
+    long_user = client.exchange_long_lived(app_id, app_secret, short_token)
+    if not long_user:
+        return {"ok": False, "error": "No long-lived token returned.", "pages": []}
+    pages = client.list_pages(long_user)
+    listing = [{"id": str(p.get("id")), "name": p.get("name")} for p in pages]
+    match = None
+    if page_id:
+        match = next((p for p in pages if str(p.get("id")) == str(page_id)), None)
+    elif len(pages) == 1:
+        match = pages[0]
+    if not match:
+        return {"ok": False, "pages": listing,
+                "error": ("No Page matched — pick an id from the list and pass it."
+                          if page_id else "Multiple Pages — specify which id.")}
+    return {"ok": True, "page_token": match.get("access_token"),
+            "page_id": str(match.get("id")), "page_name": match.get("name"),
+            "pages": listing}
+
+
 class _MetaBase:
     def __init__(self, config: Config, client: Any | None = None) -> None:
         self.config = config
@@ -147,6 +174,30 @@ class MetaGraphClient:
         if resp.status_code >= 400:
             raise RuntimeError(f"Meta GET /{node_id} HTTP {resp.status_code}: {resp.text}")
         return resp.json()
+
+    def exchange_long_lived(self, app_id: str, app_secret: str,
+                            short_token: str) -> str:
+        """Exchange a short-lived user token for a long-lived one (~60 days)."""
+        import httpx
+
+        resp = httpx.get(f"{self.base}/oauth/access_token", params={
+            "grant_type": "fb_exchange_token", "client_id": app_id,
+            "client_secret": app_secret, "fb_exchange_token": short_token},
+            timeout=self.timeout)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Meta token exchange HTTP {resp.status_code}: {resp.text}")
+        return resp.json().get("access_token", "")
+
+    def list_pages(self, user_token: str) -> list[dict[str, Any]]:
+        """The Pages this user manages, each with its own Page access token."""
+        import httpx
+
+        resp = httpx.get(f"{self.base}/me/accounts", params={
+            "access_token": user_token, "fields": "id,name,access_token"},
+            timeout=self.timeout)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Meta GET /me/accounts HTTP {resp.status_code}: {resp.text}")
+        return resp.json().get("data", [])
 
     def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         import httpx

@@ -211,6 +211,11 @@ def _parse_args() -> argparse.Namespace:
         help="Queue + post blogs (as links) and videos to the Facebook Page.",
     )
     parser.add_argument(
+        "--facebook-token", metavar="SHORT_LIVED_TOKEN", default=None,
+        help="Mint a never-expiring Page token from a short-lived user token "
+             "(needs App ID + Secret set on Integrations → Facebook) and save it.",
+    )
+    parser.add_argument(
         "--serve", action="store_true", help="Run the REST API (Swagger at /docs)."
     )
     parser.add_argument("--host", default="0.0.0.0", help="API host (with --serve).")
@@ -925,6 +930,34 @@ def main() -> int:
             return 1
         print(f"\nETSY VIDEOS — {res['added']} uploaded, {res['skipped']} "
               f"already had one / skipped (of {res['checked']} listing(s)).")
+        return 0
+
+    if args.facebook_token:
+        from onassis.connectors.social import mint_page_token
+        from onassis.integrations import IntegrationManager, apply_integration_overrides
+
+        apply_integration_overrides(config, db)
+        meta = config.meta or {}
+        app_id, secret = meta.get("app_id"), meta.get("app_secret")
+        page_id = meta.get("facebook_page_id")
+        if not app_id or not secret:
+            print("Set App ID + App Secret on Integrations → Facebook first "
+                  "(needed to mint a long-lived token).")
+            return 1
+        res = mint_page_token(app_id, secret, args.facebook_token, page_id)
+        if not res.get("ok"):
+            print(f"Could not mint a Page token: {res.get('error')}")
+            if res.get("pages"):
+                print("  Pages you manage:")
+                for p in res["pages"]:
+                    print(f"    id {p['id']}  —  {p['name']}")
+            return 1
+        IntegrationManager(config, db).save(
+            "facebook", {"page_access_token": res["page_token"],
+                         "facebook_page_id": res["page_id"]})
+        print(f"\n✓ Saved a never-expiring Page token for '{res['page_name']}' "
+              f"(id {res['page_id']}). Facebook posting is ready — run "
+              f"--post-facebook.")
         return 0
 
     if args.post_facebook:
