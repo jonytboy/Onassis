@@ -361,3 +361,37 @@ def test_status_and_history(config, db):
     cycle.run(mode="dry_run")
     assert cycle.status()["id"] is not None
     assert len(cycle.history()) == 2
+
+
+def test_backfill_apparel_builds_drafts_from_existing_designs(config, db):
+    """For an existing design, apparel garments are built from its artwork and
+    published as drafts; idempotent (a garment already present is skipped)."""
+    config.expansion = {"catalogue": [
+        {"key": "premium_tshirt", "name": "Premium T-Shirt", "gelato_uid": "uid_ts",
+         "production_cost": 12, "retail_price": 30},
+        {"key": "heavyweight_hoodie", "name": "Hoodie", "gelato_uid": "uid_hd",
+         "production_cost": 22, "retail_price": 55},
+    ]}
+    db.insert_product_score({"campaign_id": 7, "opportunity_id": "OPP-abc",
+                             "product_key": "ceramic_mug", "product_name": "Mug"})
+    cycle = DailyCycle(config, db)
+    cycle.campaigns.list_campaigns = lambda: [{"id": 7, "name": "Amalfi Map"}]
+    cycle.design.get_package = lambda opp: {"status": "ready", "opportunity_id": opp}
+    cycle.listing_factory.export_product = (
+        lambda cid, spec, design_package=None: {"status": "ready", "listing": {"images": []}})
+    published = []
+    cycle.publisher.publish = (
+        lambda cid, product_key=None: published.append(("etsy", cid, product_key))
+        or {"status": "draft"})
+    cycle.shopify.publish = (
+        lambda cid, key, listing, images_dir=None: published.append(("shopify", cid, key))
+        or {"status": "draft"})
+    cycle._product_images_dir = lambda cid, key: None
+
+    res = cycle.backfill_apparel(limit=1)
+    assert res["ok"] and res["designs"] == 1 and res["built"] == 2
+    assert db.get_product_by_sku("7-premium_tshirt") is not None
+    assert ("etsy", 7, "premium_tshirt") in published
+    assert ("shopify", 7, "heavyweight_hoodie") in published
+    # Idempotent — both garments now exist, so a second run builds nothing.
+    assert cycle.backfill_apparel(limit=1)["built"] == 0

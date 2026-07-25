@@ -2457,6 +2457,16 @@ class Database:
             ).fetchone()
         return _row_to_opportunity(row) if row else None
 
+    def opportunity_for_campaign(self, campaign_id: int) -> str | None:
+        """The opportunity (design) a campaign was built from — so its design
+        package can be reloaded to build more products for the same artwork."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT opportunity_id FROM product_scores WHERE campaign_id = ? "
+                "AND opportunity_id IS NOT NULL ORDER BY id LIMIT 1", (campaign_id,)
+            ).fetchone()
+        return row["opportunity_id"] if row else None
+
     def count_opportunities(self, status: str | None = None) -> int:
         sql = "SELECT COUNT(*) AS n FROM opportunities"
         params: list[Any] = []

@@ -220,6 +220,15 @@ def _parse_args() -> argparse.Namespace:
              "product/Etsy videos, Facebook, distribution). Cron this daily.",
     )
     parser.add_argument(
+        "--backfill-apparel", action="store_true",
+        help="Build clothing (t-shirt/hoodie/sweatshirt) DRAFTS from existing "
+             "designs' artwork. Use --limit for the batch size (default 5).",
+    )
+    parser.add_argument(
+        "--limit", type=int, default=None,
+        help="Batch size for bulk one-offs (e.g. --backfill-apparel).",
+    )
+    parser.add_argument(
         "--build-clips", action="store_true",
         help="Build slideshow clips for all products (diagnostic: reports why any "
              "product can't build).",
@@ -1074,6 +1083,25 @@ def main() -> int:
         tt = (out.get("by_channel") or {}).get("tiktok", {})
         print(f"  posted {tt.get('posted', 0)}, failed {tt.get('failed', 0)}, "
               f"skipped {tt.get('skipped', 0)}.")
+        return 0
+
+    if args.backfill_apparel:
+        from onassis.integrations import apply_integration_overrides
+
+        apply_integration_overrides(config, db)
+        limit = args.limit if args.limit else 5
+        res = DailyCycle(config, db).backfill_apparel(limit=limit)
+        if not res.get("ok"):
+            print(f"Apparel backfill skipped: {res.get('reason')}")
+            return 1
+        print(f"\nAPPAREL BACKFILL — {res['built']} garment draft(s) across "
+              f"{res['designs']} design(s).")
+        for r in res.get("results", []):
+            if r.get("built"):
+                print(f"  ✓ {str(r.get('name'))[:40]}: {', '.join(r['built'])}")
+            elif r.get("skipped"):
+                print(f"  · {str(r.get('name'))[:40]}: {r['skipped']}")
+        print("\nThey're DRAFTS — review them on Shopify/Etsy before taking live.")
         return 0
 
     if args.build_clips:

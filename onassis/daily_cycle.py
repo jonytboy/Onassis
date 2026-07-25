@@ -214,6 +214,70 @@ class DailyCycle:
                 "funnel": funnel, "pins_posted": posted, "evergreen_scheduled": ever,
                 "blog_schedule": blog_sched}
 
+    def backfill_apparel(self, *, limit: int = 5,
+                         garments: list[str] | None = None) -> dict[str, Any]:
+        """Turn an existing mug/tote/poster catalogue into a clothing range: for
+        each existing design, reload its artwork and build the apparel products
+        (t-shirt / hoodie / sweatshirt) as DRAFT Shopify/Etsy listings for review.
+        Bounded by ``limit`` designs (a test batch). Idempotent — a garment a
+        design already has is skipped. Returns per-design results."""
+        garments = garments or ["premium_tshirt", "heavyweight_hoodie", "sweatshirt"]
+        cat = {c["key"]: c for c in (self.config.expansion or {}).get("catalogue", [])}
+        specs = [{"product_key": g, "product_name": cat[g].get("name", g),
+                  "gelato_uid": cat[g].get("gelato_uid"),
+                  "production_cost": float(cat[g].get("production_cost", 0) or 0),
+                  "retail_price": float(cat[g].get("retail_price", 0) or 0)}
+                 for g in garments
+                 if g in cat and cat[g].get("available", True) is not False]
+        if not specs:
+            return {"ok": False, "designs": 0, "built": 0,
+                    "reason": "No available apparel products in the catalogue config."}
+        results: list[dict[str, Any]] = []
+        designs = built = 0
+        for camp in self.campaigns.list_campaigns():
+            if designs >= limit:
+                break
+            cid = camp["id"]
+            opp_id = self.db.opportunity_for_campaign(cid)
+            if not opp_id:
+                continue
+            pkg = self.design.get_package(opp_id)
+            if not pkg:                       # design package not on disk — don't
+                results.append({"campaign_id": cid, "name": camp.get("name"),
+                                "skipped": "design package missing"})
+                continue
+            made: list[str] = []
+            for spec in specs:
+                sku = f"{cid}-{spec['product_key']}"
+                if self.db.get_product_by_sku(sku):
+                    continue                  # already has this garment
+                try:
+                    p = self.listing_factory.export_product(
+                        cid, spec, design_package=pkg)
+                    if p.get("status") != "ready":
+                        continue
+                    self.db.insert_product({
+                        "sku": sku, "name": spec["product_name"], "campaign_id": cid,
+                        "marketplace": "gelato", "product_key": spec["product_key"],
+                        "production_cost": spec["production_cost"]})
+                    self.publisher.publish(cid, product_key=spec["product_key"])
+                    try:
+                        self.shopify.publish(
+                            cid, spec["product_key"], p.get("listing", {}),
+                            images_dir=self._product_images_dir(cid, spec["product_key"]))
+                    except Exception:  # Shopify is best-effort; Etsy draft still stands
+                        log.debug("apparel Shopify publish failed", exc_info=True)
+                    made.append(spec["product_key"])
+                    built += 1
+                except Exception as exc:  # one garment failing never stops the run
+                    log.warning("[apparel] %s/%s failed: %s",
+                                cid, spec["product_key"], exc)
+            if made:
+                designs += 1
+                results.append({"campaign_id": cid, "name": camp.get("name"),
+                                "built": made})
+        return {"ok": True, "designs": designs, "built": built, "results": results[:50]}
+
     def _launch_new_products(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """Launch burst: immediately post the marketing for each product actually
         published this run (blog live now, clips, video on Shopify/Etsy, Facebook)
