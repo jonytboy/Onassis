@@ -220,6 +220,10 @@ def _parse_args() -> argparse.Namespace:
         help="Diagnose the saved Facebook token: type, scopes, expiry, and "
              "whether it can publish.",
     )
+    parser.add_argument("--fb-app-id", default=None,
+                        help="Meta App ID (overrides config for --facebook-token/check).")
+    parser.add_argument("--fb-app-secret", default=None,
+                        help="Meta App Secret (overrides config for --facebook-token/check).")
     parser.add_argument(
         "--serve", action="store_true", help="Run the REST API (Swagger at /docs)."
     )
@@ -946,7 +950,8 @@ def main() -> int:
         apply_integration_overrides(config, db)
         meta = config.meta or {}
         token = meta.get("page_access_token")
-        app_id, secret = meta.get("app_id"), meta.get("app_secret")
+        app_id = args.fb_app_id or meta.get("app_id")
+        secret = args.fb_app_secret or meta.get("app_secret")
         if not token:
             print("No Facebook token saved. Add one on Integrations → Facebook.")
             return 1
@@ -985,11 +990,13 @@ def main() -> int:
 
         apply_integration_overrides(config, db)
         meta = config.meta or {}
-        app_id, secret = meta.get("app_id"), meta.get("app_secret")
+        app_id = args.fb_app_id or meta.get("app_id")
+        secret = args.fb_app_secret or meta.get("app_secret")
         page_id = meta.get("facebook_page_id")
         if not app_id or not secret:
-            print("Set App ID + App Secret on Integrations → Facebook first "
-                  "(needed to mint a long-lived token).")
+            print("Need the Meta App ID + Secret. Pass them inline:\n"
+                  "  --facebook-token <token> --fb-app-id <id> --fb-app-secret <secret>\n"
+                  "(or save them on Integrations → Facebook).")
             return 1
         try:
             res = mint_page_token(app_id, secret, args.facebook_token, page_id)

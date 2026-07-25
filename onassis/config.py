@@ -205,6 +205,8 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         "page_access_token": _env("META_PAGE_ACCESS_TOKEN", meta.get("page_access_token")),
         "facebook_page_id": _env("FACEBOOK_PAGE_ID", meta.get("facebook_page_id")),
         "instagram_user_id": _env("INSTAGRAM_USER_ID", meta.get("instagram_user_id")),
+        "app_id": _env("META_APP_ID", meta.get("app_id")),
+        "app_secret": _env("META_APP_SECRET", meta.get("app_secret")),
         "api_version": _env("META_API_VERSION", meta.get("api_version", "v21.0")),
     }
     # Email newsletter (SMTP).
