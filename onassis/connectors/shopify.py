@@ -605,6 +605,10 @@ class ShopifyConnector:
                 "handle": handle, "url": url, "admin_url": admin_url,
                 "verified": verified, "error": verify_error}
 
+    def blog_handle(self, blog_id: str) -> str | None:
+        """Public accessor for a blog's storefront handle."""
+        return self._blog_handle(str(blog_id))
+
     def _blog_handle(self, blog_id: str) -> str | None:
         """The blog's handle (for storefront URLs), cached from list_blogs."""
         cache = getattr(self, "_blog_handles", None)

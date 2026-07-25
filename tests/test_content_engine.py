@@ -272,6 +272,31 @@ def test_queue_facebook_posts_from_blogs_and_videos(config, db):
     assert eng.queue_facebook_posts()["queued"] == 0        # idempotent
 
 
+def test_facebook_blog_link_uses_handle_not_numeric_id(config, db):
+    """FB link posts must use the blog HANDLE, not its numeric id (which 404s)."""
+    cid, key = 4, "tote"
+    db.insert_product({"sku": "TOTE", "name": "Tote", "campaign_id": cid,
+                       "product_key": key, "active": True})
+    bid = db.insert_marketing_asset({"campaign_id": cid, "product_key": key,
+                                     "channel": "blog", "payload": {"title": "Coastal"}})
+    db.schedule_marketing_asset(bid, "2026-01-01")
+    db.set_marketing_asset_delivery(
+        bid, "posted",
+        ref="https://onassismed.com/blogs/125286220123/porto-raffia-tote")
+
+    class _Conn:
+        can_publish = True
+        def blog_handle(self, blog_id):
+            return "onassis-med-latest-news-products"
+
+    eng = _engine(config, db)
+    eng._shopify_conn = _Conn()
+    eng.queue_facebook_posts()
+    link = db.list_marketing_assets(channel="facebook")[0]["payload"]["post"]["link"]
+    assert link == ("https://onassismed.com/blogs/onassis-med-latest-news-products/"
+                    "porto-raffia-tote")
+
+
 class _FakeShopifyMedia:
     """Serves product images from 'Shopify' and writes them locally on download."""
 

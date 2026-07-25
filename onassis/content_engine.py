@@ -647,6 +647,17 @@ class ContentEngine:
                 existing_links.add(post["link"])
             if post.get("video_url") or pl.get("video_url"):
                 existing_videos.add(post.get("video_url") or pl.get("video_url"))
+        import re
+
+        def _fix_blog_url(link: str) -> str:
+            # Storefront blog URLs use the blog HANDLE, not its numeric id — a
+            # numeric id 404s. Replace a numeric /blogs/<id>/ segment with the handle.
+            m = re.match(r"(https?://[^/]+/blogs/)(\d+)(/.+)", link)
+            if not m:
+                return link
+            handle = self._shopify().blog_handle(m.group(2)) or m.group(2)
+            return f"{m.group(1)}{handle}{m.group(3)}"
+
         blogs = videos = 0
         # 1) Published blog articles → link posts (drives traffic to the store).
         for a in self.db.list_marketing_assets(channel="blog"):
@@ -655,6 +666,7 @@ class ContentEngine:
             ref = a.get("delivery_ref") or ""
             link = next((p.strip() for p in ref.split("|")
                          if p.strip().startswith("http")), "")
+            link = _fix_blog_url(link)
             if not link or link in existing_links:
                 continue
             pl = a.get("payload") or {}

@@ -211,6 +211,11 @@ def _parse_args() -> argparse.Namespace:
         help="Queue + post blogs (as links) and videos to the Facebook Page.",
     )
     parser.add_argument(
+        "--run-marketing", action="store_true",
+        help="Run the full content-marketing suite once (blog schedule, clips, "
+             "product/Etsy videos, Facebook, distribution). Cron this daily.",
+    )
+    parser.add_argument(
         "--facebook-token", metavar="SHORT_LIVED_TOKEN", default=None,
         help="Mint a never-expiring Page token from a short-lived user token "
              "(needs App ID + Secret set on Integrations → Facebook) and save it.",
@@ -1035,6 +1040,18 @@ def main() -> int:
         print(f"\n✓ Saved a never-expiring Page token for '{res['page_name']}' "
               f"(id {res['page_id']}). Facebook posting is ready — run "
               f"--post-facebook.")
+        return 0
+
+    if args.run_marketing:
+        from onassis.integrations import apply_integration_overrides
+
+        apply_integration_overrides(config, db)
+        r = DailyCycle(config, db).run_marketing()
+        ch = r.get("channels") or {}
+        print(f"\nMARKETING RUN — {ch.get('posted', 0)} post(s) distributed, "
+              f"{ch.get('failed', 0)} failed, {ch.get('skipped', 0)} skipped.")
+        bs = r.get("blog_schedule") or {}
+        print(f"  Blog schedule: {bs.get('scheduled', 0)} queued ahead.")
         return 0
 
     if args.post_facebook:
