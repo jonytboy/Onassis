@@ -216,6 +216,11 @@ def _parse_args() -> argparse.Namespace:
              "product/Etsy videos, Facebook, distribution). Cron this daily.",
     )
     parser.add_argument(
+        "--launch-product", metavar="SKU", default=None,
+        help="Immediately post ALL of one product's marketing (blog, video, "
+             "Facebook) — the new-product launch burst.",
+    )
+    parser.add_argument(
         "--facebook-token", metavar="SHORT_LIVED_TOKEN", default=None,
         help="Mint a never-expiring Page token from a short-lived user token "
              "(needs App ID + Secret set on Integrations → Facebook) and save it.",
@@ -1040,6 +1045,23 @@ def main() -> int:
         print(f"\n✓ Saved a never-expiring Page token for '{res['page_name']}' "
               f"(id {res['page_id']}). Facebook posting is ready — run "
               f"--post-facebook.")
+        return 0
+
+    if args.launch_product:
+        from onassis.content_engine import ContentEngine
+        from onassis.integrations import apply_integration_overrides
+
+        apply_integration_overrides(config, db)
+        sku = args.launch_product
+        match = next((p for p in db.list_products()
+                      if sku in (p.get("sku"), p.get("product_key"))), None)
+        if not match or not match.get("product_key"):
+            print(f"No product found for '{sku}' (or it has no product_key).")
+            return 1
+        r = ContentEngine(config, db).launch_product(
+            match.get("campaign_id"), match["product_key"])
+        print(f"\nLAUNCH {match.get('name') or sku} — blog {r['blog']} posted, "
+              f"{r['clips']} clip(s), Facebook {r['facebook']} posted.")
         return 0
 
     if args.run_marketing:

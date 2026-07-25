@@ -272,6 +272,40 @@ def test_queue_facebook_posts_from_blogs_and_videos(config, db):
     assert eng.queue_facebook_posts()["queued"] == 0        # idempotent
 
 
+def test_launch_product_posts_blog_and_queues_facebook_immediately(config, db, tmp_path):
+    """The launch burst publishes the product's blog now (not dripped), builds
+    its clips, and posts to Facebook — all in one call."""
+    cid, key = _build_package(config, tmp_path)
+    db.insert_product({"sku": f"{cid}-{key}", "name": "Mug", "campaign_id": cid,
+                       "product_key": key, "active": True})
+    config.shopify = {"blog_id": "7"}
+
+    class _Blog:
+        can_publish = True
+        def __init__(self): self.posted = []
+        def publish_article(self, payload):
+            self.posted.append(payload.get("title"))
+            return {"ok": True, "id": str(len(self.posted)),
+                    "url": f"https://shop/blogs/news/{len(self.posted)}"}
+
+    from onassis.distribution import ChannelDistributor
+    orig = ChannelDistributor.__init__
+    def _patched(self, cfg, database, **kw):
+        kw.setdefault("shopify", _Blog())
+        orig(self, cfg, database, **kw)
+    ChannelDistributor.__init__ = _patched
+    try:
+        db.set_setting("business.facebook_enabled", True)
+        r = _engine(config, db).launch_product(cid, key)
+    finally:
+        ChannelDistributor.__init__ = orig
+    assert r["ok"] and r["blog"] >= 1          # blog published immediately
+    assert r["clips"] == 3                       # clips built
+    posted_blog = [a for a in db.list_marketing_assets(channel="blog")
+                   if a["status"] == "posted"]
+    assert posted_blog                            # not left dripping
+
+
 def test_marketing_overview_aggregates_per_product(config, db):
     """The Marketing tab data groups clips, blogs and FB posts under each product
     with totals."""

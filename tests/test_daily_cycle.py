@@ -28,8 +28,8 @@ _EXPECTED_STAGES = [
     "Learn & Review Portfolio", "Run Product Optimiser", "CEO Decision",
     "Market Research", "Create Product Opportunity", "Build Design Package",
     "Generate Master Artwork", "Create Product Campaign", "Expand Products",
-    "Publish Products", "Generate Marketing Content", "Promote on Pinterest",
-    "Daily Report", "CEO Dashboard", "Record Results",
+    "Publish Products", "Generate Marketing Content", "Launch New Products",
+    "Promote on Pinterest", "Daily Report", "CEO Dashboard", "Record Results",
 ]
 
 _OPPORTUNITY = {
@@ -133,7 +133,17 @@ def production_cycle(config, db, tmp_path):
                          "enabled_modes": ["dry_run", "draft", "live"],
                          "max_retries": 3, "min_go_live_margin": 0.10}
     config.launch = {"policy": "automatic", "auto_go_live": True}
-    cycle = DailyCycle(config, db)
+    # Tiny frames + a stub encoder so the launch stage's clip render is instant
+    # (no full-res Pillow composition, no ffmpeg) in tests.
+    config.content = {**(config.content or {}), "reel_size": [96, 170],
+                      "reel_slide_frames": 2}
+    from onassis.reel_studio import ReelStudio
+
+    def _stub_enc(frames, out_path, *, fps):
+        from pathlib import Path
+        Path(out_path).write_bytes(b"\x00\x00\x00\x18ftypmp42")
+        return str(out_path)
+    cycle = DailyCycle(config, db, content_studio=ReelStudio(encoder=_stub_enc))
 
     # A profitable product starved of traffic -> optimiser recommends a
     # Pinterest campaign with a strong ROI the CEO will approve.

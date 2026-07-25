@@ -633,6 +633,34 @@ class ContentEngine:
                               "listing yet — build clips first."}
         return {"ok": True, **conn.attach_product_videos(items)}
 
+    def launch_product(self, campaign_id: int, product_key: str) -> dict[str, Any]:
+        """Launch burst for a NEW product: generate + publish its blog article
+        NOW (not dripped), build its slideshow clips, attach the video to Shopify
+        + Etsy, and post the blog link + video to Facebook immediately. This is
+        the 'it's news' path — evergreen recycling handles everything afterwards."""
+        from onassis.distribution import ChannelDistributor
+
+        out: dict[str, Any] = {"ok": True, "product_key": product_key,
+                               "blog": 0, "clips": 0, "facebook": 0}
+        dist = ChannelDistributor(self.config, self.db)
+        # 1) Ensure this product has a blog article, then publish immediately.
+        have = {a.get("product_key")
+                for a in self.db.list_marketing_assets(channel="blog")}
+        if product_key not in have:
+            self.generate_blog(limit=1000)
+        blog = dist.distribute(channels=["blog"]).get("by_channel", {}).get("blog", {})
+        out["blog"] = blog.get("posted", 0)
+        # 2) Build the product's clips, then attach the video to Shopify + Etsy.
+        out["clips"] = self.build_for_product(campaign_id, product_key).get("count", 0)
+        self.attach_videos_to_shopify()
+        self.attach_videos_to_etsy()
+        # 3) Facebook: queue this product's blog link + video and post now.
+        self.queue_facebook_posts()
+        fb = dist.distribute(channels=["facebook"], force=True).get(
+            "by_channel", {}).get("facebook", {})
+        out["facebook"] = fb.get("posted", 0)
+        return out
+
     def marketing_overview(self) -> dict[str, Any]:
         """Everything the Marketing tab shows in one place: per-product content —
         slideshow clips, blog articles and Facebook posts — each with its status

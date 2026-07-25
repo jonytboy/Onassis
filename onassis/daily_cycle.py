@@ -84,9 +84,13 @@ log = get_logger(__name__)
 class DailyCycle:
     """Coordinates the existing modules into one daily operating cycle."""
 
-    def __init__(self, config: Config, db: Database) -> None:
+    def __init__(self, config: Config, db: Database,
+                 content_studio: Any | None = None) -> None:
         self.config = config
         self.db = db
+        # Optional injected reel studio (tests pass a stub encoder so the cycle
+        # never shells out to ffmpeg); None → ContentEngine uses the real one.
+        self.content_studio = content_studio
         # Reuse the existing, independent modules — coordinate, don't replace.
         self.etsy = EtsyConnector(config, db)
         self.gelato = GelatoConnector(config, db)
@@ -157,7 +161,7 @@ class DailyCycle:
         try:
             from onassis.content_engine import ContentEngine
 
-            engine = ContentEngine(self.config, self.db)
+            engine = ContentEngine(self.config, self.db, studio=self.content_studio)
             blog_sched = engine.refill_blog_schedule()
             log.info("Blog schedule: +%d created, %d queued ahead (next %s → %s).",
                      blog_sched.get("created", 0), blog_sched.get("scheduled", 0),
@@ -206,6 +210,28 @@ class DailyCycle:
                 "funnel": funnel, "pins_posted": posted, "evergreen_scheduled": ever,
                 "blog_schedule": blog_sched}
 
+    def _launch_new_products(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """Launch burst: immediately post the marketing for each product actually
+        published this run (blog live now, clips, video on Shopify/Etsy, Facebook)
+        — the 'it's news' path. Evergreen recycling handles the rest later."""
+        if ctx["dry"]:
+            return {"status": "skipped", "detail": "dry run"}
+        from onassis.content_engine import ContentEngine
+
+        cid = ctx.get("campaign_id")
+        launched = 0
+        engine = ContentEngine(self.config, self.db, studio=self.content_studio)
+        for p in (ctx.get("stream") or []):
+            if not p.get("listing_id") or not p.get("product_key"):
+                continue                       # only products that really published
+            try:
+                engine.launch_product(cid, p["product_key"])
+                launched += 1
+            except Exception:  # best-effort — never fail the cycle on a launch
+                log.debug("launch marketing skipped for %s",
+                          p.get("product_key"), exc_info=True)
+        return {"status": "ok", "detail": f"{launched} product(s) launched"}
+
     def run(self, mode: str = "production") -> dict[str, Any]:
         """Run the full cycle. ``mode`` is 'production' or 'dry_run'."""
         dry = mode == "dry_run"
@@ -233,6 +259,7 @@ class DailyCycle:
         # Product 1 is published while Product 2 is still generating.
         self._stage(stages, "Publish Products", self._stream_products, ctx)
         self._stage(stages, "Generate Marketing Content", self._generate_content, ctx)
+        self._stage(stages, "Launch New Products", self._launch_new_products, ctx)
         self._stage(stages, "Promote on Pinterest", self._promote, ctx)
         self._stage(stages, "Daily Report", self._daily_report, ctx)
         self._stage(stages, "CEO Dashboard", self._ceo_dashboard, ctx)
