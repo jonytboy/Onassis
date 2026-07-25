@@ -184,8 +184,10 @@ class DailyCycle:
                          evids.get("added", 0), evids.get("skipped", 0))
             # Queue Facebook posts for new blogs + videos (distributor ships them).
             fb = engine.queue_facebook_posts()
-            log.info("Facebook queue: +%d blog link(s), +%d video(s).",
-                     fb.get("blogs", 0), fb.get("videos", 0))
+            ev = engine.queue_evergreen_facebook()      # rotate videos, cycle + loop
+            log.info("Facebook queue: +%d blog link(s), +%d new video(s), "
+                     "+%d evergreen re-share(s).",
+                     fb.get("blogs", 0), fb.get("videos", 0), ev.get("queued", 0))
         except Exception:  # scheduling/clip build is best-effort, never fail the push
             blog_sched = {}
             log.debug("blog scheduling / clip build skipped", exc_info=True)

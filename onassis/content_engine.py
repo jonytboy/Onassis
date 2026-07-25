@@ -661,6 +661,50 @@ class ContentEngine:
         out["facebook"] = fb.get("posted", 0)
         return out
 
+    def queue_evergreen_facebook(self, per_day: int | None = None) -> dict[str, Any]:
+        """Re-share product videos to Facebook on a rotation — least-recently-
+        shared products first — so social cycles through the whole catalogue and
+        loops back to the beginning (blog links already cycle via recycled
+        articles). Gentle by default (1/day). Set ``evergreen_video_per_day: 0``
+        to turn it off."""
+        per_day = (per_day if per_day is not None
+                   else int(self.cfg.get("evergreen_video_per_day", 1)))
+        base = self._public_base()
+        if per_day <= 0 or not base:
+            return {"queued": 0}
+        last_share: dict[str, str] = {}
+        for a in self.db.list_marketing_assets(channel="facebook"):
+            post = (a.get("payload") or {}).get("post") or {}
+            k = a.get("product_key")
+            if post.get("video_url") and k:
+                ts = a.get("created_at") or ""
+                if ts > last_share.get(k, ""):
+                    last_share[k] = ts
+        cands = []
+        for p in self.db.list_products():
+            if not p.get("active", 1):
+                continue
+            key = (p.get("product_key") or p.get("sku")
+                   or (f"product-{p.get('id')}" if p.get("id") else None))
+            cid = p.get("campaign_id")
+            if not cid or not key:
+                continue
+            urls = self._reel_urls(cid, key)
+            if not urls:
+                continue
+            cands.append((last_share.get(key, ""), cid, key,
+                          p.get("name") or key, urls[0]))
+        cands.sort(key=lambda x: x[0])          # oldest-shared (or never) first
+        queued = 0
+        for _, cid, key, name, url in cands[:per_day]:
+            self.db.insert_marketing_asset({
+                "campaign_id": cid, "product_key": key, "channel": "facebook",
+                "payload": {"post": {"video_url": url,
+                                     "body": f"{name} — a favourite from the "
+                                             f"collection ✨"}}})
+            queued += 1
+        return {"queued": queued}
+
     def marketing_overview(self) -> dict[str, Any]:
         """Everything the Marketing tab shows in one place: per-product content —
         slideshow clips, blog articles and Facebook posts — each with its status
