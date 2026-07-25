@@ -272,6 +272,32 @@ def test_queue_facebook_posts_from_blogs_and_videos(config, db):
     assert eng.queue_facebook_posts()["queued"] == 0        # idempotent
 
 
+def test_marketing_overview_aggregates_per_product(config, db):
+    """The Marketing tab data groups clips, blogs and FB posts under each product
+    with totals."""
+    cid, key = 6, "mug"
+    db.insert_product({"sku": "MUG", "name": "Riviera Mug", "campaign_id": cid,
+                       "product_key": key, "active": True})
+    db.insert_short_form({"campaign_id": cid, "product_id": f"{cid}-{key}",
+                          "product_key": key, "fmt": "style_slide", "path": "/x.mp4",
+                          "caption": "c", "hashtags": [], "sound": "s", "duration_s": 8,
+                          "listing_url": "u"})
+    bid = db.insert_marketing_asset({"campaign_id": cid, "product_key": key,
+                                     "channel": "blog", "payload": {"title": "Slow"}})
+    db.set_marketing_asset_delivery(bid, "posted", ref="https://shop/blogs/news/slow")
+    db.insert_marketing_asset({"campaign_id": cid, "product_key": key, "channel": "facebook",
+                               "payload": {"post": {"link": "https://shop/x"}}})
+    eng = _engine(config, db)
+    eng.cfg["public_base"] = "https://cdn.example"
+    ov = eng.marketing_overview()
+    assert ov["totals"] == {"products": 1, "clips": 1, "blogs": 1, "blogs_posted": 1,
+                            "facebook": 1, "facebook_posted": 0}
+    row = ov["products"][0]
+    assert row["name"] == "Riviera Mug"
+    assert row["clips"][0]["url"] == "https://cdn.example/reels/6/mug/style_slide.mp4"
+    assert row["blogs"][0]["status"] == "posted" and row["facebook"][0]["kind"] == "link"
+
+
 def test_facebook_blog_link_uses_handle_not_numeric_id(config, db):
     """FB link posts must use the blog HANDLE, not its numeric id (which 404s)."""
     cid, key = 4, "tote"

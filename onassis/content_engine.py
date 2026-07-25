@@ -633,6 +633,61 @@ class ContentEngine:
                               "listing yet — build clips first."}
         return {"ok": True, **conn.attach_product_videos(items)}
 
+    def marketing_overview(self) -> dict[str, Any]:
+        """Everything the Marketing tab shows in one place: per-product content —
+        slideshow clips, blog articles and Facebook posts — each with its status
+        and link, plus totals across the catalogue."""
+        base = self._public_base()
+        products: dict[str, dict[str, Any]] = {}
+
+        def _row(cid: Any, key: str, name: str | None = None) -> dict[str, Any]:
+            k = f"{cid}-{key}"
+            row = products.setdefault(k, {"campaign_id": cid, "product_key": key,
+                                          "name": name or key, "clips": [],
+                                          "blogs": [], "facebook": []})
+            if name:
+                row["name"] = name
+            return row
+
+        for p in self.db.list_products():
+            key = (p.get("product_key") or p.get("sku")
+                   or (f"product-{p.get('id')}" if p.get("id") else None))
+            if key:
+                _row(p.get("campaign_id"), key, p.get("name"))
+        for c in self.db.list_short_form(limit=2000):
+            key = c.get("product_key")
+            if not key:
+                continue
+            cid = c.get("campaign_id")
+            url = f"{base}/reels/{cid}/{key}/{c.get('fmt')}.mp4" if base else ""
+            _row(cid, key)["clips"].append({"fmt": c.get("fmt"), "url": url,
+                                            "caption": c.get("caption")})
+        for a in self.db.list_marketing_assets(channel="blog"):
+            pl = a.get("payload") or {}
+            ref = a.get("delivery_ref") or ""
+            link = next((x.strip() for x in ref.split("|")
+                         if x.strip().startswith("http")), "")
+            _row(a.get("campaign_id"), a.get("product_key"))["blogs"].append({
+                "title": pl.get("title"), "angle": pl.get("angle"),
+                "status": a.get("status") or "pending",
+                "scheduled_date": a.get("scheduled_date"), "url": link})
+        for a in self.db.list_marketing_assets(channel="facebook"):
+            post = (a.get("payload") or {}).get("post") or {}
+            _row(a.get("campaign_id"), a.get("product_key"))["facebook"].append({
+                "kind": "video" if post.get("video_url") else "link",
+                "status": a.get("status") or "pending",
+                "link": post.get("link") or post.get("video_url")})
+        rows = sorted(products.values(), key=lambda r: (r["name"] or "").lower())
+        posted = lambda items: sum(1 for i in items if i.get("status") == "posted")
+        totals = {
+            "products": len(rows),
+            "clips": sum(len(r["clips"]) for r in rows),
+            "blogs": sum(len(r["blogs"]) for r in rows),
+            "blogs_posted": sum(posted(r["blogs"]) for r in rows),
+            "facebook": sum(len(r["facebook"]) for r in rows),
+            "facebook_posted": sum(posted(r["facebook"]) for r in rows)}
+        return {"products": rows, "totals": totals}
+
     def queue_facebook_posts(self) -> dict[str, Any]:
         """Queue Facebook Page posts for the content we've produced: a link post
         for each published blog article, and a video post for each product's

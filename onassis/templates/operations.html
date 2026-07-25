@@ -612,6 +612,51 @@
 
   <!-- MARKETING -->
   <div x-show="tab==='marketing'">
+    <!-- Content Library — every product's videos, blogs and FB posts in one place -->
+    <div class="panel" x-show="overview" style="margin-bottom:12px">
+      <h2>Content Library
+        <span style="float:right">
+          <button class="btn small" @click="runMarketing()">Run marketing now</button>
+        </span></h2>
+      <div class="grid">
+        <div class="stat"><div class="k">Products</div><div class="v" x-text="overview?.totals?.products??0"></div></div>
+        <div class="stat"><div class="k">Videos</div><div class="v" x-text="overview?.totals?.clips??0"></div></div>
+        <div class="stat"><div class="k">Blog posts</div><div class="v"><span x-text="overview?.totals?.blogs_posted??0"></span><span class="muted" style="font-size:.7em"> / <span x-text="overview?.totals?.blogs??0"></span></span></div></div>
+        <div class="stat"><div class="k">Facebook</div><div class="v"><span x-text="overview?.totals?.facebook_posted??0"></span><span class="muted" style="font-size:.7em"> / <span x-text="overview?.totals?.facebook??0"></span></span></div></div>
+      </div>
+      <div style="overflow-x:auto;margin-top:10px">
+      <table><thead><tr><th>Product</th><th>Videos</th><th>Blog</th><th>Facebook</th></tr></thead><tbody>
+        <template x-for="p in (overview?.products||[])" :key="p.campaign_id+'-'+p.product_key">
+          <tr>
+            <td><b x-text="p.name"></b></td>
+            <td class="note">
+              <template x-if="!p.clips.length"><span class="muted">—</span></template>
+              <template x-for="c in p.clips" :key="c.fmt">
+                <span><a x-show="c.url" :href="c.url" target="_blank" x-text="c.fmt"></a><span x-show="!c.url" x-text="c.fmt"></span> </span>
+              </template>
+            </td>
+            <td class="note">
+              <template x-if="!p.blogs.length"><span class="muted">—</span></template>
+              <template x-for="(b,i) in p.blogs" :key="i">
+                <div><span class="pill" :class="{posted:'ok',pending:'grey',failed:'failed',skipped:'grey'}[b.status]||'grey'" x-text="b.status"></span>
+                  <a x-show="b.url" :href="b.url" target="_blank" x-text="b.title||b.angle||'article'"></a>
+                  <span x-show="!b.url" x-text="b.title||b.angle||'article'"></span>
+                  <span class="muted" x-show="b.scheduled_date&&b.status!=='posted'" x-text="' · '+b.scheduled_date"></span></div>
+              </template>
+            </td>
+            <td class="note">
+              <template x-if="!p.facebook.length"><span class="muted">—</span></template>
+              <template x-for="(f,i) in p.facebook" :key="i">
+                <div><span class="pill" :class="{posted:'ok',pending:'grey',failed:'failed',skipped:'grey'}[f.status]||'grey'" x-text="f.status"></span>
+                  <span x-text="f.kind"></span></div>
+              </template>
+            </td>
+          </tr>
+        </template>
+      </tbody></table>
+      </div>
+      <div class="note muted" style="margin-top:6px" x-show="!(overview?.products||[]).length">No content yet — create products and run marketing.</div>
+    </div>
     <div class="panel" style="margin-bottom:12px">
       <h2>Pinterest
         <span style="float:right">
@@ -1127,7 +1172,7 @@ function ops(){
     environment:null, deployRun:null, preview:null, validation:null, _deployPoll:null,
     productDetail:null, channelTests:null, testingChannels:false, regenerating:null,
     integrations:null, integrationDetail:null, integrationEdits:{}, integrationBusy:false,
-    commercial:null, commercialProducts:null, cmo:null, cfo:null, distribution:null,
+    commercial:null, commercialProducts:null, cmo:null, cfo:null, distribution:null, overview:null,
     catalogue:null, collections:null, content:null, blog:null, blogDx:null, blogMaint:false, publishingAll:false, publishAllTotal:0, publishAllDone:0,
     productSearch:'', productFilter:'all', productHealth:null, toast:'',
     productFilters:[['all','All'],['awaiting_approval','Awaiting Approval'],['ready_to_publish','Ready to Publish'],['draft_created','Draft Created'],['live','Live'],['failed','Failed'],['etsy','On Etsy'],['shopify','On Shopify'],['both','Etsy + Shopify'],['archived','Archived']],
@@ -1199,6 +1244,7 @@ function ops(){
         this.productHealth=await this.get('/operations/api/production-health'); }
       else if(t==='marketing'){ this.marketing=await this.get('/operations/api/marketing');
         this.distribution=await this.get('/operations/api/distribution');
+        this.overview=await this.get('/operations/api/marketing/overview');
         this.cmo=await this.get('/operations/api/cmo'); }
       else if(t==='approvals') this.approvals=await this.get('/operations/api/approvals');
       else if(t==='integrations') this.integrations=await this.get('/operations/api/integrations');

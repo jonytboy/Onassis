@@ -1077,6 +1077,12 @@ def build_operations_router(get_state) -> APIRouter:
         return {**result, "attempted": len(pending), "requeued": requeued,
                 "details": details, "diagnosis": _blog_status(s)}
 
+    @router.get("/api/marketing/overview")
+    def api_marketing_overview(request: Request) -> Any:
+        """Per-product marketing content — clips, blogs, Facebook posts — for the
+        unified Marketing tab."""
+        return request.app.state.content.marketing_overview()
+
     @router.post("/api/content/blog/rewrite-live")
     def api_rewrite_live_blog(request: Request) -> Any:
         """Rewrite existing live blog articles in place — Shopify product link,
