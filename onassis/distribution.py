@@ -21,6 +21,7 @@ from onassis.config import Config
 from onassis.connectors.email_sender import EmailSender
 from onassis.connectors.shopify import ShopifyConnector
 from onassis.connectors.social import FacebookPublisher, InstagramPublisher
+from onassis.connectors.tiktok import TikTokPublisher
 from onassis.database import Database
 from onassis.logger import get_logger
 
@@ -28,17 +29,19 @@ log = get_logger(__name__)
 
 # Pinterest is distributed by the Traffic Engine; these are the channels this
 # manager owns.
-CHANNELS = ["instagram", "facebook", "blog", "email"]
+CHANNELS = ["instagram", "facebook", "tiktok", "blog", "email"]
 
 
 class ChannelDistributor:
     def __init__(self, config: Config, db: Database, *,
                  instagram: Any | None = None, facebook: Any | None = None,
-                 email: Any | None = None, shopify: Any | None = None) -> None:
+                 email: Any | None = None, shopify: Any | None = None,
+                 tiktok: Any | None = None) -> None:
         self.config = config
         self.db = db
         self.instagram = instagram or InstagramPublisher(config)
         self.facebook = facebook or FacebookPublisher(config)
+        self.tiktok = tiktok or TikTokPublisher(config)
         self.email = email or EmailSender(config)
         self.shopify = shopify or ShopifyConnector(config, db)   # blog target
         self.settings = BusinessSettings(db, config)
@@ -49,6 +52,7 @@ class ChannelDistributor:
         return {
             "instagram": self.instagram.can_publish,
             "facebook": self.facebook.can_publish,
+            "tiktok": self.tiktok.can_publish,
             "email": self.email.can_publish,
             "blog": self.shopify.can_publish and bool((self.config.shopify or {}).get("blog_id")),
         }.get(channel, False)
@@ -60,6 +64,8 @@ class ChannelDistributor:
                 return False
             if channel == "facebook":
                 return bool(self.settings.get("facebook_enabled"))
+            if channel == "tiktok":
+                return bool(self.settings.get("tiktok_enabled"))
             if channel == "email":
                 return bool(self.settings.get("email_enabled"))
         except Exception:  # settings are advisory — never block on a read error
@@ -121,6 +127,10 @@ class ChannelDistributor:
                     r = self.facebook.post_video(video_url, post.get("body") or "")
                 else:
                     r = self.facebook.post(post.get("body") or "", post.get("link") or url)
+            elif channel == "tiktok":
+                post = payload.get("post") or {}
+                r = self.tiktok.post_video(post.get("video_url") or "",
+                                           post.get("body") or "")
             elif channel == "instagram":
                 caption = (payload.get("captions") or [""])[0]
                 r = self.instagram.post(caption, image_url=payload.get("image_url"))

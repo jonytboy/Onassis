@@ -99,6 +99,7 @@ class Config:
     # Sprint 41 — commerce reach: a second sales channel + social/email/blog.
     shopify: dict[str, Any] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
+    tiktok: dict[str, Any] = field(default_factory=dict)
     email: dict[str, Any] = field(default_factory=dict)
     # Sprint 43 — Make.com single marketing distribution engine.
     make: dict[str, Any] = field(default_factory=dict)
@@ -208,6 +209,16 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         "app_id": _env("META_APP_ID", meta.get("app_id")),
         "app_secret": _env("META_APP_SECRET", meta.get("app_secret")),
         "api_version": _env("META_API_VERSION", meta.get("api_version", "v21.0")),
+    }
+    # TikTok (Content Posting API).
+    tiktok = raw.get("tiktok", {})
+    tiktok = {
+        **tiktok,
+        "access_token": _env("TIKTOK_ACCESS_TOKEN", tiktok.get("access_token")),
+        "client_key": _env("TIKTOK_CLIENT_KEY", tiktok.get("client_key")),
+        "client_secret": _env("TIKTOK_CLIENT_SECRET", tiktok.get("client_secret")),
+        "privacy_level": _env("TIKTOK_PRIVACY_LEVEL",
+                              tiktok.get("privacy_level", "SELF_ONLY")),
     }
     # Email newsletter (SMTP).
     email = raw.get("email", {})
@@ -340,6 +351,7 @@ def load_config(config_path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
         security=security,
         shopify=shopify,
         meta=meta,
+        tiktok=tiktok,
         email=email,
         make=make,
         ai_pricing=raw.get("ai_pricing", {}),

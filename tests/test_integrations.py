@@ -16,7 +16,7 @@ def _mgr(config, db, testers=None):
 def test_registry_covers_all_expected_integrations():
     keys = {i.key for i in REGISTRY}
     assert keys == {"anthropic", "openai", "etsy", "shopify", "pinterest",
-                    "facebook", "instagram", "email", "gelato", "make"}
+                    "facebook", "instagram", "tiktok", "email", "gelato", "make"}
 
 
 def test_describe_groups_and_summarises(config, db):

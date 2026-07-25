@@ -211,6 +211,10 @@ def _parse_args() -> argparse.Namespace:
         help="Queue + post blogs (as links) and videos to the Facebook Page.",
     )
     parser.add_argument(
+        "--post-tiktok", action="store_true",
+        help="Queue + post product videos to TikTok.",
+    )
+    parser.add_argument(
         "--run-marketing", action="store_true",
         help="Run the full content-marketing suite once (blog schedule, clips, "
              "product/Etsy videos, Facebook, distribution). Cron this daily.",
@@ -1045,6 +1049,26 @@ def main() -> int:
         print(f"\n✓ Saved a never-expiring Page token for '{res['page_name']}' "
               f"(id {res['page_id']}). Facebook posting is ready — run "
               f"--post-facebook.")
+        return 0
+
+    if args.post_tiktok:
+        from onassis.content_engine import ContentEngine
+        from onassis.distribution import ChannelDistributor
+        from onassis.integrations import apply_integration_overrides
+
+        apply_integration_overrides(config, db)
+        dist = ChannelDistributor(config, db)
+        if not dist.can_distribute("tiktok"):
+            print("TikTok isn't connected — set the Access Token on Integrations "
+                  "→ TikTok, then re-run.")
+            return 1
+        q = ContentEngine(config, db).queue_tiktok_posts()
+        db.reset_failed_marketing_assets("tiktok", include_skipped=True)
+        print(f"\nTIKTOK — queued {q.get('videos', 0)} video(s).")
+        out = dist.distribute(channels=["tiktok"], force=True)
+        tt = (out.get("by_channel") or {}).get("tiktok", {})
+        print(f"  posted {tt.get('posted', 0)}, failed {tt.get('failed', 0)}, "
+              f"skipped {tt.get('skipped', 0)}.")
         return 0
 
     if args.launch_product:

@@ -641,7 +641,7 @@ class ContentEngine:
         from onassis.distribution import ChannelDistributor
 
         out: dict[str, Any] = {"ok": True, "product_key": product_key,
-                               "blog": 0, "clips": 0, "facebook": 0}
+                               "blog": 0, "clips": 0, "facebook": 0, "tiktok": 0}
         dist = ChannelDistributor(self.config, self.db)
         # 1) Ensure this product has a blog article, then publish immediately.
         have = {a.get("product_key")
@@ -654,11 +654,15 @@ class ContentEngine:
         out["clips"] = self.build_for_product(campaign_id, product_key).get("count", 0)
         self.attach_videos_to_shopify()
         self.attach_videos_to_etsy()
-        # 3) Facebook: queue this product's blog link + video and post now.
+        # 3) Facebook + TikTok: queue this product's link/video and post now.
         self.queue_facebook_posts()
         fb = dist.distribute(channels=["facebook"], force=True).get(
             "by_channel", {}).get("facebook", {})
         out["facebook"] = fb.get("posted", 0)
+        self.queue_tiktok_posts()
+        tt = dist.distribute(channels=["tiktok"], force=True).get(
+            "by_channel", {}).get("tiktok", {})
+        out["tiktok"] = tt.get("posted", 0)
         return out
 
     def queue_evergreen_facebook(self, per_day: int | None = None) -> dict[str, Any]:
@@ -716,7 +720,7 @@ class ContentEngine:
             k = f"{cid}-{key}"
             row = products.setdefault(k, {"campaign_id": cid, "product_key": key,
                                           "name": name or key, "clips": [],
-                                          "blogs": [], "facebook": []})
+                                          "blogs": [], "facebook": [], "tiktok": []})
             if name:
                 row["name"] = name
             return row
@@ -749,6 +753,9 @@ class ContentEngine:
                 "kind": "video" if post.get("video_url") else "link",
                 "status": a.get("status") or "pending",
                 "link": post.get("link") or post.get("video_url")})
+        for a in self.db.list_marketing_assets(channel="tiktok"):
+            _row(a.get("campaign_id"), a.get("product_key"))["tiktok"].append({
+                "status": a.get("status") or "pending"})
         rows = sorted(products.values(), key=lambda r: (r["name"] or "").lower())
         posted = lambda items: sum(1 for i in items if i.get("status") == "posted")
         totals = {
@@ -757,8 +764,43 @@ class ContentEngine:
             "blogs": sum(len(r["blogs"]) for r in rows),
             "blogs_posted": sum(posted(r["blogs"]) for r in rows),
             "facebook": sum(len(r["facebook"]) for r in rows),
-            "facebook_posted": sum(posted(r["facebook"]) for r in rows)}
+            "facebook_posted": sum(posted(r["facebook"]) for r in rows),
+            "tiktok": sum(len(r["tiktok"]) for r in rows),
+            "tiktok_posted": sum(posted(r["tiktok"]) for r in rows)}
         return {"products": rows, "totals": totals}
+
+    def queue_tiktok_posts(self) -> dict[str, Any]:
+        """Queue a TikTok video post for each product's slideshow (idempotent).
+        The distributor ships them once TikTok is connected and the toggle is on."""
+        base = self._public_base()
+        if not base:
+            return {"ok": False, "videos": 0, "reason": "No public base URL for videos."}
+        existing = set()
+        for a in self.db.list_marketing_assets(channel="tiktok"):
+            post = (a.get("payload") or {}).get("post") or {}
+            if post.get("video_url"):
+                existing.add(post["video_url"])
+        videos = 0
+        for p in self.db.list_products():
+            if not p.get("active", 1):
+                continue
+            key = (p.get("product_key") or p.get("sku")
+                   or (f"product-{p.get('id')}" if p.get("id") else None))
+            cid = p.get("campaign_id")
+            if not cid or not key:
+                continue
+            urls = self._reel_urls(cid, key)
+            if not urls or urls[0] in existing:
+                continue
+            name = p.get("name") or key
+            self.db.insert_marketing_asset({
+                "campaign_id": cid, "product_key": key, "channel": "tiktok",
+                "payload": {"post": {"video_url": urls[0],
+                                     "body": f"{name} ✨ #TikTokMadeMeBuyIt "
+                                             f"#SmallBusiness"}}})
+            existing.add(urls[0])
+            videos += 1
+        return {"ok": True, "videos": videos}
 
     def queue_facebook_posts(self) -> dict[str, Any]:
         """Queue Facebook Page posts for the content we've produced: a link post

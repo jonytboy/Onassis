@@ -115,6 +115,20 @@ REGISTRY: list[Integration] = [
                 required=["page_access_token", "instagram_user_id"], actions=["test"],
                 setup=["Connect an IG Business account to your Page",
                        "Get the IG user id", "Paste token + id here", "Test Connection"]),
+    Integration("tiktok", "TikTok", "Marketing",
+                [Field("access_token", "Access Token", secret=True,
+                       env="TIKTOK_ACCESS_TOKEN"),
+                 Field("client_key", "Client Key", env="TIKTOK_CLIENT_KEY"),
+                 Field("client_secret", "Client Secret", secret=True,
+                       env="TIKTOK_CLIENT_SECRET"),
+                 Field("privacy_level", "Privacy (SELF_ONLY / PUBLIC_TO_EVERYONE)",
+                       env="TIKTOK_PRIVACY_LEVEL")],
+                required=["access_token"], actions=["test"],
+                setup=["Create a TikTok for Developers app with the Content Posting API",
+                       "Get an access token via OAuth (scopes: video.publish)",
+                       "Paste the token here; keep privacy SELF_ONLY until the app "
+                       "passes TikTok's audit, then switch to PUBLIC_TO_EVERYONE",
+                       "Test Connection"]),
     Integration("email", "Email", "Marketing",
                 [Field("smtp_host", "SMTP Host", env="SMTP_HOST"),
                  Field("smtp_port", "SMTP Port", env="SMTP_PORT"),
@@ -397,6 +411,11 @@ def _test_instagram(config, resolved, db):
     return InstagramPublisher(_ns("meta", resolved)).test_connection()
 
 
+def _test_tiktok(config, resolved, db):
+    from onassis.connectors.tiktok import TikTokPublisher
+    return TikTokPublisher(_ns("tiktok", resolved)).test_connection()
+
+
 def _test_email(config, resolved, db):
     from onassis.connectors.email_sender import EmailSender
     return EmailSender(_ns("email", resolved)).test_connection()
@@ -466,7 +485,7 @@ _DEFAULT_TESTERS: dict[str, Callable] = {
     "anthropic": _test_anthropic, "openai": _test_openai, "etsy": _test_etsy,
     "shopify": _test_shopify, "pinterest": _test_pinterest, "facebook": _test_facebook,
     "instagram": _test_instagram, "email": _test_email, "gelato": _test_gelato,
-    "make": _test_make,
+    "make": _test_make, "tiktok": _test_tiktok,
 }
 
 

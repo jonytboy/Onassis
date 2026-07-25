@@ -211,3 +211,25 @@ def test_skipped_facebook_asset_can_be_requeued_and_forced(config, db):
     db.reset_failed_marketing_assets("facebook", include_skipped=True)
     out = dist.distribute(channels=["facebook"], force=True)
     assert out["by_channel"]["facebook"]["posted"] == 1 and fb.calls == 1
+
+
+class FakeTikTok:
+    can_publish = True
+    def __init__(self): self.videos = []
+    def post_video(self, video_url, caption=""):
+        self.videos.append((video_url, caption))
+        return {"ok": True, "ref": "pub1"}
+
+
+def test_tiktok_video_asset_posts_when_forced(config, db):
+    """A tiktok asset with a video_url posts via post_video; the operator toggle
+    (off by default) can be bypassed with force=True."""
+    tt = FakeTikTok()
+    dist = ChannelDistributor(config, db, instagram=FakeInstagram(), facebook=FakeFacebook(),
+                              email=FakeEmail(), shopify=FakeShopifyBlog(), tiktok=tt)
+    _seed(db, "tiktok", {"post": {"video_url": "https://cdn/x.mp4", "body": "Mug ✨"}})
+    assert dist.distribute(channels=["tiktok"])["by_channel"]["tiktok"]["skipped"] == 1
+    db.reset_failed_marketing_assets("tiktok", include_skipped=True)
+    out = dist.distribute(channels=["tiktok"], force=True)
+    assert out["by_channel"]["tiktok"]["posted"] == 1
+    assert tt.videos == [("https://cdn/x.mp4", "Mug ✨")]

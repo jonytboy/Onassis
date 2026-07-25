@@ -623,9 +623,10 @@
         <div class="stat"><div class="k">Videos</div><div class="v" x-text="overview?.totals?.clips??0"></div></div>
         <div class="stat"><div class="k">Blog posts</div><div class="v"><span x-text="overview?.totals?.blogs_posted??0"></span><span class="muted" style="font-size:.7em"> / <span x-text="overview?.totals?.blogs??0"></span></span></div></div>
         <div class="stat"><div class="k">Facebook</div><div class="v"><span x-text="overview?.totals?.facebook_posted??0"></span><span class="muted" style="font-size:.7em"> / <span x-text="overview?.totals?.facebook??0"></span></span></div></div>
+        <div class="stat"><div class="k">TikTok</div><div class="v"><span x-text="overview?.totals?.tiktok_posted??0"></span><span class="muted" style="font-size:.7em"> / <span x-text="overview?.totals?.tiktok??0"></span></span></div></div>
       </div>
       <div style="overflow-x:auto;margin-top:10px">
-      <table><thead><tr><th>Product</th><th>Videos</th><th>Blog</th><th>Facebook</th></tr></thead><tbody>
+      <table><thead><tr><th>Product</th><th>Videos</th><th>Blog</th><th>Facebook</th><th>TikTok</th></tr></thead><tbody>
         <template x-for="p in (overview?.products||[])" :key="p.campaign_id+'-'+p.product_key">
           <tr>
             <td><b x-text="p.name"></b></td>
@@ -649,6 +650,12 @@
               <template x-for="(f,i) in p.facebook" :key="i">
                 <div><span class="pill" :class="{posted:'ok',pending:'grey',failed:'failed',skipped:'grey'}[f.status]||'grey'" x-text="f.status"></span>
                   <span x-text="f.kind"></span></div>
+              </template>
+            </td>
+            <td class="note">
+              <template x-if="!p.tiktok.length"><span class="muted">—</span></template>
+              <template x-for="(t,i) in p.tiktok" :key="i">
+                <div><span class="pill" :class="{posted:'ok',pending:'grey',failed:'failed',skipped:'grey'}[t.status]||'grey'" x-text="t.status"></span> video</div>
               </template>
             </td>
           </tr>

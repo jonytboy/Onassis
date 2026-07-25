@@ -81,6 +81,9 @@ SCHEMA: list[Setting] = [
     Setting("facebook_enabled", "Facebook", "bool",
             lambda c: bool(_cfg(c, "marketing", "facebook_enabled", False)),
             group="Channels", help="Produce Facebook marketing assets."),
+    Setting("tiktok_enabled", "TikTok", "bool",
+            lambda c: bool(_cfg(c, "marketing", "tiktok_enabled", False)),
+            group="Channels", help="Publish product videos to TikTok."),
 ]
 _BY_KEY = {s.key: s for s in SCHEMA}
 

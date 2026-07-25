@@ -349,7 +349,8 @@ def test_marketing_overview_aggregates_per_product(config, db):
     eng.cfg["public_base"] = "https://cdn.example"
     ov = eng.marketing_overview()
     assert ov["totals"] == {"products": 1, "clips": 1, "blogs": 1, "blogs_posted": 1,
-                            "facebook": 1, "facebook_posted": 0}
+                            "facebook": 1, "facebook_posted": 0,
+                            "tiktok": 0, "tiktok_posted": 0}
     row = ov["products"][0]
     assert row["name"] == "Riviera Mug"
     assert row["clips"][0]["url"] == "https://cdn.example/reels/6/mug/style_slide.mp4"

@@ -50,3 +50,34 @@ def test_mint_page_token_lists_pages_when_no_match():
     r = mint_page_token("app", "secret", "SHORT", page_id="999", client=_FakeMeta())
     assert r["ok"] is False
     assert {p["name"] for p in r["pages"]} == {"Onassis Med", "Other"}
+
+
+# --- TikTok ---------------------------------------------------------
+
+from types import SimpleNamespace as _NS
+
+from onassis.connectors.tiktok import TikTokPublisher
+
+
+class _FakeTikTok:
+    def __init__(self): self.calls = []
+    def init_video_post(self, video_url, caption, privacy):
+        self.calls.append((video_url, caption, privacy))
+        return {"data": {"publish_id": "pub_123"}}
+    def creator_info(self):
+        return {"data": {"creator_nickname": "onassis"}}
+
+
+def test_tiktok_post_video():
+    cfg = _NS(tiktok={"access_token": "t", "privacy_level": "SELF_ONLY"})
+    fake = _FakeTikTok()
+    tt = TikTokPublisher(cfg, client=fake)
+    res = tt.post_video("https://cdn/x.mp4", "Mug ✨")
+    assert res["ok"] and res["ref"] == "pub_123"
+    assert fake.calls[0] == ("https://cdn/x.mp4", "Mug ✨", "SELF_ONLY")
+
+
+def test_tiktok_not_configured_is_safe():
+    tt = TikTokPublisher(_NS(tiktok={}))
+    assert tt.can_publish is False
+    assert tt.post_video("https://cdn/x.mp4")["skipped"] is True
