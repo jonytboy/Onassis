@@ -702,16 +702,43 @@ class ShopifyAdminClient:
     def _put(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         return self._request("PUT", path, body)
 
+    def _throttle(self) -> None:
+        """Stay under Shopify's 2 calls/second REST limit by spacing requests."""
+        import time
+
+        last = getattr(self, "_last_req", 0.0)
+        gap = time.monotonic() - last
+        if gap < 0.55:
+            time.sleep(0.55 - gap)
+        self._last_req = time.monotonic()
+
     def _request(self, method: str, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        import time
+
         import httpx
 
         url = f"{self._base}{path}"
-        resp = httpx.request(method, url, headers=self._headers(self._token()),
-                             json=body, timeout=self.timeout)
-        # An expired token → refresh once and retry (client-credentials flow).
-        if resp.status_code == 401 and self._token_provider is not None:
-            resp = httpx.request(method, url, headers=self._headers(self._token(force=True)),
+        for attempt in range(5):
+            self._throttle()
+            resp = httpx.request(method, url, headers=self._headers(self._token()),
                                  json=body, timeout=self.timeout)
-        if resp.status_code >= 400:
-            raise RuntimeError(f"Shopify {method} {path} HTTP {resp.status_code}: {resp.text}")
-        return resp.json()
+            # An expired token → refresh once and retry (client-credentials flow).
+            if resp.status_code == 401 and self._token_provider is not None:
+                self._throttle()
+                resp = httpx.request(method, url,
+                                     headers=self._headers(self._token(force=True)),
+                                     json=body, timeout=self.timeout)
+            # Rate limited → wait the Retry-After (Shopify sends it) and retry.
+            if resp.status_code == 429 and attempt < 4:
+                wait = 1.0
+                try:
+                    wait = float(resp.headers.get("Retry-After", 1.0)) or 1.0
+                except (TypeError, ValueError):
+                    pass
+                time.sleep(min(wait, 5.0))
+                continue
+            if resp.status_code >= 400:
+                raise RuntimeError(
+                    f"Shopify {method} {path} HTTP {resp.status_code}: {resp.text}")
+            return resp.json()
+        raise RuntimeError(f"Shopify {method} {path} rate-limited after retries.")

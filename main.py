@@ -220,6 +220,11 @@ def _parse_args() -> argparse.Namespace:
              "product/Etsy videos, Facebook, distribution). Cron this daily.",
     )
     parser.add_argument(
+        "--build-clips", action="store_true",
+        help="Build slideshow clips for all products (diagnostic: reports why any "
+             "product can't build).",
+    )
+    parser.add_argument(
         "--launch-product", metavar="SKU", default=None,
         help="Immediately post ALL of one product's marketing (blog, video, "
              "Facebook) — the new-product launch burst.",
@@ -1069,6 +1074,23 @@ def main() -> int:
         tt = (out.get("by_channel") or {}).get("tiktok", {})
         print(f"  posted {tt.get('posted', 0)}, failed {tt.get('failed', 0)}, "
               f"skipped {tt.get('skipped', 0)}.")
+        return 0
+
+    if args.build_clips:
+        from onassis.content_engine import ContentEngine
+        from onassis.integrations import apply_integration_overrides
+
+        apply_integration_overrides(config, db)
+        r = ContentEngine(config, db).build_batch(limit=1000)
+        c = r.get("counts", {})
+        print(f"\nBUILD CLIPS — {r['built']} clip(s) built for "
+              f"{c.get('built_products', 0)} product(s).")
+        print(f"  already had clips : {c.get('already_have', 0)}")
+        print(f"  no campaign/key   : {c.get('no_campaign_or_key', 0)}")
+        print(f"  no images to build: {c.get('no_images', 0)}")
+        print(f"  inactive          : {c.get('inactive', 0)}")
+        for d in r.get("details", [])[:25]:
+            print(f"    • {str(d.get('product'))[:40]}: {d.get('reason')}")
         return 0
 
     if args.launch_product:

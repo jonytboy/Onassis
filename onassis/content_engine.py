@@ -257,26 +257,41 @@ class ContentEngine:
         formats = formats or FORMATS
         have: set = set()
         if skip_existing:
-            for c in self.db.list_short_form(limit=2000):
+            for c in self.db.list_short_form(limit=5000):
                 have.add((c.get("product_key"), c.get("fmt")))
         made: list[dict[str, Any]] = []
-        skipped = no_package = 0
+        counts = {"inactive": 0, "no_campaign_or_key": 0, "already_have": 0,
+                  "no_images": 0, "built_products": 0}
+        details: list[dict[str, Any]] = []
         for p in self.db.list_products():
             if len(made) >= limit:
                 break
-            if not p.get("active", 1) or not p.get("product_key") or not p.get("campaign_id"):
+            if not p.get("active", 1):
+                counts["inactive"] += 1
                 continue
-            key = p["product_key"]
+            key = (p.get("product_key") or p.get("sku")
+                   or (f"product-{p.get('id')}" if p.get("id") else None))
+            cid = p.get("campaign_id")
+            name = p.get("name") or p.get("sku") or key
+            if not key or not cid:
+                counts["no_campaign_or_key"] += 1
+                details.append({"product": name, "reason": "no campaign_id/product_key"})
+                continue
             need = [f for f in formats if (key, f) not in have]
             if not need:
-                skipped += 1
+                counts["already_have"] += 1
                 continue
-            r = self.build_for_product(p["campaign_id"], key, formats=need)
-            if not r.get("ok") and "package" in (r.get("reason") or ""):
-                no_package += 1
-            made.extend(r.get("clips", []))
-        return {"built": len(made[:limit]), "skipped": skipped,
-                "no_package": no_package, "clips": made[:limit]}
+            r = self.build_for_product(cid, key, formats=need)
+            if r.get("clips"):
+                counts["built_products"] += 1
+                made.extend(r["clips"])
+            else:
+                counts["no_images"] += 1
+                details.append({"product": name,
+                                "reason": r.get("reason", "no clips built")})
+        return {"built": len(made[:limit]), "skipped": counts["already_have"],
+                "no_package": counts["no_images"], "clips": made[:limit],
+                "counts": counts, "details": details[:50]}
 
     def _public_base(self) -> str:
         return (self.cfg.get("public_base")
