@@ -959,10 +959,26 @@ def main() -> int:
             print("Set App ID + App Secret on Integrations → Facebook to inspect "
                   "the token.")
             return 1
+        client = MetaGraphClient(access_token=token)
+        page_id = meta.get("facebook_page_id")
         try:
-            info = MetaGraphClient(access_token=token).debug_token(token, app_id, secret)
-        except Exception as exc:  # noqa: BLE001
-            print(f"Could not inspect the token: {exc}")
+            info = client.debug_token(token, app_id, secret)
+        except Exception as exc:  # noqa: BLE001 — app creds bad? still ID the token
+            print(f"Could not read scopes (App ID/Secret likely wrong): {exc}")
+            try:
+                who = client.get_node("me", "id,name")
+                is_page = str(who.get("id")) == str(page_id)
+                print(f"\nToken identity: {'PAGE' if is_page else 'USER'} token for "
+                      f"'{who.get('name')}' (id {who.get('id')}).")
+                if not is_page:
+                    print("  ✗ This is a USER token, not the Page token — that's why "
+                          "publishing is denied. Fix the App ID/Secret, then run "
+                          "--facebook-token to derive + save the Page token.")
+                else:
+                    print("  This is the Page token; the App ID/Secret just need "
+                          "correcting for a full scope report.")
+            except Exception as exc2:  # noqa: BLE001
+                print(f"  Also could not identify the token: {exc2}")
             return 1
         scopes = info.get("scopes") or []
         exp = info.get("expires_at")
