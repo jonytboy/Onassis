@@ -403,6 +403,10 @@ opportunity:
 # those at/above the threshold — one product or all ten, whichever maximises
 # lifetime profit per design. Sales history continually adjusts the scores.
 expansion:
+  # Apparel-first store: new designs build ONLY clothing (t-shirt/hoodie/etc.).
+  # Existing mugs/totes/posters stay live; to bring a category back once it
+  # sells, add it here (e.g. [apparel, drinkware]) or remove this line for all.
+  categories: [apparel]
   score_threshold: 80            # CEO launches products scoring >= this (0-100)
   # Cold start: with little/no sales history, keep creating products while
   # learning — never stop just because confidence is imperfect. Each cycle

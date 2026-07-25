@@ -10,6 +10,9 @@ from onassis.revenue import RevenueEngine
 
 @pytest.fixture
 def engine(config, db):
+    # Scoring/variety tests exercise the FULL catalogue; the shipped default is
+    # now apparel-first (categories: [apparel]), so clear the allowlist here.
+    config.expansion = {**config.expansion, "categories": []}
     return RevenueExpansionEngine(config, db)
 
 
@@ -25,13 +28,23 @@ def test_catalogue_is_the_phase1_ten(engine):
     }
 
 
+def test_categories_allowlist_makes_an_apparel_only_store(config, db):
+    """The shipped default (categories: [apparel]) builds ONLY clothing for new
+    designs; clearing it restores the full catalogue."""
+    apparel = RevenueExpansionEngine(config, db)   # config.yaml default
+    keys = {p["key"] for p in apparel.catalogue()}
+    assert keys == {"premium_tshirt", "heavyweight_hoodie", "sweatshirt"}
+    config.expansion = {**config.expansion, "categories": []}
+    assert len(RevenueExpansionEngine(config, db).catalogue()) == 10
+
+
 def test_unavailable_product_is_skipped_gracefully(config, db):
     # Simulate a temporary Gelato outage for one product.
     cat = [dict(p) for p in config.expansion["catalogue"]]
     for p in cat:
         if p["key"] == "ceramic_mug":
             p["available"] = False
-    config.expansion = {**config.expansion, "catalogue": cat}
+    config.expansion = {**config.expansion, "catalogue": cat, "categories": []}
     engine = RevenueExpansionEngine(config, db)
 
     keys = [p["key"] for p in engine.catalogue()]
@@ -110,7 +123,8 @@ def test_build_mode_fills_category_gaps_first(config, db):
 
 def test_variants_capped_at_max(config, db):
     """Even with a very low threshold, no more than max_variants launch."""
-    config.expansion = {**config.expansion, "score_threshold": 1, "max_variants": 4}
+    config.expansion = {**config.expansion, "score_threshold": 1, "max_variants": 4,
+                        "categories": []}
     engine = RevenueExpansionEngine(config, db)
     plan = engine.plan(1)
     assert plan["selection_mode"] == "threshold"
@@ -156,6 +170,7 @@ def test_threshold_is_configurable(config, db):
 # --- Learning from sales --------------------------------------------
 
 def test_learning_raises_winners_and_lowers_losers(config, db):
+    config.expansion = {**config.expansion, "categories": []}   # score full catalogue
     engine = RevenueExpansionEngine(config, db)
     revenue = RevenueEngine(config, db)
 

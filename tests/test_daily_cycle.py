@@ -133,6 +133,9 @@ def production_cycle(config, db, tmp_path):
                          "enabled_modes": ["dry_run", "draft", "live"],
                          "max_retries": 3, "min_go_live_margin": 0.10}
     config.launch = {"policy": "automatic", "auto_go_live": True}
+    # These tests exercise the full pipeline/variety; the shipped default is now
+    # apparel-first, so clear the category allowlist for the full catalogue.
+    config.expansion = {**(config.expansion or {}), "categories": []}
     # Tiny frames + a stub encoder so the launch stage's clip render is instant
     # (no full-res Pillow composition, no ffmpeg) in tests.
     config.content = {**(config.content or {}), "reel_size": [96, 170],

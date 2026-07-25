@@ -89,7 +89,16 @@ class RevenueExpansionEngine:
             items = list(by_key.values())
         if include_unavailable:
             return items
-        return [p for p in items if p.get("available", True)]
+        items = [p for p in items if p.get("available", True)]
+        # Category allowlist (e.g. ["apparel"]) — an apparel-first store builds
+        # ONLY clothing for new designs; existing non-apparel products stay live.
+        # Empty/absent → the full catalogue (unchanged behaviour).
+        allow = self.cfg.get("categories")
+        if allow:
+            from onassis.collections import categorise
+            allowed = {str(c).lower() for c in allow}
+            items = [p for p in items if categorise(p.get("key", "")) in allowed]
+        return items
 
     def _synced_catalogue(self) -> list[dict[str, Any]]:
         """Products synced from Gelato's catalogue, in entry shape (empty when

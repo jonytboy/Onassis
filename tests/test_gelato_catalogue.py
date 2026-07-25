@@ -86,6 +86,7 @@ def test_synced_catalogue_feeds_the_expansion_engine(config, db):
     """Once synced, the Expansion Engine builds from the Gelato catalogue —
     including categories the config list never had (Cushions, Aprons)."""
     from onassis.expansion import RevenueExpansionEngine
+    config.expansion = {**config.expansion, "categories": []}   # full catalogue
     _sync(config, db).sync()
     engine = RevenueExpansionEngine(config, db)
     keys = {p["key"] for p in engine.catalogue()}
@@ -98,6 +99,7 @@ def test_synced_catalogue_feeds_the_expansion_engine(config, db):
 def test_no_sync_leaves_the_config_catalogue_untouched(config, db):
     """With nothing synced, the Expansion catalogue is the config list as before."""
     from onassis.expansion import RevenueExpansionEngine
+    config.expansion = {**config.expansion, "categories": []}   # full catalogue
     engine = RevenueExpansionEngine(config, db)
     assert len(engine.catalogue()) == 10          # the phase-1 ten, unchanged
 

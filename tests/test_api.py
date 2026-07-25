@@ -655,15 +655,16 @@ def test_opportunities_endpoints(app_and_client):
 def test_expansion_endpoints(app_and_client):
     _, client = app_and_client
 
+    # Apparel-first default (config.yaml categories: [apparel]) → the 3 garments.
     catalogue = client.get("/expansion/catalogue").json()
-    assert len(catalogue) == 10
+    assert len(catalogue) == 3
 
     plan = client.post("/expansion/plan/1").json()
-    assert plan["products_scored"] == 10
-    assert 1 <= plan["products_launched"] < 10   # the commercial set, not all ten
+    assert plan["products_scored"] == 3
+    assert 0 <= plan["products_launched"] <= 3   # the commercial set (scoring-dependent)
 
     scores = client.get("/expansion/plan/1").json()
-    assert len(scores) == 10 and scores[0]["composite_score"] >= scores[-1]["composite_score"]
+    assert len(scores) == 3 and scores[0]["composite_score"] >= scores[-1]["composite_score"]
 
     assert isinstance(client.get("/expansion/performance").json(), list)
 
