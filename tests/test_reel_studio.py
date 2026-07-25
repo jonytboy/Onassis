@@ -50,7 +50,7 @@ def test_studio_render_uses_injected_encoder(tmp_path):
     captured = {}
 
     def stub_encoder(frames, out_path, *, fps):
-        captured["frames"] = len(frames)
+        captured["frames"] = sum(1 for _ in frames)   # frames stream in now
         captured["fps"] = fps
         with open(out_path, "wb") as fh:
             fh.write(b"\x00\x00\x00\x18ftypmp42")   # pretend mp4

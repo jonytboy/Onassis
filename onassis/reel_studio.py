@@ -26,7 +26,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
@@ -204,37 +204,68 @@ def _blend_tail(a: list[Image.Image], b: list[Image.Image], n: int) -> list[Imag
     return a[:-n] + mid + b[n:]
 
 
-def compose_frames(spec: ReelSpec) -> list[Image.Image]:
-    """Render a ReelSpec into 9:16 frames (pure Pillow — no ffmpeg).
+def _slide_frames(sl: "Slide", size: tuple[int, int]) -> Iterator[Image.Image]:
+    """Yield one slide's frames lazily (Ken-Burns motion + fading text scrim)."""
+    src = _load(sl.image, size)
+    n = max(1, sl.frames)
+    overlay = _text_overlay(size, sl.text, bold=sl.bold, y=sl.text_y,
+                            caption=sl.caption)
+    fade = max(1, int(n * 0.2))
+    for i in range(n):
+        f = _ken_burns(src, i, n, sl.pan, size)
+        if i < fade:
+            a = i / fade
+        elif i >= n - fade:
+            a = (n - 1 - i) / fade
+        else:
+            a = 1.0
+        yield _apply_overlay(f, overlay, min(1.0, max(0.0, a)))
 
-    Eased Ken-Burns motion, a readable text scrim that fades in/out per slide,
-    and short crossfades between slides — so it feels produced, not a rushed
-    slideshow."""
-    slides: list[list[Image.Image]] = []
-    for sl in spec.slides:
-        src = _load(sl.image, spec.size)
-        n = max(1, sl.frames)
-        overlay = _text_overlay(spec.size, sl.text, bold=sl.bold, y=sl.text_y,
-                                caption=sl.caption)
-        fade = max(1, int(n * 0.2))                   # text fades in and out
-        frames: list[Image.Image] = []
-        for i in range(n):
-            f = _ken_burns(src, i, n, sl.pan, spec.size)
-            if i < fade:
-                a = i / fade
-            elif i >= n - fade:
-                a = (n - 1 - i) / fade
-            else:
-                a = 1.0
-            frames.append(_apply_overlay(f, overlay, min(1.0, max(0.0, a))))
-        slides.append(frames)
+
+def _xfade_for(spec: ReelSpec) -> int:
+    if len(spec.slides) < 2:
+        return 0
+    return max(0, min(spec.xfade_frames,
+                      min(max(1, s.frames) for s in spec.slides) // 2))
+
+
+def frame_count(spec: ReelSpec) -> int:
+    """How many frames the reel will have — computed from the spec, so the
+    renderer never has to hold them all just to count."""
+    total = sum(max(1, s.frames) for s in spec.slides)
+    return total - _xfade_for(spec) * max(0, len(spec.slides) - 1)
+
+
+def iter_frames(spec: ReelSpec) -> Iterator[Image.Image]:
+    """Stream a ReelSpec's 9:16 frames ONE AT A TIME (low memory — never holds
+    the whole reel), with eased Ken-Burns motion, a fading text scrim, and short
+    crossfades between slides. Buffers at most ~xfade frames at a boundary."""
+    slides = spec.slides
+    if not slides:
+        return
     if len(slides) == 1:
-        return slides[0]
-    xf = max(0, min(spec.xfade_frames, min(len(s) for s in slides) // 2))
-    out = list(slides[0])
-    for nxt in slides[1:]:
-        out = _blend_tail(out, nxt, xf)
-    return out
+        yield from _slide_frames(slides[0], spec.size)
+        return
+    xf = _xfade_for(spec)
+    prev_tail: list[Image.Image] | None = None
+    for idx, sl in enumerate(slides):
+        n = max(1, sl.frames)
+        last = idx == len(slides) - 1
+        tail: list[Image.Image] = []
+        for i, frame in enumerate(_slide_frames(sl, spec.size)):
+            if prev_tail is not None and i < xf:      # crossfade in from prev slide
+                yield Image.blend(prev_tail[i], frame, (i + 1) / (xf + 1))
+            elif not last and i >= n - xf:            # hold the tail for next slide
+                tail.append(frame)
+            else:
+                yield frame
+        prev_tail = None if last else tail
+
+
+def compose_frames(spec: ReelSpec) -> list[Image.Image]:
+    """Materialise every frame (backwards-compatible helper). Prefer
+    :func:`iter_frames` for rendering — it streams and stays low-memory."""
+    return list(iter_frames(spec))
 
 
 def _ffmpeg_encode(frames: list[Image.Image], out_path: str, *, fps: int) -> str:
@@ -276,13 +307,14 @@ class ReelStudio:
     def render(self, spec: ReelSpec, out_path: str | Path) -> dict[str, Any]:
         out_path = str(out_path)
         Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-        frames = compose_frames(spec)
-        self._encode(frames, out_path, fps=spec.fps)
-        duration = round(len(frames) / spec.fps, 1)
+        # Stream frames to the encoder (never hold the whole reel in memory).
+        n_frames = frame_count(spec)
+        self._encode(iter_frames(spec), out_path, fps=spec.fps)
+        duration = round(n_frames / spec.fps, 1)
         return {
             "path": out_path, "fmt": spec.fmt, "caption": spec.caption,
             "hashtags": list(spec.hashtags), "sound": spec.sound,
-            "duration_s": duration, "frames": len(frames),
+            "duration_s": duration, "frames": n_frames,
             "product_key": spec.product_key, "campaign_id": spec.campaign_id,
             "listing_url": spec.listing_url, "size": list(spec.size),
         }
