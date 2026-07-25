@@ -175,6 +175,18 @@ class MetaGraphClient:
             raise RuntimeError(f"Meta GET /{node_id} HTTP {resp.status_code}: {resp.text}")
         return resp.json()
 
+    def debug_token(self, input_token: str, app_id: str,
+                    app_secret: str) -> dict[str, Any]:
+        """Inspect a token: its type (USER/PAGE), granted scopes and expiry."""
+        import httpx
+
+        resp = httpx.get(f"{self.base}/debug_token", params={
+            "input_token": input_token,
+            "access_token": f"{app_id}|{app_secret}"}, timeout=self.timeout)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Meta debug_token HTTP {resp.status_code}: {resp.text}")
+        return (resp.json() or {}).get("data", {})
+
     def exchange_long_lived(self, app_id: str, app_secret: str,
                             short_token: str) -> str:
         """Exchange a short-lived user token for a long-lived one (~60 days)."""

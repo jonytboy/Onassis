@@ -216,6 +216,11 @@ def _parse_args() -> argparse.Namespace:
              "(needs App ID + Secret set on Integrations → Facebook) and save it.",
     )
     parser.add_argument(
+        "--facebook-check", action="store_true",
+        help="Diagnose the saved Facebook token: type, scopes, expiry, and "
+             "whether it can publish.",
+    )
+    parser.add_argument(
         "--serve", action="store_true", help="Run the REST API (Swagger at /docs)."
     )
     parser.add_argument("--host", default="0.0.0.0", help="API host (with --serve).")
@@ -930,6 +935,48 @@ def main() -> int:
             return 1
         print(f"\nETSY VIDEOS — {res['added']} uploaded, {res['skipped']} "
               f"already had one / skipped (of {res['checked']} listing(s)).")
+        return 0
+
+    if args.facebook_check:
+        from datetime import datetime, timezone
+
+        from onassis.connectors.social import MetaGraphClient
+        from onassis.integrations import apply_integration_overrides
+
+        apply_integration_overrides(config, db)
+        meta = config.meta or {}
+        token = meta.get("page_access_token")
+        app_id, secret = meta.get("app_id"), meta.get("app_secret")
+        if not token:
+            print("No Facebook token saved. Add one on Integrations → Facebook.")
+            return 1
+        if not app_id or not secret:
+            print("Set App ID + App Secret on Integrations → Facebook to inspect "
+                  "the token.")
+            return 1
+        try:
+            info = MetaGraphClient(access_token=token).debug_token(token, app_id, secret)
+        except Exception as exc:  # noqa: BLE001
+            print(f"Could not inspect the token: {exc}")
+            return 1
+        scopes = info.get("scopes") or []
+        exp = info.get("expires_at")
+        exp_txt = ("never" if not exp else
+                   datetime.fromtimestamp(exp, tz=timezone.utc).strftime("%Y-%m-%d"))
+        print(f"\nFACEBOOK TOKEN — type {info.get('type', '?')}, "
+              f"valid {'yes' if info.get('is_valid') else 'NO'}, expires {exp_txt}.")
+        print(f"  scopes: {', '.join(scopes) or '(none)'}")
+        need = [s for s in ("pages_show_list", "pages_read_engagement",
+                            "pages_manage_posts") if s not in scopes]
+        if info.get("type") != "PAGE":
+            print("  ✗ This is a USER token — you must use the PAGE token. Run "
+                  "--facebook-token to derive it (or use a System User token).")
+        if need:
+            print(f"  ✗ MISSING scope(s): {', '.join(need)} — add these to the "
+                  "token; without pages_manage_posts you cannot publish.")
+        elif info.get("type") == "PAGE":
+            print("  ✓ Looks good — type PAGE with publish scope. --post-facebook "
+                  "should work.")
         return 0
 
     if args.facebook_token:
