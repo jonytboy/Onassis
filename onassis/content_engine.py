@@ -285,10 +285,14 @@ class ContentEngine:
             if r.get("clips"):
                 counts["built_products"] += 1
                 made.extend(r["clips"])
+                log.info("Clips: built %d for %s (%d total).",
+                         len(r["clips"]), name, len(made))
             else:
                 counts["no_images"] += 1
                 details.append({"product": name,
                                 "reason": r.get("reason", "no clips built")})
+                log.info("Clips: skipped %s — %s.", name,
+                         r.get("reason", "no clips built"))
         return {"built": len(made[:limit]), "skipped": counts["already_have"],
                 "no_package": counts["no_images"], "clips": made[:limit],
                 "counts": counts, "details": details[:50]}
