@@ -50,6 +50,15 @@ class FacebookPublisher(_MetaBase):
         res = self._c().page_feed(self.cfg.get("facebook_page_id"), message, link)
         return {"ok": True, "ref": str(res.get("id", ""))}
 
+    def post_video(self, video_url: str, message: str = "") -> dict[str, Any]:
+        """Publish a video to the Page from a public mp4 URL. Returns ``{ok, ref}``."""
+        if not self.can_publish:
+            return {"ok": False, "skipped": True, "reason": "Facebook not configured."}
+        if not video_url:
+            return {"ok": False, "skipped": True, "reason": "No video URL."}
+        res = self._c().page_video(self.cfg.get("facebook_page_id"), video_url, message)
+        return {"ok": True, "ref": str(res.get("id", ""))}
+
     def test_connection(self) -> dict[str, Any]:
         if not self.can_publish:
             return {"ok": False, "configured": False,
@@ -113,6 +122,11 @@ class MetaGraphClient:
         if link:
             body["link"] = link
         return self._post(f"/{page_id}/feed", body)
+
+    def page_video(self, page_id: str, video_url: str, description: str) -> dict[str, Any]:
+        return self._post(f"/{page_id}/videos", {
+            "file_url": video_url, "description": description,
+            "access_token": self.access_token})
 
     def ig_create_media(self, ig_user_id: str, image_url: str,
                         caption: str) -> dict[str, Any]:

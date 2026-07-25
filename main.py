@@ -207,6 +207,10 @@ def _parse_args() -> argparse.Namespace:
              "(idempotent; build clips first).",
     )
     parser.add_argument(
+        "--post-facebook", action="store_true",
+        help="Queue + post blogs (as links) and videos to the Facebook Page.",
+    )
+    parser.add_argument(
         "--serve", action="store_true", help="Run the REST API (Swagger at /docs)."
     )
     parser.add_argument("--host", default="0.0.0.0", help="API host (with --serve).")
@@ -921,6 +925,29 @@ def main() -> int:
             return 1
         print(f"\nETSY VIDEOS — {res['added']} uploaded, {res['skipped']} "
               f"already had one / skipped (of {res['checked']} listing(s)).")
+        return 0
+
+    if args.post_facebook:
+        from onassis.content_engine import ContentEngine
+        from onassis.distribution import ChannelDistributor
+        from onassis.integrations import apply_integration_overrides
+
+        apply_integration_overrides(config, db)
+        dist = ChannelDistributor(config, db)
+        if not dist.can_distribute("facebook"):
+            print("Facebook isn't connected — set the Page Access Token + Page ID "
+                  "on Integrations → Facebook, then re-run.")
+            return 1
+        q = ContentEngine(config, db).queue_facebook_posts()
+        # Re-queue anything the daily run skipped/failed earlier (e.g. the toggle
+        # was off) so an explicit push always ships everything outstanding.
+        db.reset_failed_marketing_assets("facebook", include_skipped=True)
+        print(f"\nFACEBOOK — queued {q.get('blogs', 0)} blog link(s) + "
+              f"{q.get('videos', 0)} video(s).")
+        out = dist.distribute(channels=["facebook"], force=True)
+        fb = (out.get("by_channel") or {}).get("facebook", {})
+        print(f"  posted {fb.get('posted', 0)}, failed {fb.get('failed', 0)}, "
+              f"skipped {fb.get('skipped', 0)}.")
         return 0
 
     if args.serve:

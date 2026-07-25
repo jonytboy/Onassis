@@ -244,6 +244,34 @@ def test_batch_build_respects_the_limit(config, db, tmp_path):
     assert r["built"] == 2                     # capped, though 3 formats exist
 
 
+def test_queue_facebook_posts_from_blogs_and_videos(config, db):
+    """Published blog articles become FB link posts and product clips become FB
+    video posts; re-running dedupes (idempotent)."""
+    cid, key = 3, "mug"
+    db.insert_product({"sku": "MUG", "name": "Mug", "campaign_id": cid,
+                       "product_key": key, "active": True})
+    # A published blog asset with a storefront URL in its delivery_ref.
+    bid = db.insert_marketing_asset({"campaign_id": cid, "product_key": key,
+                                     "channel": "blog", "payload": {"title": "Slow Mornings"}})
+    db.schedule_marketing_asset(bid, "2026-01-01")
+    db.set_marketing_asset_delivery(bid, "posted",
+                                    ref="https://shop.example/blogs/news/slow-mornings")
+    # A rendered clip for the product.
+    db.insert_short_form({"campaign_id": cid, "product_id": f"{cid}-{key}",
+                          "product_key": key, "fmt": "style_slide", "path": "/x.mp4",
+                          "caption": "c", "hashtags": [], "sound": "s", "duration_s": 8,
+                          "listing_url": "u"})
+    eng = _engine(config, db)
+    eng.cfg["public_base"] = "https://cdn.example"          # for reel URLs
+    r = eng.queue_facebook_posts()
+    assert r["blogs"] == 1 and r["videos"] == 1
+    fb = db.list_marketing_assets(channel="facebook")
+    assert len(fb) == 2
+    kinds = {("video" if (a["payload"]["post"].get("video_url")) else "link") for a in fb}
+    assert kinds == {"link", "video"}
+    assert eng.queue_facebook_posts()["queued"] == 0        # idempotent
+
+
 class _FakeShopifyMedia:
     """Serves product images from 'Shopify' and writes them locally on download."""
 

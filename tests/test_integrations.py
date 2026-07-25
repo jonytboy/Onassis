@@ -104,3 +104,18 @@ def test_health_warns_when_credentials_change_after_test(config, db):
 def test_configured_but_untested_is_warning(config, db):
     config.email = {"smtp_host": "smtp.x", "from_address": "a@x", "to_address": "b@x"}
     assert _mgr(config, db).detail("email")["health"] == "warning"
+
+
+def test_facebook_credentials_apply_to_config_meta(config, db):
+    """Regression: the Facebook/Instagram integrations must overlay onto
+    config.meta (where the connectors read), not a non-existent config.facebook —
+    otherwise saved Page credentials never reach the poster."""
+    from onassis.integrations import apply_integration_overrides
+
+    config.meta = {}
+    _mgr(config, db).save("facebook", {"page_access_token": "TOK",
+                                       "facebook_page_id": "PAGE"})
+    config.meta = {}
+    apply_integration_overrides(config, db)
+    assert config.meta.get("page_access_token") == "TOK"
+    assert config.meta.get("facebook_page_id") == "PAGE"

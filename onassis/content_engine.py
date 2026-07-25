@@ -633,6 +633,63 @@ class ContentEngine:
                               "listing yet — build clips first."}
         return {"ok": True, **conn.attach_product_videos(items)}
 
+    def queue_facebook_posts(self) -> dict[str, Any]:
+        """Queue Facebook Page posts for the content we've produced: a link post
+        for each published blog article, and a video post for each product's
+        slideshow. Idempotent — dedupes against Facebook assets already queued —
+        so it's safe to run every day. The existing distributor ships them (once
+        Facebook is connected and the channel toggle is on)."""
+        existing_links, existing_videos = set(), set()
+        for a in self.db.list_marketing_assets(channel="facebook"):
+            pl = a.get("payload") or {}
+            post = pl.get("post") or {}
+            if post.get("link"):
+                existing_links.add(post["link"])
+            if post.get("video_url") or pl.get("video_url"):
+                existing_videos.add(post.get("video_url") or pl.get("video_url"))
+        blogs = videos = 0
+        # 1) Published blog articles → link posts (drives traffic to the store).
+        for a in self.db.list_marketing_assets(channel="blog"):
+            if (a.get("status") or "") != "posted":
+                continue
+            ref = a.get("delivery_ref") or ""
+            link = next((p.strip() for p in ref.split("|")
+                         if p.strip().startswith("http")), "")
+            if not link or link in existing_links:
+                continue
+            pl = a.get("payload") or {}
+            title = pl.get("title") or "New on the blog"
+            self.db.insert_marketing_asset({
+                "campaign_id": a.get("campaign_id"), "product_key": a.get("product_key"),
+                "channel": "facebook",
+                "payload": {"post": {"body": f"{title}\n\nRead more on our blog:",
+                                     "link": link}}})
+            existing_links.add(link)
+            blogs += 1
+        # 2) Product slideshow clips → video posts.
+        base = self._public_base()
+        if base:
+            for p in self.db.list_products():
+                if not p.get("active", 1):
+                    continue
+                key = (p.get("product_key") or p.get("sku")
+                       or (f"product-{p.get('id')}" if p.get("id") else None))
+                cid = p.get("campaign_id")
+                if not cid or not key:
+                    continue
+                urls = self._reel_urls(cid, key)
+                if not urls or urls[0] in existing_videos:
+                    continue
+                name = p.get("name") or key
+                self.db.insert_marketing_asset({
+                    "campaign_id": cid, "product_key": key, "channel": "facebook",
+                    "payload": {"post": {"video_url": urls[0],
+                                         "body": f"{name} — see it in action ✨"}}})
+                existing_videos.add(urls[0])
+                videos += 1
+        return {"ok": True, "blogs": blogs, "videos": videos,
+                "queued": blogs + videos}
+
     def attach_videos_to_etsy(self) -> dict[str, Any]:
         """Upload each product's slideshow video to its Etsy listing. Idempotent
         (skips listings that already have a video). Needs the clip rendered

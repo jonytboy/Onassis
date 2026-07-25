@@ -353,6 +353,14 @@ class IntegrationManager:
             img[field_key] = value
             self.config.image = img
             return
+        if key in ("facebook", "instagram"):
+            # Both live under a single Meta Graph section (config.meta); the
+            # connectors read config.meta, so the UI-saved Page token / IDs must
+            # land there — not on a non-existent config.facebook/instagram.
+            meta = self.config.meta or {}
+            meta[field_key] = value
+            self.config.meta = meta
+            return
         section = getattr(self.config, key, None)
         if isinstance(section, dict):
             section[field_key] = value

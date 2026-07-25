@@ -69,10 +69,13 @@ class ChannelDistributor:
     # --- Distribute -------------------------------------------------
 
     def distribute(self, limit: int = 100, due_on: str | None = None,
-                   channels: list[str] | None = None) -> dict[str, Any]:
+                   channels: list[str] | None = None,
+                   force: bool = False) -> dict[str, Any]:
         """Deliver every undelivered IG/FB/Blog/Email asset that is due today or
         earlier (or unscheduled). Idempotent. ``channels`` restricts to a subset
-        (e.g. ['blog'] to publish only the first-party Shopify blog)."""
+        (e.g. ['blog'] to publish only the first-party Shopify blog). ``force``
+        bypasses the operator channel toggle — for an explicit, user-invoked push
+        of one channel (the daily run never forces)."""
         from datetime import datetime, timezone
 
         chans = channels or CHANNELS
@@ -83,7 +86,7 @@ class ChannelDistributor:
         by_channel: dict[str, dict[str, int]] = {c: {"posted": 0, "failed": 0, "skipped": 0}
                                                  for c in chans}
         for asset in assets:
-            outcome = self._dispatch(asset)
+            outcome = self._dispatch(asset, force=force)
             self.db.set_marketing_asset_delivery(
                 asset["id"], outcome["status"], ref=outcome.get("ref"),
                 error=outcome.get("error"))
@@ -104,16 +107,20 @@ class ChannelDistributor:
         result["requeued"] = requeued
         return result
 
-    def _dispatch(self, asset: dict[str, Any]) -> dict[str, Any]:
+    def _dispatch(self, asset: dict[str, Any], force: bool = False) -> dict[str, Any]:
         channel = asset["channel"]
         payload = asset.get("payload") or {}
         url = asset.get("listing_url") or ""
-        if not self._enabled(channel):
+        if not force and not self._enabled(channel):
             return {"status": "skipped", "error": f"{channel} disabled in settings"}
         try:
             if channel == "facebook":
                 post = payload.get("post") or {}
-                r = self.facebook.post(post.get("body") or "", post.get("link") or url)
+                video_url = post.get("video_url") or payload.get("video_url")
+                if video_url:
+                    r = self.facebook.post_video(video_url, post.get("body") or "")
+                else:
+                    r = self.facebook.post(post.get("body") or "", post.get("link") or url)
             elif channel == "instagram":
                 caption = (payload.get("captions") or [""])[0]
                 r = self.instagram.post(caption, image_url=payload.get("image_url"))

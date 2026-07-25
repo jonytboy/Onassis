@@ -7,10 +7,13 @@ from onassis.distribution import ChannelDistributor
 
 class FakeFacebook:
     can_publish = True
-    def __init__(self): self.calls = 0
+    def __init__(self): self.calls = 0; self.videos = []
     def post(self, body, link=None):
         self.calls += 1
         return {"ok": True, "ref": "fb1"}
+    def post_video(self, video_url, message=""):
+        self.videos.append((video_url, message))
+        return {"ok": True, "ref": "fbv1"}
 
 
 class FakeInstagram:
@@ -181,3 +184,30 @@ def test_facebook_toggle_off_then_on(config, db):
                             email=FakeEmail(), shopify=FakeShopifyBlog())
     r = d2.distribute()
     assert r["posted"] == 1 and fb2.calls == 1
+
+
+def test_facebook_video_asset_posts_via_post_video(config, db):
+    """A facebook asset carrying a video_url is posted as a Page video, and the
+    operator toggle can be bypassed with force=True (explicit push)."""
+    fb = FakeFacebook()
+    dist = ChannelDistributor(config, db, instagram=FakeInstagram(), facebook=fb,
+                              email=FakeEmail(), shopify=FakeShopifyBlog())
+    _seed(db, "facebook", {"post": {"video_url": "https://cdn/x.mp4", "body": "Mug ✨"}})
+    # An explicit forced push posts the video even with the toggle off (default).
+    out = dist.distribute(channels=["facebook"], force=True)
+    assert out["by_channel"]["facebook"]["posted"] == 1
+    assert fb.videos == [("https://cdn/x.mp4", "Mug ✨")]
+
+
+def test_skipped_facebook_asset_can_be_requeued_and_forced(config, db):
+    """The daily run skips FB when the toggle is off (marking assets skipped); an
+    explicit push re-queues those and force-posts them."""
+    fb = FakeFacebook()
+    dist = ChannelDistributor(config, db, instagram=FakeInstagram(), facebook=fb,
+                              email=FakeEmail(), shopify=FakeShopifyBlog())
+    _seed(db, "facebook", {"post": {"body": "hi", "link": "https://shop/blogs/news/1"}})
+    assert dist.distribute(channels=["facebook"])["by_channel"]["facebook"]["skipped"] == 1
+    # Explicit push: re-queue the skipped one, then force.
+    db.reset_failed_marketing_assets("facebook", include_skipped=True)
+    out = dist.distribute(channels=["facebook"], force=True)
+    assert out["by_channel"]["facebook"]["posted"] == 1 and fb.calls == 1
