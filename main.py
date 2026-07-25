@@ -944,7 +944,14 @@ def main() -> int:
             print("Set App ID + App Secret on Integrations → Facebook first "
                   "(needed to mint a long-lived token).")
             return 1
-        res = mint_page_token(app_id, secret, args.facebook_token, page_id)
+        try:
+            res = mint_page_token(app_id, secret, args.facebook_token, page_id)
+        except Exception as exc:  # noqa: BLE001 — turn Meta errors into guidance
+            print(f"Facebook rejected the request: {exc}")
+            print("\nThe token needs these scopes — regenerate it in Graph API "
+                  "Explorer with ALL of them ticked:")
+            print("  pages_show_list, pages_read_engagement, pages_manage_posts")
+            return 1
         if not res.get("ok"):
             print(f"Could not mint a Page token: {res.get('error')}")
             if res.get("pages"):
