@@ -406,6 +406,25 @@ def test_delete_content_removes_clip_file_and_assets(config, db, tmp_path):
     assert eng.delete_content("tiktok", 999999)["ok"] is False
 
 
+def test_clear_marketing_bulk_deletes_by_channel_and_status(config, db):
+    """clear_marketing wipes failed items and clears a channel's pending queue."""
+    a = db.insert_marketing_asset({"campaign_id": 1, "product_key": "p", "channel": "blog",
+                                   "payload": {"title": "ok"}})
+    db.set_marketing_asset_delivery(a, "posted", ref="u")
+    f = db.insert_marketing_asset({"campaign_id": 1, "product_key": "p", "channel": "blog",
+                                   "payload": {"title": "bad"}})
+    db.set_marketing_asset_delivery(f, "failed", error="boom")
+    db.insert_marketing_asset({"campaign_id": 1, "product_key": "p", "channel": "blog",
+                               "payload": {"title": "queued"}})   # pending
+    eng = _engine(config, db)
+    # Delete every failed item (across channels).
+    assert eng.clear_marketing(status="failed")["deleted"] == 1
+    # Clear the pending blog queue (leaves the posted one).
+    assert eng.clear_marketing(channel="blog", status="pending")["deleted"] == 1
+    remaining = db.list_marketing_assets(channel="blog")
+    assert len(remaining) == 1 and remaining[0]["status"] == "posted"
+
+
 def test_clear_clips_bulk_deletes_rows_and_files(config, db, tmp_path):
     """clear_clips wipes every short-form clip (and its file) — the fast reset
     before regenerating placeholder/duplicate clips."""

@@ -862,6 +862,16 @@ class ContentEngine:
         return {"ok": ok, "kind": kind, "id": item_id,
                 "error": None if ok else "No such asset."}
 
+    def clear_marketing(self, channel: str | None = None,
+                        status: str | None = None) -> dict[str, Any]:
+        """Bulk-delete marketing assets to de-clutter the Marketing tab — e.g. every
+        failed article (status='failed'), or a whole channel's queue. Returns
+        ``{ok, deleted}``."""
+        n = self.db.delete_marketing_assets(channel=channel, status=status)
+        log.info("Cleared %d marketing asset(s) (channel=%s, status=%s).",
+                 n, channel or "*", status or "*")
+        return {"ok": True, "deleted": n}
+
     def clear_clips(self, product_key: str | None = None) -> dict[str, Any]:
         """Delete short-form clips in bulk (all, or one product's) and remove their
         rendered files — the fast way to clear placeholder/duplicate clips before

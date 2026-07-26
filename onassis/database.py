@@ -2726,6 +2726,25 @@ class Database:
             cur = conn.execute("DELETE FROM marketing_assets WHERE id = ?", (asset_id,))
             return cur.rowcount > 0
 
+    def delete_marketing_assets(self, *, channel: str | None = None,
+                                status: str | None = None) -> int:
+        """Bulk-delete marketing assets by channel and/or status (for clearing a
+        cluttered queue — e.g. every failed article). ``status='pending'`` also
+        matches NULL status. Returns the number deleted."""
+        sql = "DELETE FROM marketing_assets WHERE 1=1"
+        params: list[Any] = []
+        if channel is not None:
+            sql += " AND channel = ?"
+            params.append(channel)
+        if status is not None:
+            if status == "pending":
+                sql += " AND (status IS NULL OR status = 'pending')"
+            else:
+                sql += " AND status = ?"
+                params.append(status)
+        with self._connect() as conn:
+            return conn.execute(sql, params).rowcount
+
     def upsert_product_performance(self, perf: dict[str, Any]) -> None:
         with self._connect() as conn:
             conn.execute(

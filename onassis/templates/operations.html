@@ -620,6 +620,8 @@
     <div class="panel" x-show="overview" style="margin-bottom:12px">
       <h2>Content Library
         <span style="float:right">
+          <button class="btn small" @click="clearMarketing({status:'failed'},'all failed items')">Delete failed</button>
+          <button class="btn small" @click="clearMarketing({channel:'blog',status:'pending'},'all pending blog articles')">Clear blog queue</button>
           <button class="btn small" @click="runMarketing()">Run marketing now</button>
         </span></h2>
       <div class="grid">
@@ -1408,6 +1410,12 @@ function ops(){
       const r=await this.post('/operations/api/content/reels/build',{limit:parseInt(n)||12});
       if(r&&r.status==='started'){ this.showToast('Building clips — watch the log (video rendering takes a moment).'); this.refreshRun(); this.pollLogs(); }
       else alert('Could not start: '+((r&&r.detail)||r?.error||'unknown')); },
+    async clearMarketing(filter,label){
+      if(!confirm('Delete '+(label||'these items')+'? This removes them from ONASSIS (it does not un-post anything already live).')) return;
+      const r=await this.post('/operations/api/marketing/clear',filter);
+      if(r&&r.ok){ this.showToast('Deleted '+((r&&r.deleted)||0)+' item(s).');
+        if(this.overview!==null) this.overview=await this.get('/operations/api/marketing/overview'); }
+      else alert('Could not clear: '+((r&&r.detail)||r?.error||'unknown')); },
     async clearClips(){
       if(!confirm('Delete ALL short-form clips and their video files? Use this to clear placeholder/duplicate clips before regenerating. This cannot be undone.')) return;
       const r=await this.post('/operations/api/content/reels/clear',{});

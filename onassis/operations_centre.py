@@ -1111,6 +1111,25 @@ def build_operations_router(get_state) -> APIRouter:
         get_state(request.app).add_log(f"Marketing: deleted {kind} #{result.get('id')}.")
         return result
 
+    @router.post("/api/marketing/clear")
+    def api_marketing_clear(request: Request, payload: dict | None = None) -> Any:
+        """Bulk-delete marketing assets to de-clutter the tab — by channel and/or
+        status (e.g. every failed article). Requires at least one filter."""
+        _require_operator(request)
+        body = payload or {}
+        channel = (body.get("channel") or None)
+        status = (body.get("status") or None)
+        if not channel and not status:
+            raise HTTPException(status_code=400,
+                                detail="Specify a channel and/or status to clear.")
+        if channel and channel not in {"blog", "facebook", "tiktok", "instagram", "email"}:
+            raise HTTPException(status_code=400, detail=f"Unknown channel '{channel}'.")
+        result = request.app.state.content.clear_marketing(channel=channel, status=status)
+        get_state(request.app).add_log(
+            f"Marketing: cleared {result.get('deleted', 0)} asset(s) "
+            f"(channel={channel or '*'}, status={status or '*'}).")
+        return result
+
     @router.post("/api/content/blog/rewrite-live")
     def api_rewrite_live_blog(request: Request) -> Any:
         """Rewrite existing live blog articles in place — Shopify product link,
