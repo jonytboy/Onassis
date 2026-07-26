@@ -406,6 +406,27 @@ def test_delete_content_removes_clip_file_and_assets(config, db, tmp_path):
     assert eng.delete_content("tiktok", 999999)["ok"] is False
 
 
+def test_content_skips_products_pending_approval(config, db, tmp_path):
+    """No blog is generated for a product still held pending approval (the bug:
+    placeholder-artwork drafts got blogs before the operator approved them)."""
+    _build_package(config, tmp_path, cid=1, key="approved_tee")
+    _build_package(config, tmp_path, cid=2, key="pending_tee")
+    db.insert_product({"sku": "APP", "name": "Approved Tee", "campaign_id": 1,
+                       "product_key": "approved_tee", "active": True})
+    db.insert_product({"sku": "PEND", "name": "Pending Tee", "campaign_id": 2,
+                       "product_key": "pending_tee", "active": True})
+    db.set_product_approval({"sku": "APP", "product_key": "approved_tee",
+                             "campaign_id": 1, "decision": "approved"})
+    db.set_product_approval({"sku": "PEND", "product_key": "pending_tee",
+                             "campaign_id": 2, "decision": "awaiting"})
+    eng = _engine(config, db)
+    eng.generate_blog()
+    keys = {a.get("product_key") for a in db.list_marketing_assets(channel="blog")}
+    assert "approved_tee" in keys and "pending_tee" not in keys
+    # And the clip builder skips the pending product too.
+    assert "pending_tee" not in {p["product_key"] for p in eng._content_products()}
+
+
 def test_clear_marketing_bulk_deletes_by_channel_and_status(config, db):
     """clear_marketing wipes failed items and clears a channel's pending queue."""
     a = db.insert_marketing_asset({"campaign_id": 1, "product_key": "p", "channel": "blog",

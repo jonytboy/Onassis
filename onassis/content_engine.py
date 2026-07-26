@@ -263,7 +263,9 @@ class ContentEngine:
         counts = {"inactive": 0, "no_campaign_or_key": 0, "already_have": 0,
                   "no_images": 0, "built_products": 0}
         details: list[dict[str, Any]] = []
-        for p in self.db.list_products():
+        # Approved/live products only — a product held pending approval (with its
+        # placeholder artwork) must not get clips built ahead of the operator's OK.
+        for p in self._content_products():
             if len(made) >= limit:
                 break
             if not p.get("active", 1):
@@ -359,6 +361,36 @@ class ContentEngine:
                  if c.get("product_key") == product_key and c.get("campaign_id") == campaign_id]
         return [f"{base}/reels/{campaign_id}/{product_key}/{c['fmt']}.mp4" for c in clips]
 
+    def _blocked_from_content(self) -> set[tuple[str, str]]:
+        """SKUs/product_keys the operator has NOT approved for publish — content
+        must never run ahead of approval. A product whose approval decision is
+        'awaiting' or 'rejected' is blocked; 'approved' or no approval row (legacy /
+        auto-published) is allowed."""
+        blocked: set[tuple[str, str]] = set()
+        try:
+            for a in self.db.list_product_approvals():
+                if (a.get("decision") or "awaiting") in ("awaiting", "rejected"):
+                    if a.get("sku"):
+                        blocked.add(("sku", a["sku"]))
+                    if a.get("product_key"):
+                        blocked.add(("pk", a["product_key"]))
+        except Exception:  # approvals are a gate, never a hard dependency
+            log.debug("approval lookup failed — not blocking content", exc_info=True)
+        return blocked
+
+    def _content_products(self) -> list[dict[str, Any]]:
+        """Active products that are cleared for marketing content — i.e. not held
+        pending (or rejected) in the approval workspace."""
+        blocked = self._blocked_from_content()
+        out = []
+        for p in self.db.list_products():
+            if not p.get("active", 1):
+                continue
+            if ("sku", p.get("sku")) in blocked or ("pk", p.get("product_key")) in blocked:
+                continue
+            out.append(p)
+        return out
+
     # --- Blog articles (on demand, deterministic) -------------------
 
     def generate_blog(self, limit: int = 50) -> dict[str, Any]:
@@ -376,7 +408,9 @@ class ContentEngine:
         me = MarketingEngine(self.config, self.db)
         have = {a.get("product_key") for a in self.db.list_marketing_assets(channel="blog")}
         made, skipped_existing, skipped_inactive = 0, 0, 0
-        products = self.db.list_products()
+        # Only approved/live products — never generate for a product still held
+        # pending approval (that's how placeholder-artwork drafts got blogs).
+        products = self._content_products()
         for p in products:
             if made >= limit:
                 break
@@ -495,7 +529,9 @@ class ContentEngine:
 
         me = MarketingEngine(self.config, self.db)
         pool: list[dict[str, Any]] = []
-        for p in self.db.list_products():
+        # Approved/live products only — the evergreen blog schedule must not cycle
+        # content for products still held pending approval.
+        for p in self._content_products():
             if not p.get("active", 1):
                 continue
             key = (p.get("product_key") or p.get("sku")
