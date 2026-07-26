@@ -269,15 +269,27 @@ def compose_frames(spec: ReelSpec) -> list[Image.Image]:
 
 
 def _ffmpeg_encode(frames: list[Image.Image], out_path: str, *, fps: int) -> str:
-    """Default encoder: frames → H.264 mp4 (silent) via ffmpeg."""
+    """Default encoder: frames → H.264 mp4 via ffmpeg.
+
+    The output is normalised to what every social platform (TikTok, Instagram
+    Reels, Buffer, Facebook) expects: H.264 High profile, ``yuv420p``, a constant
+    frame rate, ``+faststart`` for progressive download — and a **silent AAC audio
+    track**. That last one matters: TikTok/Buffer routinely reject a video with
+    *zero* audio streams, so we always mux a silent track rather than ship
+    audio-less MP4s that fail validation downstream."""
     with tempfile.TemporaryDirectory() as tmp:
         for i, fr in enumerate(frames):
             fr.save(os.path.join(tmp, f"f{i:05d}.png"))
         cmd = [
             "ffmpeg", "-y", "-framerate", str(fps),
             "-i", os.path.join(tmp, "f%05d.png"),
-            "-c:v", "libx264", "-pix_fmt", "yuv420p",
-            "-movflags", "+faststart", out_path,
+            # A silent stereo track — infinite source, trimmed to the video by
+            # -shortest — so the MP4 always carries an audio stream.
+            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+            "-c:v", "libx264", "-profile:v", "high", "-level", "4.1",
+            "-pix_fmt", "yuv420p", "-r", str(fps),
+            "-c:a", "aac", "-b:a", "128k", "-ar", "48000",
+            "-shortest", "-movflags", "+faststart", out_path,
         ]
         try:
             # Hard timeout so a wedged ffmpeg can never hang the whole build for
