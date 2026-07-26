@@ -184,12 +184,19 @@ class DailyCycle:
                          evids.get("added", 0), evids.get("skipped", 0))
             # Queue Facebook posts for new blogs + videos (distributor ships them).
             fb = engine.queue_facebook_posts()
-            ev = engine.queue_evergreen_facebook()      # rotate videos, cycle + loop
             tt = engine.queue_tiktok_posts()
+            from onassis.business_settings import BusinessSettings
+            settings = BusinessSettings(self.db, self.config)
+            if settings.get("evergreen_enabled"):
+                ev = engine.queue_evergreen_facebook()  # rotate videos, cycle + loop
+                er = engine.queue_evergreen_reels(       # rotate reels, cycle + loop
+                    per_run=int(settings.get("evergreen_reels_per_run")))
+            else:
+                ev = er = {"queued": 0}
             log.info("Social queue: FB +%d link(s)/+%d video(s)/+%d re-share(s), "
-                     "TikTok +%d video(s).",
+                     "TikTok/Reels +%d new/+%d evergreen.",
                      fb.get("blogs", 0), fb.get("videos", 0), ev.get("queued", 0),
-                     tt.get("videos", 0))
+                     tt.get("videos", 0), er.get("queued", 0))
         except Exception:  # scheduling/clip build is best-effort, never fail the push
             blog_sched = {}
             log.debug("blog scheduling / clip build skipped", exc_info=True)
@@ -198,7 +205,9 @@ class DailyCycle:
         # Make is the distribution path, per-product campaigns already went out at
         # launch, so we only publish the first-party blog directly here.
         if self.campaign_distributor.make.is_configured:
-            channels = self.distribution.distribute(channels=["blog"])
+            # Blog publishes first-party; reels drip out via Make (→ FB Reels /
+            # TikTok). New-product FB/IG campaigns already went out at launch.
+            channels = self.distribution.distribute(channels=["blog", "tiktok"])
         else:
             channels = self.distribution.distribute()
         funnel = self.traffic.snapshot(today)

@@ -330,6 +330,29 @@ def test_evergreen_facebook_reshares_least_recently_shared_first(config, db):
     assert eng.queue_evergreen_facebook(per_day=0)["queued"] == 0
 
 
+def test_evergreen_reels_cycles_and_respects_per_run(config, db):
+    """The evergreen reel drip queues N reels/run, oldest-shared first, onto the
+    tiktok channel (which Make routes to FB Reels/TikTok)."""
+    for i, name in ((1, "Alpha"), (2, "Beta")):
+        db.insert_product({"sku": f"P{i}", "name": name, "campaign_id": i,
+                           "product_key": f"p{i}", "active": True})
+        db.insert_short_form({"campaign_id": i, "product_id": f"{i}-p{i}",
+                              "product_key": f"p{i}", "fmt": "style_slide",
+                              "path": "/x.mp4", "caption": "c", "hashtags": [],
+                              "sound": "s", "duration_s": 8, "listing_url": "u"})
+    # Alpha already shared a reel; Beta never → Beta goes first.
+    db.insert_marketing_asset({"campaign_id": 1, "product_key": "p1", "channel": "tiktok",
+                               "payload": {"post": {"video_url": "https://cdn/p1.mp4"}}})
+    eng = _engine(config, db)
+    eng.cfg["public_base"] = "https://cdn.example"
+    r = eng.queue_evergreen_reels(per_run=1)
+    assert r["queued"] == 1
+    fresh = [a for a in db.list_marketing_assets(channel="tiktok")
+             if a["product_key"] == "p2"]
+    assert fresh and fresh[0]["payload"]["post"]["video_url"].endswith("/p2/style_slide.mp4")
+    assert eng.queue_evergreen_reels(per_run=0)["queued"] == 0
+
+
 def test_marketing_overview_aggregates_per_product(config, db):
     """The Marketing tab data groups clips, blogs and FB posts under each product
     with totals."""

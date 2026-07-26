@@ -89,6 +89,19 @@ SCHEMA: list[Setting] = [
             group="Channels",
             help="Send TikTok videos to the Make.com webhook (→ Buffer → TikTok) "
                  "instead of the direct TikTok API."),
+    Setting("evergreen_enabled", "Evergreen recycling", "bool",
+            lambda c: bool(_cfg(c, "content", "evergreen_enabled", True)),
+            group="Channels",
+            help="Re-post existing reels and videos on a rotation, cycling through "
+                 "all products and looping back to the start. Turn off to only post "
+                 "content when a new product launches."),
+    Setting("evergreen_reels_per_run", "Evergreen reels / run", "int",
+            lambda c: int(_cfg(c, "content", "evergreen_reels_per_run", 1)),
+            group="Channels", minimum=0, maximum=20,
+            help="How many reels to post per marketing run, cycling through all "
+                 "products (oldest-posted first) and looping back to the start. "
+                 "The frequency is the cron schedule — 1/run + an every-few-hours "
+                 "cron gives an every-few-hours drip. 0 = off."),
 ]
 _BY_KEY = {s.key: s for s in SCHEMA}
 

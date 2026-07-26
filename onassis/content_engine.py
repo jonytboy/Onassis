@@ -728,6 +728,49 @@ class ContentEngine:
             queued += 1
         return {"queued": queued}
 
+    def queue_evergreen_reels(self, per_run: int | None = None) -> dict[str, Any]:
+        """Re-share product reels on a rotation — least-recently-shared products
+        first — so the reel channel cycles through the whole catalogue and loops
+        back to the beginning. These go out on the ``tiktok`` channel (which the
+        Make router publishes to FB Reels / TikTok / etc). One per run by default;
+        the *frequency* is the cron cadence, so 1/run + an every-few-hours cron
+        gives an every-few-hours reel drip. ``evergreen_reels_per_run: 0`` = off."""
+        per_run = (per_run if per_run is not None
+                   else int(self.cfg.get("evergreen_reels_per_run", 1)))
+        base = self._public_base()
+        if per_run <= 0 or not base:
+            return {"queued": 0}
+        last_share: dict[str, str] = {}
+        for a in self.db.list_marketing_assets(channel="tiktok"):
+            k = a.get("product_key")
+            if k:
+                ts = a.get("created_at") or ""
+                if ts > last_share.get(k, ""):
+                    last_share[k] = ts
+        cands = []
+        for p in self.db.list_products():
+            if not p.get("active", 1):
+                continue
+            key = (p.get("product_key") or p.get("sku")
+                   or (f"product-{p.get('id')}" if p.get("id") else None))
+            cid = p.get("campaign_id")
+            if not cid or not key:
+                continue
+            urls = self._reel_urls(cid, key)
+            if not urls:
+                continue
+            cands.append((last_share.get(key, ""), cid, key,
+                          p.get("name") or key, urls[0]))
+        cands.sort(key=lambda x: x[0])          # oldest-shared (or never) first
+        queued = 0
+        for _, cid, key, name, url in cands[:per_run]:
+            self.db.insert_marketing_asset({
+                "campaign_id": cid, "product_key": key, "channel": "tiktok",
+                "payload": {"post": {"video_url": url,
+                                     "body": f"{name} ✨ #reels #SmallBusiness"}}})
+            queued += 1
+        return {"queued": queued}
+
     def marketing_overview(self) -> dict[str, Any]:
         """Everything the Marketing tab shows in one place: per-product content —
         slideshow clips, blog articles and Facebook posts — each with its status
