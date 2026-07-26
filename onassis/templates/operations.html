@@ -256,6 +256,32 @@
 
   <!-- BUSINESS -->
   <div x-show="tab==='business'">
+    <div class="panel" x-show="settings" style="margin-bottom:12px">
+      <h2>Business settings — tune the business without editing config.yaml</h2>
+      <template x-for="g in settingGroups()" :key="g">
+        <div style="margin-bottom:14px">
+          <div class="note" style="font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--fg)" x-text="g"></div>
+          <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(240px,1fr))">
+            <template x-for="s in (settings||[]).filter(x=>x.group===g)" :key="s.key">
+              <div class="stat">
+                <div class="k" x-text="s.label"></div>
+                <template x-if="s.kind==='bool'">
+                  <label style="display:flex;gap:8px;align-items:center;margin-top:6px">
+                    <input type="checkbox" x-model="s.value"><span class="note" x-text="s.value?'On':'Off'"></span></label>
+                </template>
+                <template x-if="s.kind!=='bool'">
+                  <input class="keybar" style="width:100%;margin-top:6px" type="number"
+                         :step="s.kind==='float'?0.01:1" :min="s.min" :max="s.max" x-model.number="s.value">
+                </template>
+                <div class="note" x-text="s.help"></div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+      <button class="btn primary" style="margin-top:4px" @click="saveSettings()"
+              :disabled="savingSettings" x-text="savingSettings?'Saving…':'Save settings'"></button>
+    </div>
     <div class="panel" x-show="business">
       <h2>Today's numbers — money, and nothing else</h2>
       <div class="grid">
@@ -964,27 +990,6 @@
 
   <!-- SYSTEM -->
   <div x-show="tab==='system'">
-    <div class="panel" x-show="settings" style="margin-bottom:12px">
-      <h2>Business settings — tune the business without editing config.yaml</h2>
-      <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(240px,1fr))">
-        <template x-for="s in (settings||[])" :key="s.key">
-          <div class="stat">
-            <div class="k" x-text="s.label"></div>
-            <template x-if="s.kind==='bool'">
-              <label style="display:flex;gap:8px;align-items:center;margin-top:6px">
-                <input type="checkbox" x-model="s.value"><span class="note" x-text="s.value?'On':'Off'"></span></label>
-            </template>
-            <template x-if="s.kind!=='bool'">
-              <input class="keybar" style="width:100%;margin-top:6px" type="number"
-                     :step="s.kind==='float'?0.01:1" :min="s.min" :max="s.max" x-model.number="s.value">
-            </template>
-            <div class="note" x-text="s.help"></div>
-          </div>
-        </template>
-      </div>
-      <button class="btn primary" style="margin-top:12px" @click="saveSettings()"
-              :disabled="savingSettings" x-text="savingSettings?'Saving…':'Save settings'"></button>
-    </div>
     <!-- Software Updates (Sprint 40.1) -->
     <div class="panel" x-show="updates" style="margin-bottom:12px">
       <h2>Software Updates</h2>
@@ -1255,7 +1260,8 @@ function ops(){
       }
       if(r&&r.mode===undefined&&r.ok===false) alert(a+' failed — see the live log.'); },
     async loadTab(t){ try{
-      if(t==='business') this.business=await this.get('/operations/api/business');
+      if(t==='business'){ this.business=await this.get('/operations/api/business');
+        this.settings=(await this.get('/operations/api/business-settings')).settings; }
       else if(t==='commercial'){ this.commercial=await this.get('/operations/api/commercial');
         this.commercialProducts=(await this.get('/operations/api/commercial/products')).products; }
       else if(t==='aicost'){ this.cfo=await this.get('/operations/api/cfo'); }
@@ -1274,7 +1280,6 @@ function ops(){
       else if(t==='approvals') this.approvals=await this.get('/operations/api/approvals');
       else if(t==='integrations') this.integrations=await this.get('/operations/api/integrations');
       else if(t==='system'){ this.system=await this.get('/operations/api/system');
-        this.settings=(await this.get('/operations/api/business-settings')).settings;
         this.updates=await this.get('/operations/api/updates');
         this.health=await this.get('/operations/api/health');
         this.deployHistory=(await this.get('/operations/api/updates/history')).deployments;
@@ -1471,6 +1476,7 @@ function ops(){
       this.showToast('Retry campaign #'+id+': '+((r&&r.status)||'failed')); this.loadTab('marketing'); this.pollLogs(); },
     async reconcileNow(){ const r=await this.post('/operations/api/system/reconcile');
       this.showToast('Self-healing: '+((r&&r.repaired)||0)+' issue(s) repaired.'); this.pollLogs(); },
+    settingGroups(){ const gs=[]; for(const s of (this.settings||[])){ if(s.group&&!gs.includes(s.group)) gs.push(s.group); } return gs; },
     async saveSettings(){ this.savingSettings=true;
       const changes={}; for(const s of (this.settings||[])) changes[s.key]=s.value;
       const r=await this.post('/operations/api/business-settings',{changes});
