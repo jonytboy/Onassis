@@ -1016,6 +1016,17 @@ def build_operations_router(get_state) -> APIRouter:
         _require_operator(request)
         return request.app.state.content.distribute()
 
+    @router.post("/api/content/reels/clear")
+    def api_clear_reels(request: Request, payload: dict | None = None) -> Any:
+        """Delete short-form clips in bulk (all, or one product's) and their files —
+        clears placeholder/duplicate clips before regenerating."""
+        _require_operator(request)
+        product_key = (payload or {}).get("product_key") or None
+        result = request.app.state.content.clear_clips(product_key=product_key)
+        get_state(request.app).add_log(
+            f"CONTENT: cleared {result.get('deleted', 0)} clip(s).")
+        return result
+
     @router.get("/api/content/blog")
     def api_blog_status(request: Request) -> Any:
         """Why the Shopify blog is or isn't publishing — the exact diagnosis,

@@ -819,6 +819,22 @@ class ContentEngine:
         return {"ok": ok, "kind": kind, "id": item_id,
                 "error": None if ok else "No such asset."}
 
+    def clear_clips(self, product_key: str | None = None) -> dict[str, Any]:
+        """Delete short-form clips in bulk (all, or one product's) and remove their
+        rendered files — the fast way to clear placeholder/duplicate clips before
+        regenerating. Returns ``{ok, deleted, files_removed}``."""
+        deleted = files = 0
+        for c in self.db.list_short_form(limit=5000):
+            if product_key and c.get("product_key") != product_key:
+                continue
+            r = self.delete_content("clip", c.get("id"))
+            if r.get("ok"):
+                deleted += 1
+                files += 1 if r.get("removed_file") else 0
+        log.info("Cleared %d clip(s) (%d file(s) removed)%s.", deleted, files,
+                 f" for {product_key}" if product_key else "")
+        return {"ok": True, "deleted": deleted, "files_removed": files}
+
     def queue_tiktok_posts(self) -> dict[str, Any]:
         """Queue a TikTok video post for each product's slideshow (idempotent).
         The distributor ships them once TikTok is connected and the toggle is on."""

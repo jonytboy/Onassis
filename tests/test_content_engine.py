@@ -383,6 +383,23 @@ def test_delete_content_removes_clip_file_and_assets(config, db, tmp_path):
     assert eng.delete_content("tiktok", 999999)["ok"] is False
 
 
+def test_clear_clips_bulk_deletes_rows_and_files(config, db, tmp_path):
+    """clear_clips wipes every short-form clip (and its file) — the fast reset
+    before regenerating placeholder/duplicate clips."""
+    for i in range(3):
+        f = tmp_path / f"c{i}.mp4"
+        f.write_bytes(b"v")
+        db.insert_short_form({"campaign_id": 8, "product_id": f"8-hoodie",
+                              "product_key": "hoodie", "fmt": f"style_slide_{i}",
+                              "path": str(f), "caption": "c", "hashtags": [],
+                              "sound": "", "duration_s": 7, "listing_url": "u"})
+    eng = _engine(config, db)
+    r = eng.clear_clips()
+    assert r["ok"] and r["deleted"] == 3 and r["files_removed"] == 3
+    assert db.list_short_form(limit=10) == []
+    assert not list(tmp_path.glob("*.mp4"))
+
+
 def test_credit_failure_never_substitutes_a_placeholder(config):
     """A billing/credit error must raise, never fall back to the dev renderer —
     otherwise the shop and videos silently fill with placeholder artwork."""

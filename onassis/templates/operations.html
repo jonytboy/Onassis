@@ -413,6 +413,7 @@
         <span style="float:right">
           <button class="btn small" @click="buildReels()">Build clips</button>
           <button class="btn small" @click="distributeReels()">Distribute queue</button>
+          <button class="btn small" @click="clearClips()">Delete all clips</button>
         </span></h2>
       <div class="note" style="margin-bottom:8px">Builds vertical 9:16 clips from your products in 3 tagged formats (style-slide, product-in-use, gifting). Clips carry an audio track — drop <b>royalty-free</b> tracks in <code>assets/music/</code> to mux music, else a silent track. Queue lives in <code>exports/reels/</code>; a Make webhook (if set) receives each package.</div>
       <div class="grid">
@@ -426,14 +427,15 @@
     <div class="panel">
       <h2>Recent clips</h2>
       <div style="overflow-x:auto">
-      <table><thead><tr><th>Product</th><th>Format</th><th>Caption</th><th>Status</th><th>Length</th><th>Clip</th></tr></thead><tbody>
+      <table><thead><tr><th>Product</th><th>Format</th><th>Caption</th><th>Status</th><th>Length</th><th>Clip</th><th></th></tr></thead><tbody>
         <template x-for="c in (content?.recent||[])" :key="c.id">
           <tr><td x-text="c.product_key"></td>
             <td><span class="pill grey" x-text="c.fmt.replace(/_/g,' ')"></span></td>
             <td class="note" x-text="c.caption"></td>
             <td><span class="pill" :class="{queued:'needs_review',distributed:'ok',posted:'ok',failed:'failed'}[c.status]||'grey'" x-text="c.status"></span></td>
             <td x-text="(c.duration_s||0)+'s'"></td>
-            <td><a :href="'/exports/reels/'+c.campaign_id+'/'+c.product_key+'/'+c.fmt+'.mp4'" target="_blank">▶ view</a></td></tr>
+            <td><a :href="'/exports/reels/'+c.campaign_id+'/'+c.product_key+'/'+c.fmt+'.mp4'" target="_blank">▶ view</a></td>
+            <td><a href="#" class="del" title="Delete this clip" @click.prevent="deleteContent('clip', c.id, c.product_key+' '+c.fmt)">✕ delete</a></td></tr>
         </template>
       </tbody></table></div>
       <div x-show="!(content?.recent||[]).length" class="muted">No clips yet — click “Build clips”.</div>
@@ -1406,11 +1408,20 @@ function ops(){
       const r=await this.post('/operations/api/content/reels/build',{limit:parseInt(n)||12});
       if(r&&r.status==='started'){ this.showToast('Building clips — watch the log (video rendering takes a moment).'); this.refreshRun(); this.pollLogs(); }
       else alert('Could not start: '+((r&&r.detail)||r?.error||'unknown')); },
+    async clearClips(){
+      if(!confirm('Delete ALL short-form clips and their video files? Use this to clear placeholder/duplicate clips before regenerating. This cannot be undone.')) return;
+      const r=await this.post('/operations/api/content/reels/clear',{});
+      if(r&&r.ok){ this.showToast('Deleted '+((r&&r.deleted)||0)+' clip(s).');
+        if(this.content!==null) this.content=await this.get('/operations/api/content/reels');
+        if(this.overview!==null) this.overview=await this.get('/operations/api/marketing/overview'); }
+      else alert('Could not clear clips: '+((r&&r.detail)||r?.error||'unknown')); },
     async deleteContent(kind,id,label){
       if(id===undefined||id===null){ alert('This item has no id to delete (rebuild content to enable delete).'); return; }
       if(!confirm('Delete '+(label||kind)+'? This removes it from ONASSIS'+(kind==='clip'?' and deletes the rendered video file.':' (it does not un-post anything already live).'))) return;
       const r=await this.post('/operations/api/marketing/delete',{kind:kind,id:id});
-      if(r&&r.ok){ this.showToast('Deleted '+(label||kind)+'.'); this.overview=await this.get('/operations/api/marketing/overview'); }
+      if(r&&r.ok){ this.showToast('Deleted '+(label||kind)+'.');
+        if(this.overview!==null) this.overview=await this.get('/operations/api/marketing/overview');
+        if(this.content!==null) this.content=await this.get('/operations/api/content/reels'); }
       else alert('Could not delete: '+((r&&r.detail)||r?.error||'unknown')); },
     async distributeReels(){
       const r=await this.post('/operations/api/content/reels/distribute');
