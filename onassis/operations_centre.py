@@ -1083,6 +1083,23 @@ def build_operations_router(get_state) -> APIRouter:
         unified Marketing tab."""
         return request.app.state.content.marketing_overview()
 
+    @router.post("/api/marketing/delete")
+    def api_marketing_delete(request: Request, payload: dict | None = None) -> Any:
+        """Delete one piece of content from the Marketing tab — a clip (removes the
+        rendered file too) or a queued channel asset (blog/facebook/tiktok/…)."""
+        _require_operator(request)
+        body = payload or {}
+        kind = str(body.get("kind") or "").strip().lower()
+        item_id = body.get("id")
+        if kind not in {"clip", "blog", "facebook", "tiktok", "instagram", "email"}:
+            raise HTTPException(status_code=400, detail=f"Unknown content kind '{kind}'.")
+        result = request.app.state.content.delete_content(kind, item_id)
+        if not result.get("ok"):
+            raise HTTPException(status_code=404,
+                                detail=result.get("error") or "Nothing deleted.")
+        get_state(request.app).add_log(f"Marketing: deleted {kind} #{result.get('id')}.")
+        return result
+
     @router.post("/api/content/blog/rewrite-live")
     def api_rewrite_live_blog(request: Request) -> Any:
         """Rewrite existing live blog articles in place — Shopify product link,

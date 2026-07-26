@@ -355,6 +355,53 @@ def test_marketing_overview_aggregates_per_product(config, db):
     assert row["name"] == "Riviera Mug"
     assert row["clips"][0]["url"] == "https://cdn.example/reels/6/mug/style_slide.mp4"
     assert row["blogs"][0]["status"] == "posted" and row["facebook"][0]["kind"] == "link"
+    # Every item now carries its id so the Marketing tab can delete it.
+    assert row["clips"][0]["id"] and row["blogs"][0]["id"] and row["facebook"][0]["id"]
+
+
+def test_delete_content_removes_clip_file_and_assets(config, db, tmp_path):
+    """delete_content removes a clip (and its rendered file) and a channel asset."""
+    cid, key = 7, "tee"
+    clip_file = tmp_path / "clip.mp4"
+    clip_file.write_bytes(b"video-bytes")
+    clip_id = db.insert_short_form({"campaign_id": cid, "product_id": f"{cid}-{key}",
+                                    "product_key": key, "fmt": "style_slide",
+                                    "path": str(clip_file), "caption": "c", "hashtags": [],
+                                    "sound": "", "duration_s": 8, "listing_url": "u"})
+    asset_id = db.insert_marketing_asset({"campaign_id": cid, "product_key": key,
+                                          "channel": "tiktok",
+                                          "payload": {"post": {"video_url": "u"}}})
+    eng = _engine(config, db)
+
+    r = eng.delete_content("clip", clip_id)
+    assert r["ok"] and r["removed_file"] is True and not clip_file.exists()
+    assert db.list_short_form(limit=10) == []
+
+    r = eng.delete_content("tiktok", asset_id)
+    assert r["ok"] and not db.list_marketing_assets(channel="tiktok")
+    # Deleting an unknown id is a clean miss, not a crash.
+    assert eng.delete_content("tiktok", 999999)["ok"] is False
+
+
+def test_credit_failure_never_substitutes_a_placeholder(config):
+    """A billing/credit error must raise, never fall back to the dev renderer —
+    otherwise the shop and videos silently fill with placeholder artwork."""
+    import pytest
+
+    from onassis.artwork import ArtworkStudio
+    from onassis.connectors.image_backend import ImageSpec, MASTER
+
+    class _BrokeBackend:
+        name = "openai"
+        model = "gpt-image-1"
+        quality = "high"
+        def generate(self, spec):
+            raise RuntimeError("Your credit balance is too low to run this request.")
+
+    studio = ArtworkStudio(config, backend=_BrokeBackend())
+    assert studio.fallback_to_local is True   # even with fallback ON…
+    with pytest.raises(RuntimeError, match="blocked"):
+        studio._generate(ImageSpec(kind=MASTER, width=64, height=64, title="x"))
 
 
 def test_facebook_blog_link_uses_handle_not_numeric_id(config, db):

@@ -755,26 +755,27 @@ class ContentEngine:
                 continue
             cid = c.get("campaign_id")
             url = f"{base}/reels/{cid}/{key}/{c.get('fmt')}.mp4" if base else ""
-            _row(cid, key)["clips"].append({"fmt": c.get("fmt"), "url": url,
-                                            "caption": c.get("caption")})
+            _row(cid, key)["clips"].append({"id": c.get("id"), "fmt": c.get("fmt"),
+                                            "url": url, "caption": c.get("caption")})
         for a in self.db.list_marketing_assets(channel="blog"):
             pl = a.get("payload") or {}
             ref = a.get("delivery_ref") or ""
             link = next((x.strip() for x in ref.split("|")
                          if x.strip().startswith("http")), "")
             _row(a.get("campaign_id"), a.get("product_key"))["blogs"].append({
-                "title": pl.get("title"), "angle": pl.get("angle"),
+                "id": a.get("id"), "title": pl.get("title"), "angle": pl.get("angle"),
                 "status": a.get("status") or "pending",
                 "scheduled_date": a.get("scheduled_date"), "url": link})
         for a in self.db.list_marketing_assets(channel="facebook"):
             post = (a.get("payload") or {}).get("post") or {}
             _row(a.get("campaign_id"), a.get("product_key"))["facebook"].append({
+                "id": a.get("id"),
                 "kind": "video" if post.get("video_url") else "link",
                 "status": a.get("status") or "pending",
                 "link": post.get("link") or post.get("video_url")})
         for a in self.db.list_marketing_assets(channel="tiktok"):
             _row(a.get("campaign_id"), a.get("product_key"))["tiktok"].append({
-                "status": a.get("status") or "pending"})
+                "id": a.get("id"), "status": a.get("status") or "pending"})
         rows = sorted(products.values(), key=lambda r: (r["name"] or "").lower())
         posted = lambda items: sum(1 for i in items if i.get("status") == "posted")
         totals = {
@@ -787,6 +788,36 @@ class ContentEngine:
             "tiktok": sum(len(r["tiktok"]) for r in rows),
             "tiktok_posted": sum(posted(r["tiktok"]) for r in rows)}
         return {"products": rows, "totals": totals}
+
+    def delete_content(self, kind: str, item_id: int) -> dict[str, Any]:
+        """Delete one piece of content from the Marketing tab. ``kind`` is
+        ``clip`` (a short-form video — its rendered file is removed too) or a
+        marketing-asset channel (``blog``/``facebook``/``tiktok``/``instagram``/
+        ``email``). Returns ``{ok, kind, id, removed_file}``."""
+        try:
+            item_id = int(item_id)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "A numeric id is required."}
+        if kind == "clip":
+            path = self.db.delete_short_form(item_id)
+            removed_file = False
+            if path:
+                p = Path(path)
+                if not p.is_absolute():
+                    p = self._exports_base().parent / path if "exports" in str(path) else Path(path)
+                for cand in {Path(path), p}:
+                    try:
+                        if cand.exists():
+                            cand.unlink()
+                            removed_file = True
+                    except OSError as exc:
+                        log.warning("Could not delete clip file %s: %s", cand, exc)
+            log.info("Deleted short-form clip %s (file removed=%s).", item_id, removed_file)
+            return {"ok": True, "kind": "clip", "id": item_id, "removed_file": removed_file}
+        ok = self.db.delete_marketing_asset(item_id)
+        log.info("Deleted marketing asset %s (kind=%s, found=%s).", item_id, kind, ok)
+        return {"ok": ok, "kind": kind, "id": item_id,
+                "error": None if ok else "No such asset."}
 
     def queue_tiktok_posts(self) -> dict[str, Any]:
         """Queue a TikTok video post for each product's slideshow (idempotent).

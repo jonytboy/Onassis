@@ -503,6 +503,20 @@ class ArtworkStudio:
                       self._backend.name, spec.kind, spec.scene, exc, exc_info=True)
             meta["generation_ok"] = False
             meta["generation_error"] = str(exc)
+            # A billing/credit/quota/auth failure must NEVER be papered over with a
+            # placeholder — that silently fills the shop and the videos with junk
+            # artwork. Hard-fail loudly so the operator tops up credit / fixes the
+            # key, regardless of image.fallback_to_local. Only transient/unclassified
+            # errors (e.g. a one-off network blip) may fall back to the dev renderer.
+            from onassis.ai_accounting import _BLOCKING_KINDS, classify_ai_error
+            alert = classify_ai_error(str(exc))
+            if alert["kind"] in _BLOCKING_KINDS:
+                log.error("AI image provider unavailable (%s): %s — REFUSING to "
+                          "substitute a placeholder. Top up credit / fix the key, "
+                          "then re-run.", alert["kind"], alert["message"])
+                raise RuntimeError(
+                    f"Image generation blocked ({alert['kind']}): {alert['message']} "
+                    f"[{exc}]") from exc
             if not self.fallback_to_local:
                 raise
             log.error("Substituting the DEV local renderer for this image "

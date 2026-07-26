@@ -97,6 +97,8 @@
   details.adv{margin-top:12px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 18px}
   details.adv summary{cursor:pointer;font-weight:700;color:var(--amber)}
   .note{font-size:12px;color:var(--faint);margin-top:8px}
+  .del{color:var(--bad,#c0392b);text-decoration:none;font-weight:700;margin-left:4px;opacity:.55;cursor:pointer}
+  .del:hover{opacity:1}
   .envbar{display:flex;flex-wrap:wrap;gap:8px 20px;align-items:center;margin:0 0 20px;
     padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--card);
     font-size:12.5px;color:var(--muted)}
@@ -412,7 +414,7 @@
           <button class="btn small" @click="buildReels()">Build clips</button>
           <button class="btn small" @click="distributeReels()">Distribute queue</button>
         </span></h2>
-      <div class="note" style="margin-bottom:8px">Builds vertical 9:16 clips from your products in 3 tagged formats (style-slide, product-in-use, gifting). Clips render <b>silent</b> — add trending sound natively when posting. Queue lives in <code>exports/reels/</code>; a Make webhook (if set) receives each package.</div>
+      <div class="note" style="margin-bottom:8px">Builds vertical 9:16 clips from your products in 3 tagged formats (style-slide, product-in-use, gifting). Clips carry an audio track — drop <b>royalty-free</b> tracks in <code>assets/music/</code> to mux music, else a silent track. Queue lives in <code>exports/reels/</code>; a Make webhook (if set) receives each package.</div>
       <div class="grid">
         <div class="stat"><div class="k">Clips total</div><div class="v" x-text="content?.total??0"></div></div>
         <div class="stat"><div class="k">Queued</div><div class="v sm" x-text="content?.queued??0"></div></div>
@@ -632,30 +634,33 @@
             <td><b x-text="p.name"></b></td>
             <td class="note">
               <template x-if="!p.clips.length"><span class="muted">—</span></template>
-              <template x-for="c in p.clips" :key="c.fmt">
-                <span><a x-show="c.url" :href="c.url" target="_blank" x-text="c.fmt"></a><span x-show="!c.url" x-text="c.fmt"></span> </span>
+              <template x-for="c in p.clips" :key="c.id||c.fmt">
+                <span><a x-show="c.url" :href="c.url" target="_blank" x-text="c.fmt"></a><span x-show="!c.url" x-text="c.fmt"></span><a href="#" class="del" title="Delete this clip" @click.prevent="deleteContent('clip', c.id, 'clip '+c.fmt)">✕</a> </span>
               </template>
             </td>
             <td class="note">
               <template x-if="!p.blogs.length"><span class="muted">—</span></template>
-              <template x-for="(b,i) in p.blogs" :key="i">
+              <template x-for="(b,i) in p.blogs" :key="b.id||i">
                 <div><span class="pill" :class="{posted:'ok',pending:'grey',failed:'failed',skipped:'grey'}[b.status]||'grey'" x-text="b.status"></span>
                   <a x-show="b.url" :href="b.url" target="_blank" x-text="b.title||b.angle||'article'"></a>
                   <span x-show="!b.url" x-text="b.title||b.angle||'article'"></span>
-                  <span class="muted" x-show="b.scheduled_date&&b.status!=='posted'" x-text="' · '+b.scheduled_date"></span></div>
+                  <span class="muted" x-show="b.scheduled_date&&b.status!=='posted'" x-text="' · '+b.scheduled_date"></span>
+                  <a href="#" class="del" title="Delete this blog article" @click.prevent="deleteContent('blog', b.id, b.title||'article')">✕</a></div>
               </template>
             </td>
             <td class="note">
               <template x-if="!p.facebook.length"><span class="muted">—</span></template>
-              <template x-for="(f,i) in p.facebook" :key="i">
+              <template x-for="(f,i) in p.facebook" :key="f.id||i">
                 <div><span class="pill" :class="{posted:'ok',pending:'grey',failed:'failed',skipped:'grey'}[f.status]||'grey'" x-text="f.status"></span>
-                  <span x-text="f.kind"></span></div>
+                  <span x-text="f.kind"></span>
+                  <a href="#" class="del" title="Delete this Facebook post" @click.prevent="deleteContent('facebook', f.id, 'Facebook '+f.kind)">✕</a></div>
               </template>
             </td>
             <td class="note">
               <template x-if="!p.tiktok.length"><span class="muted">—</span></template>
-              <template x-for="(t,i) in p.tiktok" :key="i">
-                <div><span class="pill" :class="{posted:'ok',pending:'grey',failed:'failed',skipped:'grey'}[t.status]||'grey'" x-text="t.status"></span> video</div>
+              <template x-for="(t,i) in p.tiktok" :key="t.id||i">
+                <div><span class="pill" :class="{posted:'ok',pending:'grey',failed:'failed',skipped:'grey'}[t.status]||'grey'" x-text="t.status"></span> video
+                  <a href="#" class="del" title="Delete this TikTok post" @click.prevent="deleteContent('tiktok', t.id, 'TikTok video')">✕</a></div>
               </template>
             </td>
           </tr>
@@ -1401,6 +1406,12 @@ function ops(){
       const r=await this.post('/operations/api/content/reels/build',{limit:parseInt(n)||12});
       if(r&&r.status==='started'){ this.showToast('Building clips — watch the log (video rendering takes a moment).'); this.refreshRun(); this.pollLogs(); }
       else alert('Could not start: '+((r&&r.detail)||r?.error||'unknown')); },
+    async deleteContent(kind,id,label){
+      if(id===undefined||id===null){ alert('This item has no id to delete (rebuild content to enable delete).'); return; }
+      if(!confirm('Delete '+(label||kind)+'? This removes it from ONASSIS'+(kind==='clip'?' and deletes the rendered video file.':' (it does not un-post anything already live).'))) return;
+      const r=await this.post('/operations/api/marketing/delete',{kind:kind,id:id});
+      if(r&&r.ok){ this.showToast('Deleted '+(label||kind)+'.'); this.overview=await this.get('/operations/api/marketing/overview'); }
+      else alert('Could not delete: '+((r&&r.detail)||r?.error||'unknown')); },
     async distributeReels(){
       const r=await this.post('/operations/api/content/reels/distribute');
       this.showToast('Distributed '+((r&&r.handed_off)||0)+'/'+((r&&r.processed)||0)+' clip(s)'+((r&&!r.make_configured)?' (queue only — set the Make webhook to auto-post)':''));

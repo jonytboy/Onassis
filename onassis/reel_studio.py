@@ -14,13 +14,17 @@ Two clean layers, so it is fully offline-testable:
   ``encoder`` (default: ffmpeg). Tests inject a stub encoder, so no ffmpeg is
   needed to test the pipeline.
 
-Audio is deliberately NOT burned in (attaching copyrighted trending sound
-programmatically is a takedown/strike risk) — clips render silent and the
-suggested sound rides along in the content package, added natively when posted.
+Audio: every clip carries an AAC audio stream (many publishers reject a video
+with zero audio streams). If the operator drops **royalty-free** tracks into the
+music folder (``REEL_MUSIC_DIR`` env, or ``assets/music/``) one is muxed in,
+chosen deterministically per clip; otherwise a silent track is used. We never
+ship copyrighted/trending audio — that is a takedown/strike risk — so the
+operator supplies the music they are licensed to use.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 import tempfile
@@ -268,6 +272,35 @@ def compose_frames(spec: ReelSpec) -> list[Image.Image]:
     return list(iter_frames(spec))
 
 
+_MUSIC_EXTS = {".mp3", ".m4a", ".aac", ".wav", ".ogg", ".flac"}
+
+
+def _music_dir() -> Path:
+    """Where the operator drops royalty-free tracks (env override, else assets/music)."""
+    env = os.environ.get("REEL_MUSIC_DIR")
+    if env:
+        return Path(env)
+    try:
+        from onassis.config import ROOT_DIR
+        return ROOT_DIR / "assets" / "music"
+    except Exception:
+        return Path("assets/music")
+
+
+def _pick_music(out_path: str) -> str | None:
+    """Pick one royalty-free track for this clip, or None for a silent track.
+    Deterministic in the output path so re-rendering a clip keeps the same music."""
+    try:
+        tracks = sorted(str(p) for p in _music_dir().glob("*")
+                        if p.suffix.lower() in _MUSIC_EXTS)
+    except Exception:
+        tracks = []
+    if not tracks:
+        return None
+    idx = int(hashlib.sha256(out_path.encode("utf-8")).hexdigest(), 16) % len(tracks)
+    return tracks[idx]
+
+
 def _ffmpeg_encode(frames: list[Image.Image], out_path: str, *, fps: int) -> str:
     """Default encoder: frames → H.264 mp4 via ffmpeg.
 
@@ -280,12 +313,19 @@ def _ffmpeg_encode(frames: list[Image.Image], out_path: str, *, fps: int) -> str
     with tempfile.TemporaryDirectory() as tmp:
         for i, fr in enumerate(frames):
             fr.save(os.path.join(tmp, f"f{i:05d}.png"))
+        music = _pick_music(out_path)
+        if music:
+            # Loop the track to cover the video, trimmed to length by -shortest.
+            audio_in = ["-stream_loop", "-1", "-i", music]
+        else:
+            # A silent stereo track so the MP4 always carries an audio stream.
+            audio_in = ["-f", "lavfi", "-i",
+                        "anullsrc=channel_layout=stereo:sample_rate=48000"]
         cmd = [
             "ffmpeg", "-y", "-framerate", str(fps),
             "-i", os.path.join(tmp, "f%05d.png"),
-            # A silent stereo track — infinite source, trimmed to the video by
-            # -shortest — so the MP4 always carries an audio stream.
-            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+            *audio_in,
+            "-map", "0:v:0", "-map", "1:a:0",
             "-c:v", "libx264", "-profile:v", "high", "-level", "4.1",
             "-pix_fmt", "yuv420p", "-r", str(fps),
             "-c:a", "aac", "-b:a", "128k", "-ar", "48000",

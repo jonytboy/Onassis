@@ -2711,6 +2711,21 @@ class Database:
                 "UPDATE short_form_content SET views=?, likes=?, shares=?, clicks=? "
                 "WHERE id = ?", (views, likes, shares, clicks, clip_id))
 
+    def delete_short_form(self, clip_id: int) -> str | None:
+        """Delete a short-form clip row; returns its file ``path`` (if any) so the
+        caller can remove the rendered file from disk."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT path FROM short_form_content WHERE id = ?", (clip_id,)).fetchone()
+            conn.execute("DELETE FROM short_form_content WHERE id = ?", (clip_id,))
+        return row["path"] if row else None
+
+    def delete_marketing_asset(self, asset_id: int) -> bool:
+        """Delete a single marketing asset (blog/facebook/tiktok/instagram/email)."""
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM marketing_assets WHERE id = ?", (asset_id,))
+            return cur.rowcount > 0
+
     def upsert_product_performance(self, perf: dict[str, Any]) -> None:
         with self._connect() as conn:
             conn.execute(
