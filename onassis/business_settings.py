@@ -89,6 +89,13 @@ SCHEMA: list[Setting] = [
             group="Channels",
             help="Send TikTok videos to the Make.com webhook (→ Buffer → TikTok) "
                  "instead of the direct TikTok API."),
+    Setting("marketing_every_hours", "Run marketing every N hours", "int",
+            lambda c: int(_cfg(c, "scheduler", "every_hours", 0)),
+            group="Schedule", minimum=0, maximum=24,
+            help="How often the in-app scheduler runs the marketing push (posts "
+                 "blogs + reels, cycling the catalogue). e.g. 3 = every 3 hours "
+                 "(~8×/day). 0 = off (use an external cron instead). No crontab "
+                 "editing — this is the whole schedule control."),
     Setting("evergreen_enabled", "Evergreen recycling", "bool",
             lambda c: bool(_cfg(c, "content", "evergreen_enabled", True)),
             group="Channels",

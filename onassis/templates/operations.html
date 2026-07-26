@@ -624,6 +624,14 @@
           <button class="btn small" @click="clearMarketing({channel:'blog',status:'pending'},'all pending blog articles')">Clear blog queue</button>
           <button class="btn small" @click="runMarketing()">Run marketing now</button>
         </span></h2>
+      <div class="note" style="margin-bottom:4px">
+        <template x-if="mktgSchedule&&mktgSchedule.enabled">
+          <span>⏱ Auto-posting <b>every <span x-text="mktgSchedule.every_hours"></span>h</b> (blogs + reels, cycling all products)<span x-show="mktgSchedule.next_run" class="muted"> · next ≈ <span x-text="(mktgSchedule.next_run||'').replace('T',' ').slice(0,16)"></span> UTC</span>. Change the cadence in <b>Business Settings → Schedule</b>.</span>
+        </template>
+        <template x-if="mktgSchedule&&!mktgSchedule.enabled">
+          <span class="muted">⏱ Auto-posting is <b>off</b>. Set “Run marketing every N hours” in <b>Business Settings → Schedule</b> to schedule it — no crontab needed.</span>
+        </template>
+      </div>
       <div class="grid">
         <div class="stat"><div class="k">Products</div><div class="v" x-text="overview?.totals?.products??0"></div></div>
         <div class="stat"><div class="k">Videos</div><div class="v" x-text="overview?.totals?.clips??0"></div></div>
@@ -671,7 +679,7 @@
         </template>
       </tbody></table>
       </div>
-      <div class="note muted" style="margin-top:6px" x-show="!(overview?.products||[]).length">No content yet — create products and run marketing.</div>
+      <div class="note muted" style="margin-top:6px" x-show="!(overview?.products||[]).length">No content yet — approve a product and run marketing.</div>
     </div>
     <div class="panel" style="margin-bottom:12px">
       <h2>Pinterest
@@ -1188,7 +1196,7 @@ function ops(){
     environment:null, deployRun:null, preview:null, validation:null, _deployPoll:null,
     productDetail:null, channelTests:null, testingChannels:false, regenerating:null,
     integrations:null, integrationDetail:null, integrationEdits:{}, integrationBusy:false,
-    commercial:null, commercialProducts:null, cmo:null, cfo:null, distribution:null, overview:null,
+    commercial:null, commercialProducts:null, cmo:null, cfo:null, distribution:null, overview:null, mktgSchedule:null,
     catalogue:null, collections:null, content:null, blog:null, blogDx:null, blogMaint:false, publishingAll:false, publishAllTotal:0, publishAllDone:0,
     productSearch:'', productFilter:'all', productHealth:null, toast:'',
     productFilters:[['all','All'],['awaiting_approval','Awaiting Approval'],['ready_to_publish','Ready to Publish'],['draft_created','Draft Created'],['live','Live'],['failed','Failed'],['etsy','On Etsy'],['shopify','On Shopify'],['both','Etsy + Shopify'],['archived','Archived']],
@@ -1261,6 +1269,7 @@ function ops(){
       else if(t==='marketing'){ this.marketing=await this.get('/operations/api/marketing');
         this.distribution=await this.get('/operations/api/distribution');
         this.overview=await this.get('/operations/api/marketing/overview');
+        this.mktgSchedule=await this.get('/operations/api/marketing/schedule');
         this.cmo=await this.get('/operations/api/cmo'); }
       else if(t==='approvals') this.approvals=await this.get('/operations/api/approvals');
       else if(t==='integrations') this.integrations=await this.get('/operations/api/integrations');

@@ -813,21 +813,28 @@ class ContentEngine:
         and link, plus totals across the catalogue."""
         base = self._public_base()
         products: dict[str, dict[str, Any]] = {}
-
-        def _row(cid: Any, key: str, name: str | None = None) -> dict[str, Any]:
-            k = f"{cid}-{key}"
-            row = products.setdefault(k, {"campaign_id": cid, "product_key": key,
-                                          "name": name or key, "clips": [],
-                                          "blogs": [], "facebook": [], "tiktok": []})
-            if name:
-                row["name"] = name
-            return row
-
+        # Product names, keyed the same way — so a row can be labelled without
+        # seeding an (empty) row for every product in the catalogue.
+        names: dict[str, str] = {}
         for p in self.db.list_products():
             key = (p.get("product_key") or p.get("sku")
                    or (f"product-{p.get('id')}" if p.get("id") else None))
             if key:
-                _row(p.get("campaign_id"), key, p.get("name"))
+                names[f"{p.get('campaign_id')}-{key}"] = p.get("name") or key
+
+        def _row(cid: Any, key: str, name: str | None = None) -> dict[str, Any]:
+            # Rows are created ONLY when a product has real content attached — the
+            # Content Library never shows empty products (that scales to nothing
+            # useful at hundreds of products).
+            k = f"{cid}-{key}"
+            row = products.setdefault(k, {"campaign_id": cid, "product_key": key,
+                                          "name": name or names.get(k) or key,
+                                          "clips": [], "blogs": [], "facebook": [],
+                                          "tiktok": []})
+            if name:
+                row["name"] = name
+            return row
+
         for c in self.db.list_short_form(limit=2000):
             key = c.get("product_key")
             if not key:

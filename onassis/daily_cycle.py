@@ -159,13 +159,21 @@ class DailyCycle:
         # future date so the blog DRIPS (a steady daily trickle you can see on the
         # calendar) instead of dumping the whole backlog in one run.
         try:
+            from onassis.business_settings import BusinessSettings
             from onassis.content_engine import ContentEngine
 
             engine = ContentEngine(self.config, self.db, studio=self.content_studio)
-            blog_sched = engine.refill_blog_schedule()
-            log.info("Blog schedule: +%d created, %d queued ahead (next %s → %s).",
-                     blog_sched.get("created", 0), blog_sched.get("scheduled", 0),
-                     blog_sched.get("next"), blog_sched.get("last"))
+            settings = BusinessSettings(self.db, self.config)
+            evergreen = bool(settings.get("evergreen_enabled"))
+            # Evergreen recycling covers BLOGS + videos + reels together. When it's
+            # off we still launch new products, but nothing recycles.
+            if evergreen:
+                blog_sched = engine.refill_blog_schedule()
+                log.info("Blog schedule: +%d created, %d queued ahead (next %s → %s).",
+                         blog_sched.get("created", 0), blog_sched.get("scheduled", 0),
+                         blog_sched.get("next"), blog_sched.get("last"))
+            else:
+                blog_sched = {}
             # Build any missing per-product slideshow clips (idempotent — only
             # products without clips yet, so steady-state this is a no-op).
             clips = engine.build_batch(limit=int(self.config.content.get("clip_daily_limit", 12)
@@ -185,9 +193,7 @@ class DailyCycle:
             # Queue Facebook posts for new blogs + videos (distributor ships them).
             fb = engine.queue_facebook_posts()
             tt = engine.queue_tiktok_posts()
-            from onassis.business_settings import BusinessSettings
-            settings = BusinessSettings(self.db, self.config)
-            if settings.get("evergreen_enabled"):
+            if evergreen:
                 ev = engine.queue_evergreen_facebook()  # rotate videos, cycle + loop
                 er = engine.queue_evergreen_reels(       # rotate reels, cycle + loop
                     per_run=int(settings.get("evergreen_reels_per_run")))

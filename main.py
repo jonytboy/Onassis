@@ -1177,9 +1177,16 @@ def main() -> int:
         import uvicorn
 
         from onassis.api import create_app
+        from onassis.marketing_scheduler import MarketingScheduler
 
+        app = create_app(config)
+        # UI-controlled marketing cadence: the operator sets "Run marketing every
+        # N hours" in Business Settings; this in-app scheduler honours it (0 = off).
+        scheduler = MarketingScheduler(config, app.state.db, daily=app.state.daily)
+        scheduler.start()
+        app.state.marketing_scheduler = scheduler
         log.info("Serving ONASSIS API on %s:%s (docs at /docs)", args.host, args.port)
-        uvicorn.run(create_app(config), host=args.host, port=args.port)
+        uvicorn.run(app, host=args.host, port=args.port)
         return 0
 
     if args.once:

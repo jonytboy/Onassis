@@ -1111,6 +1111,15 @@ def build_operations_router(get_state) -> APIRouter:
         get_state(request.app).add_log(f"Marketing: deleted {kind} #{result.get('id')}.")
         return result
 
+    @router.get("/api/marketing/schedule")
+    def api_marketing_schedule(request: Request) -> Any:
+        """The in-app marketing scheduler's state (enabled / every N hours / next
+        run) — so the UI shows the cadence without anyone touching crontab."""
+        from onassis.marketing_scheduler import MarketingScheduler
+        s = request.app.state
+        sched = getattr(s, "marketing_scheduler", None) or MarketingScheduler(s.config, s.db)
+        return sched.status()
+
     @router.post("/api/marketing/clear")
     def api_marketing_clear(request: Request, payload: dict | None = None) -> Any:
         """Bulk-delete marketing assets to de-clutter the tab — by channel and/or
