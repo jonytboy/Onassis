@@ -235,6 +235,24 @@ def test_tiktok_video_asset_posts_when_forced(config, db):
     assert tt.videos == [("https://cdn/x.mp4", "Mug ✨")]
 
 
+def test_tiktok_without_video_url_is_skipped_not_sent(config, db):
+    """A tiktok asset with no video_url must be skipped — never sent to Make with
+    an empty url (which reports 'no url' downstream)."""
+    class _Make:
+        is_configured = True
+        def __init__(self): self.sent = []
+        def send(self, payload): self.sent.append(payload); return {"ok": True, "status": "sent"}
+    tt = FakeTikTok()
+    dist = ChannelDistributor(config, db, instagram=FakeInstagram(), facebook=FakeFacebook(),
+                              email=FakeEmail(), shopify=FakeShopifyBlog(), tiktok=tt)
+    dist.make = _Make()
+    db.set_setting("business.tiktok_via_make", True)
+    _seed(db, "tiktok", {"post": {"video_url": "", "body": "Tee ✨"}})
+    out = dist.distribute(channels=["tiktok"], force=True)
+    assert out["by_channel"]["tiktok"]["skipped"] == 1
+    assert not dist.make.sent and not tt.videos       # nothing sent anywhere
+
+
 def test_tiktok_via_make_routes_to_the_webhook(config, db):
     """With tiktok_via_make on + Make configured, a TikTok video is sent to the
     Make.com webhook (→ Buffer → TikTok), not the direct API."""

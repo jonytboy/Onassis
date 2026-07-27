@@ -139,15 +139,20 @@ class ChannelDistributor:
                     r = self.facebook.post(post.get("body") or "", post.get("link") or url)
             elif channel == "tiktok":
                 post = payload.get("post") or {}
-                if self._tiktok_via_make():
+                video_url = post.get("video_url") or ""
+                if not video_url:
+                    # Never ship a url-less video payload — it just fails downstream
+                    # (Make/Buffer/Reels report "no url"). Skip with a clear reason.
+                    r = {"ok": False, "skipped": True,
+                         "reason": "no video_url (clip not rendered / public_base unset)"}
+                elif self._tiktok_via_make():
                     r = self.make.send({"platform": "tiktok", "type": "video",
-                                        "video_url": post.get("video_url") or "",
+                                        "video_url": video_url,
                                         "caption": post.get("body") or ""})
                     r = {"ok": r.get("ok"), "ref": r.get("status"),
                          "skipped": r.get("status") == "not_configured"}
                 else:
-                    r = self.tiktok.post_video(post.get("video_url") or "",
-                                               post.get("body") or "")
+                    r = self.tiktok.post_video(video_url, post.get("body") or "")
             elif channel == "instagram":
                 caption = (payload.get("captions") or [""])[0]
                 r = self.instagram.post(caption, image_url=payload.get("image_url"))
