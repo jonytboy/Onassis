@@ -109,6 +109,13 @@ SCHEMA: list[Setting] = [
                  "products (oldest-posted first) and looping back to the start. "
                  "The frequency is the cron schedule — 1/run + an every-few-hours "
                  "cron gives an every-few-hours drip. 0 = off."),
+    Setting("blogs_per_run", "Blog posts / run", "int",
+            lambda c: int(_cfg(c, "content", "blogs_per_run", 1)),
+            group="Channels", minimum=0, maximum=20,
+            help="Cap how many blog articles publish to Shopify per marketing run, "
+                 "so a backlog drips out instead of dumping all at once. 1/run + an "
+                 "every-3-hours cron = at most a few a day. 0 = don't publish blogs "
+                 "on the scheduled run."),
 ]
 _BY_KEY = {s.key: s for s in SCHEMA}
 

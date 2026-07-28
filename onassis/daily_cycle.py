@@ -211,9 +211,21 @@ class DailyCycle:
         # Make is the distribution path, per-product campaigns already went out at
         # launch, so we only publish the first-party blog directly here.
         if self.campaign_distributor.make.is_configured:
-            # Blog publishes first-party; reels drip out via Make (→ FB Reels /
-            # TikTok). New-product FB/IG campaigns already went out at launch.
-            channels = self.distribution.distribute(channels=["blog", "tiktok"])
+            # Blog publishes first-party (capped per run so a backlog drips instead
+            # of dumping); reels drip out via Make (→ FB Reels / TikTok). New-product
+            # FB/IG campaigns already went out at launch.
+            from onassis.business_settings import BusinessSettings
+            blogs_cap = int(BusinessSettings(self.db, self.config).get("blogs_per_run"))
+            channels = {"posted": 0, "failed": 0, "skipped": 0, "by_channel": {}}
+            if blogs_cap > 0:
+                b = self.distribution.distribute(channels=["blog"], limit=blogs_cap)
+                for k in ("posted", "failed", "skipped"):
+                    channels[k] += b.get(k, 0)
+                channels["by_channel"].update(b.get("by_channel", {}))
+            r = self.distribution.distribute(channels=["tiktok"])
+            for k in ("posted", "failed", "skipped"):
+                channels[k] += r.get(k, 0)
+            channels["by_channel"].update(r.get("by_channel", {}))
         else:
             channels = self.distribution.distribute()
         funnel = self.traffic.snapshot(today)
