@@ -460,7 +460,8 @@
             <td class="note" x-text="c.caption"></td>
             <td><span class="pill" :class="{queued:'needs_review',distributed:'ok',posted:'ok',failed:'failed'}[c.status]||'grey'" x-text="c.status"></span></td>
             <td x-text="(c.duration_s||0)+'s'"></td>
-            <td><a :href="'/exports/reels/'+c.campaign_id+'/'+c.product_key+'/'+c.fmt+'.mp4'" target="_blank">▶ view</a></td>
+            <td><a :href="'/exports/reels/'+c.campaign_id+'/'+c.product_key+'/'+c.fmt+'.mp4'" target="_blank">▶ view</a>
+              <a :href="'/exports/reels/'+c.campaign_id+'/'+c.product_key+'/'+c.fmt+'.mp4'" :download="c.product_key+'-'+c.fmt+'.mp4'" style="margin-left:8px">⬇ download</a></td>
             <td><a href="#" class="del" title="Delete this clip" @click.prevent="deleteContent('clip', c.id, c.product_key+' '+c.fmt)">✕ delete</a></td></tr>
         </template>
       </tbody></table></div>
