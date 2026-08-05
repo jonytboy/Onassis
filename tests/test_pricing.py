@@ -15,6 +15,18 @@ def engine(config):
     return PricingEngine(config)
 
 
+def test_flat_strategy_prices_for_a_fixed_net_profit_after_fees(config):
+    """strategy=flat prices at the thin margin that still nets ~flat_profit AFTER
+    production, shipping and real fees — not cost+£1 (which would lose money)."""
+    config.pricing = {"strategy": "flat", "flat_profit": 1.0, "shipping_cost": 5.0}
+    config.fees = {}
+    out = PricingEngine(config).optimise(12.0)     # a £12 tee
+    assert out["unit_margin"] == pytest.approx(1.0, abs=0.25)   # ~£1 real profit
+    # And that price genuinely covers landed cost + fees (never a loss).
+    assert out["price"] > 12.0 + 5.0
+    assert out["net_margin"] > 0
+
+
 def test_optimise_returns_the_peak_of_the_profit_curve(engine):
     r = engine.optimise(production_cost=7.5, reference_price=22.0)
     curve = r["curve"]

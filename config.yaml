@@ -152,13 +152,18 @@ fees:
 # engine evaluates a grid and picks the peak of the profit curve (real fees +
 # VAT + shipping included), never a loss-making price.
 pricing:
+  strategy: flat                 # "flat" -> thin-margin cost-plus (nets flat_profit
+                                 #   per sale after cost+shipping+fees); "" -> the
+                                 #   expected-profit optimiser below.
+  flat_profit: 1.0              # target NET £ profit per sale under strategy=flat
+  shipping_cost: 5.0             # Gelato per-item shipping — SET THIS to your real
+                                 #   Gelato ship cost, or the thin margin is a loss.
   optimise: true                 # true -> expected-profit pricing; false -> cost-plus
   base_conversion: 0.025         # conversion at the reference price
   elasticity: 1.6                # price-elasticity of conversion (higher = more sensitive)
   candidates: 13                 # price points evaluated across the span
-  price_span: 0.45               # grid spans reference ±45%
   min_margin: 0.10               # never recommend a price below this net margin
-  shipping_cost: 0.0             # per-order shipping cost baked into price
+  price_span: 0.45               # grid spans reference ±45%
   target_margin: 0.60            # the cost-plus baseline compared against
   default_monthly_visitors: 500  # traffic estimate when market data is absent
 

@@ -53,6 +53,8 @@ class PricingEngine:
     ) -> dict[str, Any]:
         """Return the profit-max price + the full expected-profit curve."""
         production_cost = float(production_cost or 0)
+        if str(self.cfg.get("strategy", "")).lower() == "flat":
+            return self._flat_markup(production_cost)
         ref = float(reference_price or 0) or (market or {}).get("avg_selling_price") \
             or self._cost_plus(production_cost, 0.55)
         ref = max(ref, self._floor(production_cost))
@@ -102,6 +104,39 @@ class PricingEngine:
         log.info("Pricing: chose £%.2f (expected profit £%.0f) over cost-plus £%.2f.",
                  best["price"], best["expected_profit"], cost_plus)
         return result
+
+    # --- Flat (thin-margin cost-plus) pricing -----------------------
+
+    def _flat_markup(self, production_cost: float) -> dict[str, Any]:
+        """Thin-margin cost-plus: the LOWEST price that still nets a fixed profit
+        per sale AFTER production, shipping and real fees — a deliberate volume
+        play (``pricing.strategy: flat``). Solves
+
+            net = price - (cost+shipping) - (var_rate·price + fixed_fees) = target
+            price = (cost + shipping + target + fixed_fees) / (1 - var_rate)
+
+        so the tiny margin is REAL, not wiped out by shipping/fees. Advertising is
+        not costed in here — that comes off the top separately."""
+        target = float(self.cfg.get("flat_profit", 1.0))
+        landed = production_cost + self.shipping_cost
+        fm = self.fee_model
+        var = (fm.transaction_rate + fm.payment_rate + fm.regulatory_rate + fm.vat_rate
+               + fm.offsite_ads_rate * fm.offsite_ads_share)
+        fixed = fm.payment_fixed + fm.listing_fee
+        price = round((landed + target + fixed) / max(0.05, 1.0 - var), 2)
+        unit = fm.unit_net_profit(price, landed)
+        net_margin = round(unit / price, 4) if price else 0.0
+        return {
+            "price": price, "expected_profit": unit,
+            "expected_conversion": self.base_conversion, "expected_volume": 0.0,
+            "unit_margin": unit, "net_margin": net_margin,
+            "reference_price": price, "monthly_visitors": self.default_monthly_visitors,
+            "cost_plus_price": price, "profit_uplift_vs_cost_plus": 0.0, "curve": [],
+            "rationale": (f"£{price:.2f} — thin-margin cost-plus: nets ~£{unit:.2f}/sale "
+                          f"after production £{production_cost:.2f}, shipping "
+                          f"£{self.shipping_cost:.2f} and fees (volume play; ad cost not "
+                          f"included)."),
+        }
 
     # --- Model ------------------------------------------------------
 
