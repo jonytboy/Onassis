@@ -2,3 +2,5 @@ node_modules/
 frames/
 _frames_*/
 coin-assets*.zip
+dist/
+coin-site.zip
