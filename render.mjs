@@ -21,9 +21,10 @@ const METALS = ["gold"];                 // add "silver","bronze" to output more
 const CELL = 160;                        // sprite-sheet cell size (px)
 const FPS = 30;
 const CLIPS = [
-  { name: "spin",  fn: "drawSpin",  frames: 90, cols: 10, rows: 9, loop: true  },
-  { name: "burst", fn: "drawBurst", frames: 72, cols: 9,  rows: 8, loop: false },
+  { name: "spin",  fn: "drawSpin",  frames: 90, cols: 10, rows: 9, loop: true,  previewLoops: 3 },
+  { name: "burst", fn: "drawBurst", frames: 72, cols: 9,  rows: 8, loop: false, previewLoops: 2 },
 ];
+const PREVIEW_BG = "0x14141f";           // dark reel-style bg for the .mp4 previews
 
 const ff = (args) => {
   const r = spawnSync("ffmpeg", ["-y", ...args], { stdio: ["ignore", "ignore", "inherit"] });
@@ -62,6 +63,21 @@ for (const metal of METALS) {
         "-c:v", "prores_ks", "-profile:v", "4444", "-pix_fmt", "yuva444p10le", "-vendor", "apl0", mov]);
     made.push(mov);
 
+    // 1b) transparent WebM (VP9 + alpha) — browser-playable, from the alpha PNGs
+    const webm = join(__dir, `${tag("coin_" + clip.name)}.webm`);
+    ff(["-framerate", String(FPS), "-i", join(dir, "f%04d.png"),
+        "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-b:v", "0", "-crf", "26",
+        "-auto-alt-ref", "0", "-an", webm]);
+    made.push(webm);
+
+    // 1c) MP4 preview (H.264 over a dark bg) — plays in any player/browser
+    const mp4 = join(__dir, `${tag("coin_" + clip.name)}_preview.mp4`);
+    ff(["-stream_loop", String(clip.previewLoops - 1), "-i", mov,
+        "-f", "lavfi", "-i", `color=c=${PREVIEW_BG}:s=640x640:r=${FPS}`,
+        "-filter_complex", "[1][0]overlay=shortest=1:format=auto,format=yuv420p",
+        "-c:v", "libx264", "-crf", "20", "-movflags", "+faststart", mp4]);
+    made.push(mp4);
+
     // 2) sprite sheet (uniform grid, transparent)
     const sheet = join(__dir, `${tag("coin_" + clip.name)}_sheet.png`);
     ff(["-i", join(dir, "f%04d.png"),
@@ -97,7 +113,7 @@ for (const metal of METALS) {
     made.push(jsonPath);
 
     rmSync(dir, { recursive: true, force: true });
-    console.log(`built ${clip.name} (${metal}): mov + sheet + json`);
+    console.log(`built ${clip.name} (${metal}): mov + webm + mp4 + sheet + json`);
   }
 }
 

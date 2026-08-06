@@ -5,17 +5,22 @@ animations built for slot-machine reels and win celebrations. Every asset keeps
 a real alpha channel so it composites cleanly over reels/backgrounds.
 
 ## Assets (gold)
-| Clip  | .mov (ProRes 4444, alpha)       | Sprite sheet                 | Atlas JSON            |
-|-------|----------------------------------|------------------------------|-----------------------|
-| Spin  | `coin_spin.mov` (90f, seamless)  | `coin_spin_sheet.png` 10×9   | `coin_spin.json`      |
-| Burst | `coin_burst.mov` (72f, one-shot) | `coin_burst_sheet.png` 9×8   | `coin_burst.json`     |
+| Clip  | Preview (plays anywhere) | Transparent video        | Sprite sheet               | Atlas JSON        |
+|-------|--------------------------|--------------------------|----------------------------|-------------------|
+| Spin  | `coin_spin_preview.mp4`  | `coin_spin.webm` (VP9 α)  | `coin_spin_sheet.png` 10×9 | `coin_spin.json`  |
+| Burst | `coin_burst_preview.mp4` | `coin_burst.webm` (VP9 α) | `coin_burst_sheet.png` 9×8 | `coin_burst.json` |
 
-- **Spin** loops seamlessly (frame 0 == the frame after the last) — safe to tile on a reel.
-- **Win-burst** is a one-shot: coin pops in with a bounce, an expanding flash ring,
-  and a shower of smaller coins that fly out and fall under gravity.
-- Sprite-sheet cells are **160×160**, laid out left→right, top→bottom.
-- Atlas JSON is **Phaser JSONHash** format; `meta.grid` + `meta.animation` also make
-  Unity slicing trivial (Sprite Editor → Grid By Cell Size 160×160).
+Also `coin_spin.mov` / `coin_burst.mov` — **ProRes 4444** with alpha, for video
+editors (After Effects / Premiere / Nuke).
+
+### Which file for what
+- **Just to view it** → the `*_preview.mp4` (H.264 over a dark background; opens in any player/browser).
+- **HTML5 / Phaser / PixiJS slot** → `*.webm` (VP9 + alpha, transparent) or the sprite sheets.
+- **Unity / engine sprite anim** → the sprite sheets + JSON.
+- **Video / motion-graphics pipeline** → the ProRes `*.mov` (alpha).
+
+> ProRes `.mov` is a pro editing codec — most ordinary players show a blank frame
+> because they can't decode it. Use the MP4 to preview, the ProRes to edit.
 
 ## Using the sprite sheets
 
