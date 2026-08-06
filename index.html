@@ -1,337 +1,209 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Animated Coin — spin &amp; win-burst</title>
-  <style>
-    * { box-sizing: border-box; }
-    body {
-      margin: 0; min-height: 100vh;
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 1.5rem;
-      background:
-        conic-gradient(#e9e9ef 90deg, #cfcfd8 90deg 180deg, #e9e9ef 180deg 270deg, #cfcfd8 270deg) 0 0 / 32px 32px;
-      font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #333;
-    }
-    #coin { width: 340px; height: 340px; }
-    .row { display: flex; flex-wrap: wrap; gap: 0.55rem; justify-content: center; align-items: center; }
-    button, select {
-      background: #1f2430; color: #f2f2f2; border: 1px solid rgba(255,255,255,0.15);
-      padding: 0.5rem 1rem; border-radius: 999px; font-size: 0.88rem; cursor: pointer; transition: background 0.2s;
-    }
-    button:hover { background: #2c3444; }
-    button.rec { background: #b3261e; border-color: #ff6b61; }
-    button.active { background: #2f7d4f; border-color: #63d29a; }
-    .caption { font-size: 0.8rem; letter-spacing: 0.03em; opacity: 0.7; text-align: center; max-width: 360px; }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WILD coin — Temple of Gold</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1.25rem;
+    background: conic-gradient(#e9e9ef 90deg,#cfcfd8 90deg 180deg,#e9e9ef 180deg 270deg,#cfcfd8 270deg) 0 0 / 32px 32px;
+    font-family:system-ui,-apple-system,"Segoe UI",sans-serif; color:#333; }
+  #coin { width:380px; height:380px; }
+  .row { display:flex; gap:.5rem; flex-wrap:wrap; justify-content:center; align-items:center; }
+  button,select { background:#1f2430; color:#f2f2f2; border:1px solid rgba(255,255,255,.15); padding:.5rem 1rem; border-radius:999px; font-size:.88rem; cursor:pointer; }
+  button:hover{background:#2c3444;}
+  button.rec{background:#b3261e;border-color:#ff6b61;}
+  button.active{background:#2f7d4f;border-color:#63d29a;}
+  .cap{font-size:.8rem;opacity:.65;text-align:center;max-width:400px}
+</style>
 </head>
 <body>
-  <canvas id="coin" width="640" height="640"></canvas>
-
+  <canvas id="coin" width="700" height="700"></canvas>
   <div class="row">
     <button id="mSpin" class="active">Spin</button>
     <button id="mBurst">Win-burst</button>
-    <select id="metal" title="Metal finish">
-      <option value="gold" selected>Gold</option>
-      <option value="silver">Silver</option>
-      <option value="bronze">Bronze</option>
-    </select>
-  </div>
-  <div class="row">
-    <button id="toggle">Pause</button>
+    <select id="metal"><option value="gold" selected>Gold</option><option value="silver">Silver</option><option value="bronze">Bronze</option></select>
     <button id="rec" class="rec">● Record .webm</button>
   </div>
-  <div class="caption">Transparent background (checkerboard is page-only). Spin loops seamlessly;
-    the win-burst is a one-shot bounce + coin shower.</div>
+  <div class="cap">WILD Aztec coin — glossy gold, 360° sideways spin, solid horizontally-reeded edge; win-burst pops the coin with a shower of WILD coins. Transparent background.</div>
 
-  <script>
-  (function () {
-    const canvas = document.getElementById("coin");
-    const ctx = canvas.getContext("2d");
-    const W = canvas.width, H = canvas.height;
-    const cx = W / 2, cy = H / 2;
-    const R = W * 0.34;            // main coin radius (smaller so burst coins have room)
-    const DEPTH = W * 0.03;
+<script>
+(function(){
+  const cv=document.getElementById("coin"), ctx=cv.getContext("2d");
+  const W=cv.width,H=cv.height,cx=W/2,cy=H/2,R=W*0.375;
 
-    // ---- metal palettes ---------------------------------------------------
-    const METALS = {
-      gold:   { light:"#fff6d5", mid:"#f4c430", dark:"#c9971a", deep:"#8a5a00", edge:"#e8b93b", rim:"rgba(138,90,0,0.55)", hi:"rgba(255,246,213,0.7)" },
-      silver: { light:"#ffffff", mid:"#d7dde3", dark:"#9aa3ad", deep:"#5c636b", edge:"#c4ccd4", rim:"rgba(70,78,86,0.5)",  hi:"rgba(255,255,255,0.75)" },
-      bronze: { light:"#ffe0b8", mid:"#cd7f32", dark:"#9c5a1e", deep:"#5e3410", edge:"#d98a44", rim:"rgba(74,42,12,0.55)",  hi:"rgba(255,224,184,0.7)" },
-    };
-    let metal = METALS.gold;
-    window.setMetal = (name) => { metal = METALS[name] || METALS.gold; };
+  const METALS={
+    gold:{lt:"#fffdf0",hi:"#ffe8a0",md:"#f5c73f",dk:"#c48f1e",dp:"#7c5008",edge:"#ffd75e"},
+    silver:{lt:"#ffffff",hi:"#eef3f8",md:"#d3dbe3",dk:"#98a2ac",dp:"#5a626b",edge:"#e6edf4"},
+    bronze:{lt:"#ffe9c8",hi:"#f3b877",md:"#cd7f32",dk:"#95521c",dp:"#5a3110",edge:"#e39a4c"},
+  };
+  let M=METALS.gold;
+  window.setMetal=n=>{ M=METALS[n]||METALS.gold; };
 
-    // ---- refined fish -----------------------------------------------------
-    // Drawn centered at (0,0), facing right, within a ~2*rad box.
-    function drawFish(scaleX, rad) {
-      ctx.save();
-      ctx.scale(scaleX, 1);
-      const s = rad * 1.05;
+  const ellipse=(x,y,rx,ry)=>{ ctx.beginPath(); ctx.ellipse(x,y,rx,ry,0,0,Math.PI*2); };
+  function convexHull(pts){ pts=pts.slice().sort((a,b)=>a[0]-b[0]||a[1]-b[1]);
+    const cr=(o,a,b)=>(a[0]-o[0])*(b[1]-o[1])-(a[1]-o[1])*(b[0]-o[0]);
+    const lo=[]; for(const p of pts){ while(lo.length>=2&&cr(lo[lo.length-2],lo[lo.length-1],p)<=0)lo.pop(); lo.push(p);}
+    const up=[]; for(let i=pts.length-1;i>=0;i--){const p=pts[i]; while(up.length>=2&&cr(up[up.length-2],up[up.length-1],p)<=0)up.pop(); up.push(p);}
+    up.pop(); lo.pop(); return lo.concat(up); }
 
-      const bodyPath = () => {
-        ctx.beginPath();
-        ctx.moveTo(-0.02 * s, 0);
-        ctx.bezierCurveTo( 0.06 * s, -0.36 * s,  0.52 * s, -0.32 * s,  0.74 * s, 0);
-        ctx.bezierCurveTo( 0.52 * s,  0.32 * s,  0.06 * s,  0.36 * s, -0.02 * s, 0);
-        ctx.closePath();
-      };
+  function sunFace(s){
+    ctx.save(); ctx.fillStyle=M.dk;
+    for(let i=0;i<12;i++){ ctx.save(); ctx.rotate(i/12*Math.PI*2);
+      ctx.beginPath(); ctx.moveTo(0.30*s,-0.055*s); ctx.lineTo(0.47*s,0); ctx.lineTo(0.30*s,0.055*s); ctx.closePath(); ctx.fill(); ctx.restore(); }
+    const d=ctx.createRadialGradient(-0.08*s,-0.09*s,0.02*s,0,0,0.34*s);
+    d.addColorStop(0,M.lt); d.addColorStop(.55,M.md); d.addColorStop(1,M.dk);
+    ctx.fillStyle=d; ctx.beginPath(); ctx.arc(0,0,0.32*s,0,7); ctx.fill();
+    ctx.lineWidth=0.028*s; ctx.strokeStyle=M.dp; ctx.stroke();
+    ctx.fillStyle=M.dp;
+    ctx.beginPath(); ctx.arc(-0.115*s,-0.05*s,0.05*s,0,7); ctx.fill();
+    ctx.beginPath(); ctx.arc(0.115*s,-0.05*s,0.05*s,0,7); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(0,-0.03*s); ctx.lineTo(-0.045*s,0.07*s); ctx.lineTo(0.045*s,0.07*s); ctx.closePath(); ctx.fill();
+    ctx.fillRect(-0.13*s,0.13*s,0.26*s,0.07*s);
+    ctx.fillStyle=M.lt; for(let i=0;i<4;i++) ctx.fillRect(-0.105*s+i*0.062*s,0.13*s,0.022*s,0.07*s);
+    ctx.restore();
+  }
 
-      // tail (with rays)
-      ctx.beginPath();
-      ctx.moveTo(-0.02 * s, 0);
-      ctx.lineTo(-0.46 * s, -0.30 * s);
-      ctx.quadraticCurveTo(-0.30 * s, 0, -0.46 * s, 0.30 * s);
-      ctx.closePath();
-      ctx.fillStyle = "#0f4f66"; ctx.fill();
-      ctx.strokeStyle = "rgba(0,0,0,0.25)"; ctx.lineWidth = rad * 0.012; ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(-0.10 * s, 0); ctx.lineTo(-0.40 * s, -0.20 * s);
-      ctx.moveTo(-0.10 * s, 0); ctx.lineTo(-0.42 * s, 0);
-      ctx.moveTo(-0.10 * s, 0); ctx.lineTo(-0.40 * s, 0.20 * s);
-      ctx.strokeStyle = "rgba(255,255,255,0.25)"; ctx.lineWidth = rad * 0.01; ctx.stroke();
+  // emblem at origin; sx squashes with the spin; kept readable (never mirrored)
+  function emblem(sx, s){
+    ctx.save(); ctx.scale(sx,1);
+    for(let i=0;i<20;i++){ ctx.save(); ctx.rotate(i/20*Math.PI*2);
+      ctx.fillStyle=i%2?M.dp:M.dk; ctx.fillRect(0.55*s,-0.024*s,0.065*s,0.048*s); ctx.restore(); }
+    ctx.beginPath(); ctx.arc(0,0,0.665*s,0,7); ctx.lineWidth=0.024*s; ctx.strokeStyle="#1c4fbf"; ctx.stroke();
+    ctx.beginPath(); ctx.arc(0,0,0.635*s,0,7); ctx.lineWidth=0.008*s; ctx.strokeStyle="#9cbcff"; ctx.stroke();
+    ctx.save(); ctx.translate(0,-0.36*s); ctx.scale(0.44,0.44); sunFace(s); ctx.restore();
+    ctx.save(); ctx.translate(0,0.14*s);
+    ctx.textAlign="center"; ctx.textBaseline="middle";
+    ctx.font=`900 ${0.30*s}px system-ui,"Arial Black",sans-serif`;
+    ctx.fillStyle="rgba(0,0,0,0.4)"; ctx.fillText("WILD",0.012*s,0.02*s);
+    ctx.lineJoin="round";
+    ctx.strokeStyle="#0d2f7a"; ctx.lineWidth=0.10*s; ctx.strokeText("WILD",0,0);
+    ctx.strokeStyle="#2f6fe0"; ctx.lineWidth=0.05*s; ctx.strokeText("WILD",0,0);
+    const wg=ctx.createLinearGradient(0,-0.17*s,0,0.17*s);
+    wg.addColorStop(0,"#ffffff"); wg.addColorStop(.5,"#eaf1ff"); wg.addColorStop(1,"#b9cdf5");
+    ctx.fillStyle=wg; ctx.fillText("WILD",0,0);
+    ctx.restore(); ctx.restore();
+  }
 
-      // dorsal fin
-      ctx.beginPath();
-      ctx.moveTo(0.14 * s, -0.26 * s);
-      ctx.quadraticCurveTo(0.30 * s, -0.50 * s, 0.46 * s, -0.20 * s);
-      ctx.closePath();
-      ctx.fillStyle = "#0f4f66"; ctx.fill(); ctx.stroke();
-      // pectoral fin
-      ctx.beginPath();
-      ctx.moveTo(0.34 * s, 0.06 * s);
-      ctx.quadraticCurveTo(0.40 * s, 0.34 * s, 0.18 * s, 0.24 * s);
-      ctx.closePath();
-      ctx.fillStyle = "#12586f"; ctx.fill(); ctx.stroke();
+  function edge(fx,bx,rx,angle,Y,rad){
+    const pts=[],N=40;
+    for(let i=0;i<N;i++){ const t=i/N*2*Math.PI, ex=rx*Math.cos(t), ey=Y+rad*Math.sin(t); pts.push([fx+ex,ey]); pts.push([bx+ex,ey]); }
+    const hull=convexHull(pts);
+    const path=()=>{ ctx.beginPath(); hull.forEach((p,i)=> i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1])); ctx.closePath(); };
+    path(); ctx.save(); ctx.clip();
+    const minX=Math.min(fx,bx)-rx, maxX=Math.max(fx,bx)+rx;
+    const g=ctx.createLinearGradient(minX,0,maxX,0); g.addColorStop(0,M.dp); g.addColorStop(.5,M.edge); g.addColorStop(1,M.dp);
+    ctx.fillStyle=g; ctx.fillRect(minX,Y-rad,maxX-minX,2*rad);
+    const K=Math.max(10,Math.round(rad/6.5)), step=(2*rad)/K, shift=((angle*step*3)%step+step)%step;
+    for(let i=-1;i<=K;i++){ const y=Y-rad+i*step+shift;
+      ctx.globalAlpha=0.5; ctx.strokeStyle=M.dp; ctx.lineWidth=step*0.55; ctx.beginPath(); ctx.moveTo(minX,y); ctx.lineTo(maxX,y); ctx.stroke();
+      ctx.globalAlpha=0.45; ctx.strokeStyle=M.hi; ctx.lineWidth=step*0.26; ctx.beginPath(); ctx.moveTo(minX,y-step*0.3); ctx.lineTo(maxX,y-step*0.3); ctx.stroke(); }
+    ctx.globalAlpha=1;
+    const hgg=ctx.createLinearGradient(minX,0,maxX,0); hgg.addColorStop(0,"rgba(0,0,0,.4)"); hgg.addColorStop(.5,"rgba(0,0,0,0)"); hgg.addColorStop(1,"rgba(0,0,0,.4)");
+    ctx.fillStyle=hgg; ctx.fillRect(minX,Y-rad,maxX-minX,2*rad);
+    ctx.restore();
+    path(); ctx.lineWidth=rad*0.016; ctx.strokeStyle=M.dp; ctx.stroke();
+  }
 
-      // body
-      bodyPath();
-      const body = ctx.createLinearGradient(-0.1 * s, -0.32 * s, 0.72 * s, 0.32 * s);
-      body.addColorStop(0, "#2aa3c4"); body.addColorStop(0.55, "#1b7994"); body.addColorStop(1, "#0e4a63");
-      ctx.fillStyle = body; ctx.fill();
-      ctx.lineWidth = rad * 0.014; ctx.strokeStyle = "rgba(0,0,0,0.28)"; ctx.stroke();
-
-      // scales (clipped to body)
-      ctx.save(); bodyPath(); ctx.clip();
-      ctx.strokeStyle = "rgba(255,255,255,0.18)"; ctx.lineWidth = rad * 0.012;
-      for (let col = 0; col < 5; col++) {
-        for (let rowi = -2; rowi <= 2; rowi++) {
-          const px = (0.12 + col * 0.12) * s;
-          const py = (rowi * 0.12 + (col % 2 ? 0.06 : 0)) * s;
-          ctx.beginPath();
-          ctx.arc(px, py, 0.09 * s, Math.PI * 0.75, Math.PI * 0.25, false);
-          ctx.stroke();
-        }
-      }
+  function face(angle,rx,fx,Y,rad,simple){
+    const c=Math.cos(angle), a=Math.abs(c);
+    const T=(fn)=>{ ctx.save(); ctx.translate(fx,Y); ctx.scale(Math.max(a,0.001),1); fn(); ctx.restore(); };
+    ellipse(fx,Y,rx,rad); ctx.save(); ctx.clip();
+    const field=ctx.createRadialGradient(fx-rx*0.33,Y-rad*0.4,rad*0.05,fx,Y,rad*1.18);
+    field.addColorStop(0,M.lt); field.addColorStop(.38,M.md); field.addColorStop(.82,M.dk); field.addColorStop(1,M.dp);
+    ctx.fillStyle=field; ctx.fillRect(fx-rx,Y-rad,rx*2,rad*2);
+    if(!simple){
+      T(()=>{ for(let i=0;i<96;i++){ const t=i/96*Math.PI*2; ctx.strokeStyle=i%2?"rgba(255,255,255,.05)":"rgba(0,0,0,.05)"; ctx.lineWidth=rad*0.010;
+        ctx.beginPath(); ctx.moveTo(Math.cos(t)*rad*0.16,Math.sin(t)*rad*0.16); ctx.lineTo(Math.cos(t)*rad*0.5,Math.sin(t)*rad*0.5); ctx.stroke(); } });
+      ctx.save(); ctx.translate(fx,Y); emblem(a, rad); ctx.restore();
+      T(()=>{ for(let i=0;i<44;i++){ const t=i/44*Math.PI*2,bx2=Math.cos(t)*rad*0.80,by2=Math.sin(t)*rad*0.80;
+          const bg=ctx.createRadialGradient(bx2-2,by2-2,0,bx2,by2,rad*0.03); bg.addColorStop(0,M.lt); bg.addColorStop(1,M.dp);
+          ctx.fillStyle=bg; ctx.beginPath(); ctx.arc(bx2,by2,rad*0.026,0,Math.PI*2); ctx.fill(); }
+        for(let i=0;i<96;i++){ const t=i/96*Math.PI*2; ctx.strokeStyle="rgba(0,0,0,.28)"; ctx.lineWidth=rad*0.012;
+          ctx.beginPath(); ctx.moveTo(Math.cos(t)*rad*0.87,Math.sin(t)*rad*0.87); ctx.lineTo(Math.cos(t)*rad*0.93,Math.sin(t)*rad*0.93); ctx.stroke(); } });
+    } else {
+      ctx.save(); ctx.translate(fx,Y); ctx.scale(Math.max(a,0.001),1);
+      ctx.beginPath(); ctx.arc(0,0,rad*0.66,0,7); ctx.lineWidth=rad*0.05; ctx.strokeStyle="#1c4fbf"; ctx.stroke();
+      ctx.scale(1,1); sunFace(rad*0.9*0.55);
       ctx.restore();
-
-      // gill
-      ctx.beginPath();
-      ctx.moveTo(0.30 * s, -0.18 * s);
-      ctx.quadraticCurveTo(0.235 * s, 0, 0.30 * s, 0.18 * s);
-      ctx.strokeStyle = "rgba(255,255,255,0.4)"; ctx.lineWidth = rad * 0.016; ctx.stroke();
-
-      // eye
-      ctx.beginPath(); ctx.arc(0.52 * s, -0.07 * s, 0.065 * s, 0, Math.PI * 2);
-      ctx.fillStyle = "#fff"; ctx.fill();
-      ctx.beginPath(); ctx.arc(0.535 * s, -0.07 * s, 0.03 * s, 0, Math.PI * 2);
-      ctx.fillStyle = "#06202a"; ctx.fill();
-      ctx.beginPath(); ctx.arc(0.505 * s, -0.095 * s, 0.014 * s, 0, Math.PI * 2);
-      ctx.fillStyle = "#fff"; ctx.fill();
-
-      ctx.restore();
     }
+    const bevel=ctx.createLinearGradient(fx-rx,Y-rad,fx+rx,Y+rad);
+    bevel.addColorStop(0,M.lt); bevel.addColorStop(.45,M.md); bevel.addColorStop(.55,M.dk); bevel.addColorStop(1,M.dp);
+    ellipse(fx,Y,rx*0.955,rad*0.955); ctx.lineWidth=rad*0.085; ctx.strokeStyle=bevel; ctx.stroke();
+    const gloss=ctx.createRadialGradient(fx-rx*0.4,Y-rad*0.5,0,fx-rx*0.2,Y-rad*0.2,rad*1.0);
+    gloss.addColorStop(0,"rgba(255,255,255,.42)"); gloss.addColorStop(.4,"rgba(255,255,255,.08)"); gloss.addColorStop(1,"rgba(255,255,255,0)");
+    ctx.fillStyle=gloss; ctx.fillRect(fx-rx,Y-rad,rx*2,rad*2);
+    const gx=fx+Math.sin(angle*2)*rx*1.1;
+    const sp=ctx.createLinearGradient(gx-rx*0.45,Y-rad,gx+rx*0.45,Y+rad);
+    sp.addColorStop(0,"rgba(255,255,255,0)"); sp.addColorStop(.46,"rgba(255,255,255,0)"); sp.addColorStop(.5,"rgba(255,255,255,.6)"); sp.addColorStop(.54,"rgba(255,255,255,0)"); sp.addColorStop(1,"rgba(255,255,255,0)");
+    ctx.fillStyle=sp; ctx.fillRect(fx-rx,Y-rad,rx*2,rad*2);
+    ctx.restore();
+    ellipse(fx,Y,rx,rad); ctx.lineWidth=rad*0.02; ctx.strokeStyle=M.hi; ctx.stroke();
+  }
 
-    // ---- one coin (face + edge + emblem + glare) at (x,y), radius rad ------
-    function drawCoin(x, y, rad, angle, opts = {}) {
-      const withFish = opts.fish !== false;
-      const c = Math.cos(angle), a = Math.abs(c);
-      const rx = Math.max(rad * a, rad * 0.12);
+  // full coin at (X,Y) radius rad, rotation angle (about vertical axis)
+  function drawCoinAt(X,Y,rad,angle,simple){
+    const c=Math.cos(angle), s=Math.sin(angle), a=Math.abs(c);
+    const rx=Math.max(rad*a,1), depth=rad*0.36, sgn=c>=0?1:-1, off=depth*s*sgn;
+    const fx=X+off/2, bx=X-off/2;
+    edge(fx,bx,rx,angle,Y,rad);
+    face(angle,rx,fx,Y,rad,simple);
+  }
 
-      // edge
-      ctx.save();
-      ctx.beginPath(); ctx.ellipse(x, y, rx, rad, 0, 0, Math.PI * 2);
-      const edge = ctx.createLinearGradient(x - rx, 0, x + rx, 0);
-      edge.addColorStop(0, metal.deep); edge.addColorStop(0.5, metal.edge); edge.addColorStop(1, metal.deep);
-      ctx.fillStyle = edge; ctx.fill();
-      ctx.restore();
+  // ---- SPIN (seamless 360) ----
+  function drawSpin(i,N){ ctx.clearRect(0,0,W,H); drawCoinAt(cx,cy,R,(i/N)*Math.PI*2,false); }
+  window.drawSpin=drawSpin;
 
-      // face
-      ctx.save();
-      ctx.beginPath(); ctx.ellipse(x, y, rx, rad, 0, 0, Math.PI * 2); ctx.clip();
-      const face = ctx.createRadialGradient(x - rx * 0.35, y - rad * 0.35, rad * 0.1, x, y, rad * 1.1);
-      face.addColorStop(0, metal.light); face.addColorStop(0.35, metal.mid);
-      face.addColorStop(0.72, metal.dark); face.addColorStop(1, metal.deep);
-      ctx.fillStyle = face; ctx.fillRect(x - rx, y - rad, rx * 2, rad * 2);
+  // ---- WIN-BURST (pop-in + shower of WILD coins) ----
+  function mulberry32(seed){ return function(){ seed|=0; seed=(seed+0x6D2B79F5)|0; let t=Math.imul(seed^(seed>>>15),1|seed);
+    t=(t+Math.imul(t^(t>>>7),61|t))^t; return ((t^(t>>>14))>>>0)/4294967296; }; }
+  const Rb=W*0.28;
+  const PARTS=(()=>{ const rnd=mulberry32(1337), arr=[], n=18;
+    for(let k=0;k<n;k++){ const dir=k/n*Math.PI*2+(rnd()-.5)*0.5, speed=(0.85+rnd()*0.9)*Rb;
+      arr.push({ vx:Math.cos(dir)*speed, vy:-Math.abs(Math.sin(dir))*speed-(0.5+rnd())*Rb,
+        rad:Rb*(0.18+rnd()*0.16), spin:(rnd()*2-1)*9, phase:rnd()*Math.PI*2, t0:rnd()*0.12 }); }
+    return arr; })();
+  const easeOutBack=x=>{ const c1=1.70158,c3=c1+1; return 1+c3*Math.pow(x-1,3)+c1*Math.pow(x-1,2); };
 
-      ctx.beginPath(); ctx.ellipse(x, y, rx * 0.86, rad * 0.86, 0, 0, Math.PI * 2);
-      ctx.lineWidth = rad * 0.05; ctx.strokeStyle = metal.rim; ctx.stroke();
+  function drawBurst(i,N){
+    ctx.clearRect(0,0,W,H);
+    const t=i/N, G=3.0*Rb;
+    if(t<0.35){ const p=t/0.35; ctx.save(); ctx.beginPath(); ctx.arc(cx,cy,Rb*(0.6+p*1.7),0,Math.PI*2);
+      ctx.lineWidth=Rb*0.13*(1-p); ctx.strokeStyle=`rgba(255,240,180,${0.6*(1-p)})`; ctx.stroke(); ctx.restore(); }
+    for(const pt of PARTS){ const tau=t-pt.t0; if(tau<=0) continue;
+      const x=cx+pt.vx*tau, y=cy+pt.vy*tau+0.5*G*tau*tau;
+      const alpha=Math.max(0,1-Math.max(0,t-0.55)/0.45); if(alpha<=0) continue;
+      ctx.save(); ctx.globalAlpha=alpha; drawCoinAt(x,y,pt.rad,pt.phase+pt.spin*tau,true); ctx.restore(); }
+    let scale; if(t<0.28) scale=easeOutBack(t/0.28); else { const u=(t-0.28)/0.72; scale=1+Math.sin(u*Math.PI)*0.06; }
+    drawCoinAt(cx,cy,Rb*Math.max(0.001,scale),Math.sin(t*Math.PI*3)*0.35,false);
+  }
+  window.drawBurst=drawBurst;
 
-      if (withFish) {
-        ctx.translate(x, y);
-        drawFish(c >= 0 ? a : -a, rad);
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-      }
+  // ---- interactive ----
+  let mode="spin", playing=true, t0=null, elapsed=0;
+  const SPIN_P=3.4, BURST_P=2.2; window.__headless=false;
+  function loop(ts){ if(t0==null)t0=ts; const dt=(ts-t0)/1000; t0=ts;
+    if(!window.__headless){ if(playing) elapsed+=dt;
+      if(mode==="spin"){ const N=900; drawSpin(((elapsed/SPIN_P)%1)*N,N); }
+      else { const N=720; let f=(elapsed/BURST_P)*N; if(f>=N)f=N-1; drawBurst(f,N); } }
+    requestAnimationFrame(loop); }
+  requestAnimationFrame(loop);
 
-      // glare
-      ctx.save();
-      ctx.beginPath(); ctx.ellipse(x, y, rx, rad, 0, 0, Math.PI * 2); ctx.clip();
-      const gx = x + Math.sin(angle * 2) * rx;
-      const glare = ctx.createLinearGradient(gx - rx * 0.5, y - rad, gx + rx * 0.5, y + rad);
-      glare.addColorStop(0, "rgba(255,255,255,0)");
-      glare.addColorStop(0.5, "rgba(255,255,255,0.45)");
-      glare.addColorStop(1, "rgba(255,255,255,0)");
-      ctx.fillStyle = glare; ctx.fillRect(x - rx, y - rad, rx * 2, rad * 2);
-      ctx.restore();
-      ctx.restore();
-
-      ctx.beginPath(); ctx.ellipse(x, y, rx, rad, 0, 0, Math.PI * 2);
-      ctx.lineWidth = rad * 0.03; ctx.strokeStyle = metal.hi; ctx.stroke();
-    }
-
-    // ---- SPIN mode (seamless loop) ---------------------------------------
-    function drawSpin(i, N) {
-      ctx.clearRect(0, 0, W, H);
-      const angle = (i / N) * Math.PI * 2;
-      drawCoin(cx, cy, R, angle);
-    }
-    window.drawSpin = drawSpin;
-
-    // ---- WIN-BURST mode (one-shot bounce + coin shower) ------------------
-    // Deterministic particles (fixed seed -> identical every render).
-    function mulberry32(seed) {
-      return function () {
-        seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
-        let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-      };
-    }
-    const PARTICLES = (() => {
-      const rnd = mulberry32(1337); const arr = []; const n = 20;
-      for (let k = 0; k < n; k++) {
-        const dir = (k / n) * Math.PI * 2 + (rnd() - 0.5) * 0.5;
-        const speed = (0.9 + rnd() * 0.9) * R;      // launch speed (px per unit-t)
-        arr.push({
-          vx: Math.cos(dir) * speed,
-          vy: -Math.abs(Math.sin(dir)) * speed - (0.6 + rnd()) * R, // bias upward
-          rad: R * (0.16 + rnd() * 0.14),
-          spin: (rnd() * 2 - 1) * 10,
-          phase: rnd() * Math.PI * 2,
-          t0: rnd() * 0.12,                          // staggered launch
-        });
-      }
-      return arr;
-    })();
-
-    function easeOutBack(x) { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); }
-
-    function drawBurst(i, N) {
-      ctx.clearRect(0, 0, W, H);
-      const t = i / N;                       // 0..1 one-shot
-      const G = 3.4 * R;                      // gravity
-
-      // expanding flash ring early on
-      if (t < 0.35) {
-        const p = t / 0.35;
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(cx, cy, R * (0.6 + p * 1.6), 0, Math.PI * 2);
-        ctx.lineWidth = R * 0.12 * (1 - p);
-        ctx.strokeStyle = `rgba(255,246,190,${0.6 * (1 - p)})`;
-        ctx.stroke();
-        ctx.restore();
-      }
-
-      // shower coins (behind + front split by vertical position for depth)
-      for (const pt of PARTICLES) {
-        const tau = t - pt.t0;
-        if (tau <= 0) continue;
-        const x = cx + pt.vx * tau;
-        const y = cy + pt.vy * tau + 0.5 * G * tau * tau;
-        const alpha = Math.max(0, 1 - Math.max(0, (t - 0.55)) / 0.45);
-        if (alpha <= 0) continue;
-        ctx.save();
-        ctx.globalAlpha = alpha;
-        drawCoin(x, y, pt.rad, pt.phase + pt.spin * tau, { fish: false });
-        ctx.restore();
-      }
-
-      // central coin: pop-in bounce, then gentle spin
-      let scale;
-      if (t < 0.28) scale = easeOutBack(t / 0.28) * 1.0;
-      else { const s = (t - 0.28) / 0.72; scale = 1 + Math.sin(s * Math.PI) * 0.06; } // subtle breathe
-      // gentle shimmer that keeps the fish readable (never edge-on)
-      const angle = Math.sin(t * Math.PI * 3) * 0.35;
-      drawCoin(cx, cy, R * Math.max(0.001, scale), angle);
-    }
-    window.drawBurst = drawBurst;
-
-    // ---- interactive loop -------------------------------------------------
-    let mode = "spin", playing = true, t0 = null, elapsed = 0;
-    const SPIN_PERIOD = 3.0, BURST_PERIOD = 2.2;
-    window.__headless = false;
-
-    function loop(ts) {
-      if (t0 == null) t0 = ts;
-      const dt = (ts - t0) / 1000; t0 = ts;
-      if (!window.__headless) {
-        if (playing) elapsed += dt;
-        if (mode === "spin") {
-          const N = 900, i = ((elapsed / SPIN_PERIOD) % 1) * N;
-          drawSpin(i, N);
-        } else {
-          const N = 720; let f = (elapsed / BURST_PERIOD) * N;
-          if (f >= N) { f = N - 1; }         // hold last frame; press Win-burst to replay
-          drawBurst(f, N);
-        }
-      }
-      requestAnimationFrame(loop);
-    }
-    requestAnimationFrame(loop);
-
-    // ---- controls ---------------------------------------------------------
-    const mSpin = document.getElementById("mSpin");
-    const mBurst = document.getElementById("mBurst");
-    const metalSel = document.getElementById("metal");
-    const toggle = document.getElementById("toggle");
-    const rec = document.getElementById("rec");
-
-    function setMode(m) {
-      mode = m; elapsed = 0; playing = true; toggle.textContent = "Pause";
-      mSpin.classList.toggle("active", m === "spin");
-      mBurst.classList.toggle("active", m === "burst");
-    }
-    mSpin.onclick = () => setMode("spin");
-    mBurst.onclick = () => setMode("burst");
-    metalSel.onchange = () => window.setMetal(metalSel.value);
-    toggle.onclick = () => { playing = !playing; toggle.textContent = playing ? "Pause" : "Play"; };
-
-    let recorder = null, chunks = [];
-    rec.onclick = () => {
-      if (recorder && recorder.state === "recording") { recorder.stop(); return; }
-      const stream = canvas.captureStream(60);
-      const types = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
-      const mime = types.find(t => MediaRecorder.isTypeSupported(t)) || "";
-      recorder = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 8e6 } : undefined);
-      chunks = [];
-      elapsed = 0; // record from the start of the loop
-      recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
-      recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: "video/webm" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url; a.download = (mode === "spin" ? "coin_spin" : "coin_burst") + ".webm"; a.click();
-        URL.revokeObjectURL(url);
-        rec.textContent = "● Record .webm";
-      };
-      recorder.start();
-      rec.textContent = "■ Stop & save";
-      const dur = (mode === "spin" ? SPIN_PERIOD : BURST_PERIOD) * 1000;
-      setTimeout(() => { if (recorder && recorder.state === "recording") recorder.stop(); }, dur);
-    };
-  })();
-  </script>
+  const mSpin=document.getElementById("mSpin"), mBurst=document.getElementById("mBurst"), rec=document.getElementById("rec"), metalSel=document.getElementById("metal");
+  function setMode(m){ mode=m; elapsed=0; playing=true; mSpin.classList.toggle("active",m==="spin"); mBurst.classList.toggle("active",m==="burst"); }
+  mSpin.onclick=()=>setMode("spin"); mBurst.onclick=()=>setMode("burst");
+  metalSel.onchange=e=>window.setMetal(e.target.value);
+  let recorder=null,chunks=[];
+  rec.onclick=()=>{ if(recorder&&recorder.state==="recording"){recorder.stop();return;}
+    const stream=cv.captureStream(60); const types=["video/webm;codecs=vp9","video/webm;codecs=vp8","video/webm"];
+    const mime=types.find(t=>MediaRecorder.isTypeSupported(t))||""; recorder=new MediaRecorder(stream,mime?{mimeType:mime,videoBitsPerSecond:8e6}:undefined);
+    chunks=[]; elapsed=0; recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
+    recorder.onstop=()=>{ const blob=new Blob(chunks,{type:"video/webm"}); const url=URL.createObjectURL(blob);
+      const a=document.createElement("a"); a.href=url; a.download=(mode==="spin"?"coin_spin":"coin_burst")+".webm"; a.click(); URL.revokeObjectURL(url); rec.textContent="● Record .webm"; };
+    recorder.start(); rec.textContent="■ Stop & save";
+    setTimeout(()=>{ if(recorder&&recorder.state==="recording") recorder.stop(); }, (mode==="spin"?SPIN_P:BURST_P)*1000); };
+})();
+</script>
 </body>
 </html>

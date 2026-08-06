@@ -1,8 +1,9 @@
-# Animated Coin — spin & win-burst (for a digital slot machine)
+# WILD coin — Temple of Gold (spin & win-burst)
 
-A gold coin with a refined fish emblem, on a **transparent background**, in two
-animations built for slot-machine reels and win celebrations. Every asset keeps
-a real alpha channel so it composites cleanly over reels/backgrounds.
+A glossy gold **WILD** Aztec coin for a digital slot machine, on a **transparent
+background**. WILD text on both faces, a sun-face medallion, a solid thick
+horizontally-reeded edge, and a full 360° sideways spin. Every asset keeps a real
+alpha channel so it composites cleanly over reels/backgrounds.
 
 ## Assets (gold)
 | Clip  | Preview (plays anywhere) | Transparent video        | Sprite sheet               | Atlas JSON        |
@@ -13,55 +14,28 @@ a real alpha channel so it composites cleanly over reels/backgrounds.
 Also `coin_spin.mov` / `coin_burst.mov` — **ProRes 4444** with alpha, for video
 editors (After Effects / Premiere / Nuke).
 
-And `coin_spin.gif` / `coin_burst.gif` — looping GIFs (over a dark background) for
-quick inline previews in chat/email/docs; no codec needed.
+- **Spin** = 90-frame seamless 360° loop (tiles cleanly on a reel).
+- **Win-burst** = 72-frame one-shot: the coin pops in with a flash ring and a
+  shower of smaller WILD coins.
+- Sprite cells are **160×160**, left→right, top→bottom. Atlas JSON is Phaser
+  JSONHash; `meta.grid` + `meta.animation` make Unity slicing trivial.
 
-### Which file for what
-- **Just to view it** → the `*_preview.mp4` (H.264 over a dark background; opens in any player/browser).
-- **HTML5 / Phaser / PixiJS slot** → `*.webm` (VP9 + alpha, transparent) or the sprite sheets.
-- **Unity / engine sprite anim** → the sprite sheets + JSON.
+## Which file for what
+- **Just to view it** → the `*_preview.mp4` (plays in any player/browser).
+- **HTML5 / Phaser / PixiJS slot** → the `*.webm` (VP9 + alpha) or the sprite sheets.
+- **Unity / engine sprite animation** → the sprite sheets + JSON.
 - **Video / motion-graphics pipeline** → the ProRes `*.mov` (alpha).
 
-> ProRes `.mov` is a pro editing codec — most ordinary players show a blank frame
-> because they can't decode it. Use the MP4 to preview, the ProRes to edit.
-
-## Using the sprite sheets
-
-**Phaser 3**
-```js
-this.load.atlas('coin', 'coin_spin_sheet.png', 'coin_spin.json');
-// frames are named spin_00 … spin_89
-this.anims.create({
-  key: 'coin-spin',
-  frames: this.anims.generateFrameNames('coin', { prefix: 'spin_', start: 0, end: 89, zeroPad: 2 }),
-  frameRate: 30, repeat: -1,
-});
-```
-
-**Unity** — import `coin_spin_sheet.png`, Sprite Mode = Multiple, slice Grid By Cell
-Size 160×160, then drag the 90 sprites onto an Animation clip at 30 fps (loop on for
-spin, loop off for burst).
-
-## Live preview / editing
-- `coin.html` — the animation on an HTML `<canvas>`. Toggle **Spin / Win-burst**,
-  pick a **metal** (gold/silver/bronze), and **Record .webm** (transparent WebM,
-  Chromium). Checkerboard is page-only; the canvas stays transparent.
+## Live page & re-render
+- `coin.html` / `index.html` — the animation on a `<canvas>`. Spin / Win-burst
+  toggle, metal finish (gold/silver/bronze), and a transparent-WebM recorder.
 - `render.mjs` — headless renderer that produces every asset above.
+  ```bash
+  ln -sf "$(npm root -g)/playwright" node_modules/playwright   # if needed
+  node render.mjs
+  ```
+  Requires a full `ffmpeg` (with `prores_ks`) on PATH. Set `METALS` in
+  `render.mjs` to also emit silver/bronze.
 
-## Re-render
-```bash
-ln -sf "$(npm root -g)/playwright" node_modules/playwright   # if needed
-node render.mjs
-```
-Requires a full `ffmpeg` (with `prores_ks`) on PATH.
-
-### Silver / bronze
-The metal system is fully built in; only gold is output by default. To also emit
-silver and bronze, set `const METALS = ["gold","silver","bronze"];` at the top of
-`render.mjs` and re-run — you'll get `coin_spin_silver.*`, `coin_burst_bronze.*`, etc.
-
-## Why the .mov is rendered here (not in the browser)
-Browsers can't export a transparent `.mov` — `MediaRecorder` only does WebM/MP4.
-So the page records transparent **WebM**, and the true transparent **ProRes 4444
-`.mov`** (standard for After Effects / Premiere / Nuke / Unity / Unreal) is produced
-by `render.mjs`.
+> A browser can't export a transparent `.mov` (MediaRecorder is WebM/MP4 only),
+> so the page records transparent **WebM** and the ProRes `.mov` comes from `render.mjs`.
