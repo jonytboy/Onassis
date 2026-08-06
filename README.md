@@ -13,6 +13,9 @@ a real alpha channel so it composites cleanly over reels/backgrounds.
 Also `coin_spin.mov` / `coin_burst.mov` — **ProRes 4444** with alpha, for video
 editors (After Effects / Premiere / Nuke).
 
+And `coin_spin.gif` / `coin_burst.gif` — looping GIFs (over a dark background) for
+quick inline previews in chat/email/docs; no codec needed.
+
 ### Which file for what
 - **Just to view it** → the `*_preview.mp4` (H.264 over a dark background; opens in any player/browser).
 - **HTML5 / Phaser / PixiJS slot** → `*.webm` (VP9 + alpha, transparent) or the sprite sheets.
