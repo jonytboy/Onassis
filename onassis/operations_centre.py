@@ -924,6 +924,34 @@ def build_operations_router(get_state) -> APIRouter:
         return {"dashboard": cfo.dashboard(), "roai": cfo.roai(),
                 "optimisation": cfo.optimisation_report()}
 
+    @router.get("/api/billing")
+    def api_billing(request: Request) -> Any:
+        """Per-provider AI spend + credit remaining, so the operator monitors from
+        the dashboard instead of logging into OpenAI/Anthropic."""
+        _require_operator(request)
+        from onassis.billing import BillingMonitor
+        s = request.app.state
+        return BillingMonitor(s.config, s.db).summary()
+
+    @router.post("/api/billing/credit")
+    def api_billing_set_credit(request: Request, payload: dict | None = None) -> Any:
+        """Record a provider top-up ('I have $X of credit') so remaining can be
+        tracked as top-up minus spend since."""
+        _require_operator(request)
+        from onassis.billing import BillingMonitor
+        body = payload or {}
+        provider = str(body.get("provider") or "").strip().lower()
+        try:
+            amount = float(body.get("amount"))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="A numeric amount is required.")
+        if not provider:
+            raise HTTPException(status_code=400, detail="A provider is required.")
+        s = request.app.state
+        result = BillingMonitor(s.config, s.db).set_credit(provider, amount)
+        get_state(request.app).add_log(f"Billing: {provider} credit set to ${amount:.2f}.")
+        return result
+
     @router.get("/api/cfo/product/{sku}")
     def api_cfo_product(request: Request, sku: str) -> Any:
         _require_operator(request)

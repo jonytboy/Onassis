@@ -499,3 +499,16 @@ def apply_integration_overrides(config: Config, db: Database) -> None:
             ov = mgr._override(integ.key, f.key)
             if ov is not None:
                 mgr._apply_live(integ.key, f.key, ov)
+    # Overlay the operator's pricing dials (Business Settings) onto config.pricing
+    # so the pricing engine honours them without a config.yaml edit / restart.
+    try:
+        from onassis.business_settings import BusinessSettings
+        bs = BusinessSettings(db, config)
+        pricing = dict(getattr(config, "pricing", None) or {})
+        pricing["strategy"] = "adaptive" if bs.get("pricing_adaptive") else "flat"
+        for key in ("adaptive_start_profit", "adaptive_min_profit", "adaptive_max_profit",
+                    "adaptive_step", "adaptive_window_days", "shipping_cost"):
+            pricing[key] = bs.get(key)
+        config.pricing = pricing
+    except Exception:  # pricing overlay is best-effort, never block startup
+        pass

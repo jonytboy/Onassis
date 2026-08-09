@@ -471,6 +471,32 @@
 
   <!-- AI COST (CFO) -->
   <div x-show="tab==='aicost'">
+    <div class="panel" x-show="billing" style="margin-bottom:12px">
+      <h2>AI Credits &amp; Spend</h2>
+      <div class="grid" style="margin-bottom:8px">
+        <div class="stat"><div class="k">Spend today</div><div class="v" x-text="'$'+(billing?.spend_today??0).toFixed(2)"></div></div>
+        <div class="stat"><div class="k">This month</div><div class="v" x-text="'$'+(billing?.spend_month??0).toFixed(2)"></div></div>
+        <div class="stat"><div class="k">All-time</div><div class="v" x-text="'$'+(billing?.spend_total??0).toFixed(2)"></div></div>
+      </div>
+      <div style="overflow-x:auto">
+      <table><thead><tr><th>Provider</th><th>Today</th><th>Month</th><th>Total</th><th>Credit</th><th>Remaining</th><th>~Days left</th><th>Health</th><th>Update credit</th></tr></thead><tbody>
+        <template x-for="p in (billing?.providers||[])" :key="p.provider">
+          <tr>
+            <td><b x-text="p.provider"></b></td>
+            <td x-text="'$'+(p.spend_today||0).toFixed(2)"></td>
+            <td x-text="'$'+(p.spend_month||0).toFixed(2)"></td>
+            <td x-text="'$'+(p.spend_total||0).toFixed(2)"></td>
+            <td x-text="p.credit!=null?('$'+p.credit.toFixed(2)):'—'"></td>
+            <td><b :style="p.remaining!=null&&p.remaining<10?'color:var(--bad)':''" x-text="p.remaining!=null?('$'+p.remaining.toFixed(2)):'—'"></b></td>
+            <td x-text="p.days_left!=null?(p.days_left+'d'):'—'"></td>
+            <td><span class="pill" :class="p.health?.ok?'ok':'failed'" x-text="p.health?.ok?'ok':(p.health?.message||p.health?.kind||'issue')"></span></td>
+            <td class="note"><input type="number" step="1" min="0" placeholder="$ topped up" style="width:90px" x-model.number="creditInput[p.provider]"><button class="btn small" @click="setCredit(p.provider)">Set</button></td>
+          </tr>
+        </template>
+      </tbody></table>
+      </div>
+      <div class="note muted" style="margin-top:6px" x-text="billing?.note"></div>
+    </div>
     <div class="panel" x-show="cfo && Object.keys(cfo?.dashboard?.provider_alerts||{}).length" style="margin-bottom:12px;border:1px solid #ff8a8a">
       <h2 style="color:#ff8a8a">⚠ AI provider billing alert</h2>
       <template x-for="(a,p) in (cfo?.dashboard?.provider_alerts||{})" :key="p">
@@ -1202,7 +1228,7 @@ function ops(){
     environment:null, deployRun:null, preview:null, validation:null, _deployPoll:null,
     productDetail:null, channelTests:null, testingChannels:false, regenerating:null,
     integrations:null, integrationDetail:null, integrationEdits:{}, integrationBusy:false,
-    commercial:null, commercialProducts:null, cmo:null, cfo:null, distribution:null, overview:null, mktgSchedule:null,
+    commercial:null, commercialProducts:null, cmo:null, cfo:null, distribution:null, overview:null, mktgSchedule:null, billing:null, creditInput:{},
     catalogue:null, collections:null, content:null, blog:null, blogDx:null, blogMaint:false, publishingAll:false, publishAllTotal:0, publishAllDone:0,
     productSearch:'', productFilter:'all', productHealth:null, toast:'',
     productFilters:[['all','All'],['awaiting_approval','Awaiting Approval'],['ready_to_publish','Ready to Publish'],['draft_created','Draft Created'],['live','Live'],['failed','Failed'],['etsy','On Etsy'],['shopify','On Shopify'],['both','Etsy + Shopify'],['archived','Archived']],
@@ -1265,7 +1291,7 @@ function ops(){
         this.settings=(await this.get('/operations/api/business-settings')).settings; }
       else if(t==='commercial'){ this.commercial=await this.get('/operations/api/commercial');
         this.commercialProducts=(await this.get('/operations/api/commercial/products')).products; }
-      else if(t==='aicost'){ this.cfo=await this.get('/operations/api/cfo'); }
+      else if(t==='aicost'){ this.cfo=await this.get('/operations/api/cfo'); this.billing=await this.get('/operations/api/billing'); }
       else if(t==='content'){ this.content=await this.get('/operations/api/content/reels');
         this.blog=await this.get('/operations/api/content/blog'); }
       else if(t==='catalogue'){ this.catalogue=await this.get('/operations/api/catalogue');
@@ -1478,6 +1504,12 @@ function ops(){
     async reconcileNow(){ const r=await this.post('/operations/api/system/reconcile');
       this.showToast('Self-healing: '+((r&&r.repaired)||0)+' issue(s) repaired.'); this.pollLogs(); },
     settingGroups(){ const gs=[]; for(const s of (this.settings||[])){ if(s.group&&!gs.includes(s.group)) gs.push(s.group); } return gs; },
+    async setCredit(provider){
+      const amount=this.creditInput[provider];
+      if(amount==null||isNaN(amount)){ alert('Enter the credit amount you topped up.'); return; }
+      const r=await this.post('/operations/api/billing/credit',{provider:provider,amount:amount});
+      if(r&&r.providers){ this.billing=r; this.showToast(provider+' credit set to $'+Number(amount).toFixed(2)+'.'); }
+      else alert('Could not set credit: '+((r&&r.detail)||r?.error||'unknown')); },
     async saveSettings(){ this.savingSettings=true;
       const changes={}; for(const s of (this.settings||[])) changes[s.key]=s.value;
       const r=await this.post('/operations/api/business-settings',{changes});

@@ -116,6 +116,37 @@ SCHEMA: list[Setting] = [
                  "so a backlog drips out instead of dumping all at once. 1/run + an "
                  "every-3-hours cron = at most a few a day. 0 = don't publish blogs "
                  "on the scheduled run."),
+    # --- Pricing (cost-plus / adaptive price discovery) ---
+    Setting("pricing_adaptive", "Adaptive pricing", "bool",
+            lambda c: str(_cfg(c, "pricing", "strategy", "")).lower() == "adaptive",
+            group="Pricing",
+            help="Price discovery: start at a margin, walk DOWN on no-sales and UP "
+                 "on sales. Off = a fixed thin margin."),
+    Setting("adaptive_start_profit", "Start profit (£/sale)", "float",
+            lambda c: float(_cfg(c, "pricing", "adaptive_start_profit", 3.0)),
+            group="Pricing", minimum=0, maximum=50,
+            help="New products launch netting ~£this per sale, after fees + shipping."),
+    Setting("adaptive_min_profit", "Floor profit (£/sale)", "float",
+            lambda c: float(_cfg(c, "pricing", "adaptive_min_profit", 0.5)),
+            group="Pricing", minimum=0, maximum=50,
+            help="Hard floor — never price below cost + shipping + fees + this."),
+    Setting("adaptive_max_profit", "Ceiling profit (£/sale)", "float",
+            lambda c: float(_cfg(c, "pricing", "adaptive_max_profit", 8.0)),
+            group="Pricing", minimum=0, maximum=100,
+            help="The margin can climb to this while a product keeps selling."),
+    Setting("adaptive_step", "Adjust step (£)", "float",
+            lambda c: float(_cfg(c, "pricing", "adaptive_step", 0.5)),
+            group="Pricing", minimum=0, maximum=20,
+            help="How much £ the target margin moves each adjustment."),
+    Setting("adaptive_window_days", "Adjust every N days", "int",
+            lambda c: int(_cfg(c, "pricing", "adaptive_window_days", 7)),
+            group="Pricing", minimum=1, maximum=90,
+            help="Only move a product's price once per this many days (no thrashing)."),
+    Setting("shipping_cost", "Gelato shipping (£/item)", "float",
+            lambda c: float(_cfg(c, "pricing", "shipping_cost", 5.0)),
+            group="Pricing", minimum=0, maximum=50,
+            help="Your REAL Gelato per-item ship cost — the thin margin is a loss if "
+                 "this is wrong. The single most important pricing number."),
 ]
 _BY_KEY = {s.key: s for s in SCHEMA}
 

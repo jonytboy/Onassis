@@ -119,3 +119,16 @@ def test_facebook_credentials_apply_to_config_meta(config, db):
     apply_integration_overrides(config, db)
     assert config.meta.get("page_access_token") == "TOK"
     assert config.meta.get("facebook_page_id") == "PAGE"
+
+
+def test_pricing_dials_overlay_onto_config(config, db):
+    """Operator pricing dials (Business Settings) flow into config.pricing via
+    apply_integration_overrides, so the pricing engine honours them live."""
+    from onassis.integrations import apply_integration_overrides
+    db.set_setting("business.pricing_adaptive", True)
+    db.set_setting("business.adaptive_start_profit", 4.0)
+    db.set_setting("business.shipping_cost", 6.5)
+    apply_integration_overrides(config, db)
+    assert config.pricing["strategy"] == "adaptive"
+    assert config.pricing["adaptive_start_profit"] == 4.0
+    assert config.pricing["shipping_cost"] == 6.5

@@ -1376,6 +1376,18 @@ class Database:
             row = conn.execute("SELECT COALESCE(SUM(cost_usd),0) FROM ai_requests").fetchone()
         return float(row[0])
 
+    def ai_spend_by_provider(self, since_date: str | None = None) -> dict[str, float]:
+        """AI spend (USD) grouped by provider, optionally on/after ``since_date``
+        (YYYY-MM-DD). Powers the dashboard billing panel."""
+        sql = "SELECT provider, COALESCE(SUM(cost_usd),0) AS c FROM ai_requests"
+        params: list[Any] = []
+        if since_date:
+            sql += " WHERE request_date >= ?"
+            params.append(since_date)
+        sql += " GROUP BY provider"
+        with self._connect() as conn:
+            return {r["provider"]: float(r["c"]) for r in conn.execute(sql, params).fetchall()}
+
     def ai_cost_by_stage(self, request_date: str | None = None) -> list[dict[str, Any]]:
         sql = ("SELECT stage, COALESCE(SUM(cost_usd),0) AS cost, COUNT(*) AS n "
                "FROM ai_requests")
