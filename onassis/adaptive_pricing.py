@@ -34,18 +34,53 @@ log = get_logger(__name__)
 
 class AdaptivePricer:
     def __init__(self, config: Any, db: Any, *, shopify: Any = None,
-                 pricing: Any = None) -> None:
+                 etsy: Any = None, pricing: Any = None) -> None:
         self.config = config
         self.db = db
         self.cfg = getattr(config, "pricing", None) or {}
         self.pricing = pricing or PricingEngine(config, db)
         self._shop = shopify
+        self._etsy = etsy
 
     def _shopify(self) -> Any:
         if self._shop is None:
             from onassis.connectors.shopify import ShopifyConnector
             self._shop = ShopifyConnector(self.config, self.db)
         return self._shop
+
+    def _etsy_auto(self) -> Any:
+        if self._etsy is None:
+            from onassis.etsy_automation import EtsyAutomation
+            self._etsy = EtsyAutomation(self.config, self.db)
+        return self._etsy
+
+    def _apply_to_platform(self, platform: str, listing_id: str,
+                           new_price: float) -> dict[str, Any]:
+        """Push ``new_price`` to one live listing on one platform. Returns
+        ``{platform, status, old_price?}`` and never raises."""
+        try:
+            if platform == "shopify":
+                shop = self._shopify()
+                if not shop.can_publish:
+                    return {"platform": platform, "status": "not_connected"}
+                old = shop.product_price(listing_id)
+                if old is not None and abs(float(old) - new_price) < 0.01:
+                    return {"platform": platform, "status": "unchanged", "old_price": old}
+                shop.set_product_price(listing_id, new_price)
+                return {"platform": platform, "status": "repriced", "old_price": old}
+            if platform == "etsy":
+                etsy = self._etsy_auto()
+                if not etsy.is_configured:
+                    return {"platform": platform, "status": "not_connected"}
+                r = etsy.update_price(listing_id, new_price,
+                                      reason="adaptive price discovery", source="adaptive")
+                ok = bool(r.get("ok")) or r.get("status") in ("applied", "skipped")
+                return {"platform": platform,
+                        "status": "repriced" if ok else "error",
+                        "error": None if ok else str(r)[:150]}
+        except Exception as exc:  # one platform never aborts the run
+            return {"platform": platform, "status": "error", "error": str(exc)[:150]}
+        return {"platform": platform, "status": "error", "error": "unknown platform"}
 
     def reprice(self, *, apply: bool = False, today: str | None = None) -> dict[str, Any]:
         """Walk each live product's price on the sales signal. Preview by default
@@ -88,41 +123,55 @@ class AdaptivePricer:
                     new_target = round(max(floor, target - step), 2)
             new_price = self.pricing.flat_price_for(cost, new_target)
 
-            pub = (self.db.get_latest_publication(cid, "shopify", product_id=f"{cid}-{key}")
-                   if cid else None)
-            listing_id = (pub or {}).get("listing_id")
+            # Every live listing this product has, on either platform.
+            targets = []
+            for platform in ("shopify", "etsy"):
+                pub = (self.db.get_latest_publication(cid, platform,
+                                                      product_id=f"{cid}-{key}")
+                       if cid else None)
+                lid = (pub or {}).get("listing_id")
+                if lid:
+                    targets.append((platform, lid))
             row: dict[str, Any] = {
                 "name": p.get("name") or key, "product_key": key,
                 "sales_window": sales, "old_target": target, "new_target": new_target,
                 "direction": direction, "new_price": new_price,
-                "listing_id": listing_id, "old_price": None, "status": "ok"}
+                "old_price": None, "platforms": [], "status": "ok"}
 
             if apply:
                 moved = direction in ("up", "down", "seed")
-                self.db.set_price_state(
-                    cid, key, target_profit=new_target, price=new_price,
-                    direction=direction,
-                    last_adjusted=today if moved else (last_adj or today))
-                if not moved:
-                    row["status"] = "hold"          # not due — no Shopify call
-                elif not listing_id:
-                    row["status"] = "not_on_shopify"
-                elif shop.can_publish:
-                    try:
-                        old = shop.product_price(listing_id)
-                        row["old_price"] = old
-                        if old is None or abs(float(old) - new_price) >= 0.01:
-                            shop.set_product_price(listing_id, new_price)
-                            row["status"] = "repriced"
-                            changed += 1
-                        else:
-                            row["status"] = "unchanged"
-                    except Exception as exc:  # one product never aborts the run
-                        row["status"] = "error"
-                        row["error"] = str(exc)[:200]
-                        errors += 1
+                if not moved:                       # not due — keep state, no API calls
+                    row["status"] = "hold"
+                    self.db.set_price_state(cid, key, target_profit=new_target,
+                                            price=(state or {}).get("price"),
+                                            direction=direction,
+                                            last_adjusted=last_adj or today)
+                elif not targets:
+                    row["status"] = "not_published"   # nothing live to price yet
+                    self.db.set_price_state(cid, key, target_profit=new_target,
+                                            price=None, direction=direction,
+                                            last_adjusted=today)
                 else:
-                    row["status"] = "shopify_not_connected"
+                    results = [self._apply_to_platform(pl, lid, new_price)
+                               for pl, lid in targets]
+                    row["platforms"] = results
+                    row["old_price"] = next((r.get("old_price") for r in results
+                                             if r.get("old_price") is not None), None)
+                    landed = any(r["status"] in ("repriced", "unchanged") for r in results)
+                    if any(r["status"] == "repriced" for r in results):
+                        changed += 1
+                    if any(r["status"] == "error" for r in results):
+                        errors += 1
+                    row["status"] = " ".join(f"{r['platform']}:{r['status']}"
+                                             for r in results)
+                    # Only advance the window when a price actually landed — a total
+                    # failure keeps the old date so the NEXT run retries it.
+                    self.db.set_price_state(
+                        cid, key, target_profit=new_target, price=new_price,
+                        direction=direction,
+                        last_adjusted=today if landed else (last_adj or ""))
+            else:
+                row["platforms"] = [{"platform": pl} for pl, _ in targets]
             rows.append(row)
 
         log.info("Adaptive reprice %s: %d product(s), %d moved, %d error(s) (window %dd).",

@@ -84,6 +84,33 @@ def test_holds_within_the_window_and_skips_shopify(config, db):
     assert len(shop.set) == n_before                    # no Shopify write
 
 
+class FakeEtsy:
+    is_configured = True
+    def __init__(self): self.priced = []
+    def update_price(self, listing_id, price, **kw):
+        self.priced.append((listing_id, price)); return {"ok": True}
+
+
+def test_reprices_both_shopify_and_etsy(config, db):
+    _cfg(config)
+    cid, key = 1, "tee"
+    db.insert_product({"sku": "TEE", "name": "Tee", "campaign_id": cid,
+                       "product_key": key, "active": True, "production_cost": 12.0})
+    db.insert_publication({"campaign_id": cid, "product_id": f"{cid}-{key}",
+                           "platform": "shopify", "listing_id": "500",
+                           "mode": "live", "status": "active"})
+    db.insert_publication({"campaign_id": cid, "product_id": f"{cid}-{key}",
+                           "platform": "etsy", "listing_id": "ET99",
+                           "mode": "live", "status": "active"})
+    shop, etsy = FakeShop(), FakeEtsy()
+    p = AdaptivePricer(config, db, shopify=shop, etsy=etsy)
+    r = p.reprice(apply=True, today="2026-08-10")
+    row = r["products"][0]
+    assert shop.set and etsy.priced                       # both platforms pushed
+    assert etsy.priced[0][0] == "ET99"
+    assert "shopify:repriced" in row["status"] and "etsy:repriced" in row["status"]
+
+
 def test_floor_is_never_breached(config, db):
     _product(db)
     shop = FakeShop()

@@ -1162,8 +1162,9 @@ def main() -> int:
                 old = f"£{p['old_price']:.2f}" if p.get("old_price") else "  —  "
                 new = f"£{p['new_price']:.2f}" if p.get("new_price") else "  —  "
                 arrow = {"up": "↑", "down": "↓", "seed": "•", "hold": "="}.get(p["direction"], " ")
+                plats = ",".join(pp.get("platform") for pp in p.get("platforms", [])) or "—"
                 print(f"  {arrow} {old}->{new}  net£{p['new_target']:.1f}  "
-                      f"{p['sales_window']} sale(s)  {p['status']:16} {p['name']}")
+                      f"{p['sales_window']} sale(s)  [{plats}] {p['status']}  {p['name']}")
         else:
             from onassis.content_engine import ContentEngine
             r = ContentEngine(config, db).reprice_products(apply=args.apply)
