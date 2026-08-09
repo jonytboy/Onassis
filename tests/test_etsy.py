@@ -434,3 +434,68 @@ def test_attach_listing_videos_is_idempotent(config, db, tmp_path):
     ])
     assert res["checked"] == 3 and res["added"] == 1 and res["skipped"] == 2
     assert client.uploads == [(10, str(clip), "Mug")]
+
+
+def test_set_price_keeps_readiness_state_on_offerings(monkeypatch):
+    """Regression: updateListingInventory must carry readiness_state_id on every
+    offering (Etsy rejects it otherwise: 'All offerings need readiness state').
+    The GET's readiness id is preserved through to the PUT."""
+    from onassis.connectors import etsy_client as ec
+    captured = {}
+
+    class _Get:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self):
+            return {"products": [{"sku": "S", "property_values": [], "offerings": [
+                        {"price": {"amount": 2599, "divisor": 100}, "quantity": 5,
+                         "is_enabled": True, "readiness_state_id": 88}]}],
+                    "price_on_property": [], "quantity_on_property": [], "sku_on_property": []}
+
+    class _Put:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"products": []}
+
+    monkeypatch.setattr(ec.httpx, "get", lambda *a, **k: _Get())
+    def _put(url, headers=None, json=None, timeout=None, **_):
+        captured["json"] = json
+        return _Put()
+    monkeypatch.setattr(ec.httpx, "put", _put)
+    client = ec.EtsyDraftClient(api_key="k", shop_id="9", access_token="t")
+    client.set_price_and_quantity(123, price=19.99)
+    off = captured["json"]["products"][0]["offerings"][0]
+    assert off["readiness_state_id"] == 88 and off["price"] == 19.99
+
+
+def test_set_price_resolves_readiness_when_missing(monkeypatch):
+    """If the GET offering has no readiness_state_id, the shop default is resolved
+    and attached — never sent without one."""
+    from onassis.connectors import etsy_client as ec
+    captured = {}
+
+    class _Get:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self):
+            return {"products": [{"sku": "S", "property_values": [], "offerings": [
+                        {"price": {"amount": 2599, "divisor": 100}, "quantity": 5,
+                         "is_enabled": True}]}],  # no readiness_state_id
+                    "price_on_property": [], "quantity_on_property": [], "sku_on_property": []}
+
+    class _Put:
+        status_code = 200
+        def raise_for_status(self): pass
+        def json(self): return {"products": []}
+
+    monkeypatch.setattr(ec.httpx, "get", lambda *a, **k: _Get())
+    def _put(url, headers=None, json=None, timeout=None, **_):
+        captured["json"] = json
+        return _Put()
+    monkeypatch.setattr(ec.httpx, "put", _put)
+    client = ec.EtsyDraftClient(api_key="k", shop_id="9", access_token="t")
+    client.get_readiness_state_definitions = lambda: [
+        {"readiness_state_id": 77, "readiness_state": "ready_to_ship"}]
+    client.set_price_and_quantity(123, price=19.99)
+    off = captured["json"]["products"][0]["offerings"][0]
+    assert off["readiness_state_id"] == 77

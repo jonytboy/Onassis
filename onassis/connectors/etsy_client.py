@@ -55,18 +55,27 @@ def _sanitise_materials(materials: Any) -> list[str]:
     return out
 
 
-def _trim_inventory_products(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _trim_inventory_products(products: list[dict[str, Any]],
+                             default_readiness_state_id: int | None = None
+                             ) -> list[dict[str, Any]]:
     """Reduce Etsy's getInventory ``products`` to the shape updateInventory wants:
     only ``sku``, ``property_values`` and each offering's ``price``/``quantity``/
-    ``is_enabled`` (Etsy rejects the read-only fields it returns on GET)."""
+    ``is_enabled`` (Etsy rejects the read-only fields it returns on GET).
+
+    Etsy now requires every offering to carry a ``readiness_state_id`` — preserve
+    the one the GET returned, else fall back to the shop default; otherwise the
+    write is rejected with 'All offerings need readiness state'."""
     trimmed: list[dict[str, Any]] = []
     for product in products:
-        offerings = [
-            {"price": round(float(o.get("price", 0) or 0), 2),  # normalised upstream
-             "quantity": int(o.get("quantity", 0) or 0),
-             "is_enabled": bool(o.get("is_enabled", True))}
-            for o in product.get("offerings", []) or []
-        ]
+        offerings = []
+        for o in product.get("offerings", []) or []:
+            off = {"price": round(float(o.get("price", 0) or 0), 2),  # normalised upstream
+                   "quantity": int(o.get("quantity", 0) or 0),
+                   "is_enabled": bool(o.get("is_enabled", True))}
+            rs = o.get("readiness_state_id") or default_readiness_state_id
+            if rs is not None:
+                off["readiness_state_id"] = int(rs)
+            offerings.append(off)
         trimmed.append({
             "sku": product.get("sku", ""),
             "property_values": product.get("property_values", []) or [],
@@ -389,7 +398,13 @@ class EtsyDraftClient(EtsyClient):
                     offering["quantity"] = int(quantity)
         # Etsy's update payload wants a trimmed shape (products + the *_on_property
         # arrays echoed back). Send products plus the property arrays it returned.
-        payload: dict[str, Any] = {"products": _trim_inventory_products(products)}
+        # Every offering must carry a readiness_state_id — resolve a shop default
+        # only if the GET didn't already give each offering one.
+        needs_default = any(not o.get("readiness_state_id")
+                            for p in products for o in (p.get("offerings") or []))
+        default_rs = self.resolve_readiness_state_id() if needs_default else None
+        payload: dict[str, Any] = {
+            "products": _trim_inventory_products(products, default_rs)}
         for key in ("price_on_property", "quantity_on_property", "sku_on_property"):
             payload[key] = inventory.get(key, []) or []
         return self.update_listing_inventory(listing_id, payload)
