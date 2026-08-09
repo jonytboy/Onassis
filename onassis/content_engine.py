@@ -959,6 +959,86 @@ class ContentEngine:
         return {"ok": True, "applied": apply, "changed": changed, "errors": errors,
                 "count": len(rows), "products": rows}
 
+    @staticmethod
+    def _display_name(design: str | None, type_name: str | None) -> str:
+        """A storefront name that shows the design, e.g. 'Salt & Olive Bathing Bar
+        — Ceramic Mug'. Avoids redundancy when the campaign name already contains
+        the product type (e.g. 'Porto Raffia Market Tote' on a Tote Bag)."""
+        cn = (design or "").strip()
+        tn = (type_name or "").strip()
+        if not cn:
+            return tn or "Product"
+        if not tn:
+            return cn
+        low = cn.lower()
+        if tn.lower() in low or (tn.split() and tn.split()[0].lower() in low):
+            return cn
+        return f"{cn} — {tn}"
+
+    def rename_products(self, apply: bool = False,
+                        limit: int | None = None) -> dict[str, Any]:
+        """Rename each product to include its design (the campaign name), so the
+        store shows distinct listings instead of 28 identical 'Ceramic Mug's.
+        Preview by default; ``apply`` updates the DB name and pushes the new title
+        to every live Shopify + Etsy listing."""
+        from onassis.connectors.shopify import ShopifyConnector
+        shop = getattr(self, "_shopify_conn", None) or ShopifyConnector(self.config, self.db)
+        etsy = None
+        rows: list[dict[str, Any]] = []
+        changed = errors = 0
+        for p in self.db.list_products():
+            if not p.get("active", 1):
+                continue
+            cid = p.get("campaign_id")
+            camp = self.db.get_campaign(cid) if cid else None
+            design = (camp or {}).get("name")
+            old_name = p.get("name")
+            new_name = self._display_name(design, old_name)
+            key = p.get("product_key") or p.get("sku")
+            row: dict[str, Any] = {"id": p.get("id"), "old_name": old_name,
+                                   "new_name": new_name, "design": design,
+                                   "platforms": [], "status": "ok"}
+            if new_name == old_name or not design:
+                row["status"] = "unchanged"
+                rows.append(row)
+                if limit and len(rows) >= limit:
+                    break
+                continue
+            if apply:
+                self.db.set_product_name(p["id"], new_name)
+                for platform in ("shopify", "etsy"):
+                    pub = (self.db.get_latest_publication(cid, platform,
+                                                          product_id=f"{cid}-{key}")
+                           if cid else None)
+                    lid = (pub or {}).get("listing_id")
+                    if not lid:
+                        continue
+                    try:
+                        if platform == "shopify" and shop.can_publish:
+                            shop.set_product_title(lid, new_name)
+                            row["platforms"].append("shopify")
+                        elif platform == "etsy":
+                            if etsy is None:
+                                from onassis.etsy_automation import EtsyAutomation
+                                etsy = EtsyAutomation(self.config, self.db)
+                            if etsy.is_configured:
+                                etsy.update_title(lid, new_name, source="rename")
+                                row["platforms"].append("etsy")
+                    except Exception as exc:  # one platform never aborts the run
+                        row["status"] = "error"
+                        row["error"] = str(exc)[:150]
+                        errors += 1
+                if row["status"] != "error":
+                    row["status"] = "renamed"
+                    changed += 1
+            rows.append(row)
+            if limit and len(rows) >= limit:
+                break
+        log.info("Rename %s: %d product(s), %d renamed, %d error(s).",
+                 "APPLY" if apply else "preview", len(rows), changed, errors)
+        return {"ok": True, "applied": apply, "changed": changed, "errors": errors,
+                "count": len(rows), "products": rows}
+
     def clear_marketing(self, channel: str | None = None,
                         status: str | None = None) -> dict[str, Any]:
         """Bulk-delete marketing assets to de-clutter the Marketing tab — e.g. every

@@ -2761,6 +2761,12 @@ class Database:
                 "UPDATE short_form_content SET views=?, likes=?, shares=?, clicks=? "
                 "WHERE id = ?", (views, likes, shares, clicks, clip_id))
 
+    def set_product_name(self, product_row_id: int, name: str) -> None:
+        """Rename a product row (its display/storefront name)."""
+        with self._connect() as conn:
+            conn.execute("UPDATE products SET name = ? WHERE id = ?",
+                         (name, product_row_id))
+
     def delete_short_form(self, clip_id: int) -> str | None:
         """Delete a short-form clip row; returns its file ``path`` (if any) so the
         caller can remove the rendered file from disk."""

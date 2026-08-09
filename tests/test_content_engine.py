@@ -427,6 +427,44 @@ def test_content_skips_products_pending_approval(config, db, tmp_path):
     assert "pending_tee" not in {p["product_key"] for p in eng._content_products()}
 
 
+def test_display_name_shows_design_without_redundancy():
+    from onassis.content_engine import ContentEngine as CE
+    assert CE._display_name("Salt & Olive Bathing Bar", "Ceramic Mug") == \
+        "Salt & Olive Bathing Bar — Ceramic Mug"
+    # Redundant type word already in the campaign name → don't double it up.
+    assert CE._display_name("Porto Raffia Market Tote", "Tote Bag") == "Porto Raffia Market Tote"
+    assert CE._display_name("Riviera Sunset Heavyweight Hoodie", "Heavyweight Hoodie") == \
+        "Riviera Sunset Heavyweight Hoodie"
+    assert CE._display_name(None, "Ceramic Mug") == "Ceramic Mug"
+
+
+def test_rename_products_names_by_design_and_pushes(config, db):
+    brief_id = db.insert_brief({"brief_date": "2026-06-26", "theme": "T", "keywords": []})
+    cid = db.insert_campaign({"name": "Salt & Olive Bathing Bar", "brief_id": brief_id})
+    db.insert_product({"sku": "MUG", "name": "Ceramic Mug", "campaign_id": cid,
+                       "product_key": "ceramic_mug", "active": True})
+    db.insert_publication({"campaign_id": cid, "product_id": f"{cid}-ceramic_mug",
+                           "platform": "shopify", "listing_id": "700",
+                           "mode": "live", "status": "active"})
+
+    class _Shop:
+        can_publish = True
+        def __init__(self): self.titles = []
+        def set_product_title(self, pid, title): self.titles.append((pid, title)); return {"ok": True}
+
+    eng = _engine(config, db)
+    eng._shopify_conn = _Shop()
+    preview = eng.rename_products(apply=False)
+    row = preview["products"][0]
+    assert row["new_name"] == "Salt & Olive Bathing Bar — Ceramic Mug"
+    assert not eng._shopify_conn.titles                 # preview pushes nothing
+
+    applied = eng.rename_products(apply=True)
+    assert applied["changed"] == 1
+    assert eng._shopify_conn.titles == [("700", "Salt & Olive Bathing Bar — Ceramic Mug")]
+    assert db.list_products()[0]["name"] == "Salt & Olive Bathing Bar — Ceramic Mug"
+
+
 def test_reprice_products_previews_then_applies(config, db):
     """reprice_products previews old->new per product, and --apply pushes it."""
     config.pricing = {"strategy": "flat", "flat_profit": 1.0, "shipping_cost": 5.0}

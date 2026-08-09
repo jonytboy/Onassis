@@ -184,6 +184,10 @@ class ShopifyConnector:
         """Set every variant of a live product to ``price`` — a blanket reprice."""
         return self._c().set_product_price(product_id, price)
 
+    def set_product_title(self, product_id: str, title: str) -> dict[str, Any]:
+        """Rename a live product (delegates to the Admin client)."""
+        return self._c().set_product_title(product_id, title)
+
     def test_connection(self) -> dict[str, Any]:
         """Read-only auth check — confirms the store + token work (GET shop.json)."""
         if not self.can_publish:
@@ -695,6 +699,11 @@ class ShopifyAdminClient:
                                             for vid in vids]}}
         self.update_product(product_id, payload)
         return {"ok": True, "variants": len(vids)}
+
+    def set_product_title(self, product_id: str, title: str) -> dict[str, Any]:
+        """Rename a live product (its storefront title)."""
+        self.update_product(product_id, {"product": {"id": product_id, "title": title}})
+        return {"ok": True}
 
     def add_product_image(self, product_id: str, image_path: str, *, position: int = 1,
                           alt_text: str | None = None) -> dict[str, Any]:

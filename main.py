@@ -221,7 +221,12 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--apply", action="store_true",
-        help="With --reprice: actually push the new prices (not just preview).",
+        help="With --reprice/--rename: actually push the change (not just preview).",
+    )
+    parser.add_argument(
+        "--rename", action="store_true",
+        help="Preview renaming products to include their design (add --apply to "
+             "push the new titles to Shopify + Etsy).",
     )
     parser.add_argument(
         "--run-marketing", action="store_true",
@@ -1145,6 +1150,24 @@ def main() -> int:
             match.get("campaign_id"), match["product_key"])
         print(f"\nLAUNCH {match.get('name') or sku} — blog {r['blog']} posted, "
               f"{r['clips']} clip(s), Facebook {r['facebook']} posted.")
+        return 0
+
+    if args.rename:
+        from onassis.content_engine import ContentEngine
+        from onassis.integrations import apply_integration_overrides
+
+        apply_integration_overrides(config, db)
+        r = ContentEngine(config, db).rename_products(apply=args.apply)
+        print(f"\nRENAME — {'APPLIED' if r['applied'] else 'PREVIEW'} "
+              f"({r['count']} product(s), {r['changed']} renamed, {r['errors']} error(s)):")
+        for p in r["products"]:
+            if p["status"] == "unchanged":
+                continue
+            plats = ",".join(p.get("platforms", [])) or ("[shopify,etsy]"
+                                                          if not r["applied"] else "—")
+            print(f"  {p['old_name']}  ->  {p['new_name']}   {p['status']} {plats}")
+        if not r["applied"]:
+            print("\nRun again with --apply to push the new names to Shopify + Etsy.")
         return 0
 
     if args.reprice:
