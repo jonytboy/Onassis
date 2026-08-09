@@ -427,6 +427,36 @@ def test_content_skips_products_pending_approval(config, db, tmp_path):
     assert "pending_tee" not in {p["product_key"] for p in eng._content_products()}
 
 
+def test_prune_dead_publications_removes_only_404s(config, db):
+    """Prune drops publications whose Shopify listing 404s, keeps the live one,
+    and never prunes on a non-404 error."""
+    cid = 9
+    for lid, kind in (("live1", "ok"), ("dead1", "404"), ("boom1", "500")):
+        db.insert_publication({"campaign_id": cid, "product_id": f"{cid}-{lid}",
+                               "platform": "shopify", "listing_id": lid,
+                               "mode": "live", "status": "active"})
+
+    class _Shop:
+        can_publish = True
+        def product_price(self, lid):
+            if lid == "dead1":
+                raise RuntimeError("Shopify GET HTTP 404: Not Found")
+            if lid == "boom1":
+                raise RuntimeError("Shopify GET HTTP 500: server error")
+            return 20.0
+
+    eng = _engine(config, db)
+    eng._shopify_conn = _Shop()
+    preview = eng.prune_dead_publications(apply=False)
+    assert preview["checked"] == 3 and preview["dead"] == 1 and preview["removed"] == 0
+    assert preview["publications"][0]["listing_id"] == "dead1"
+
+    applied = eng.prune_dead_publications(apply=True)
+    assert applied["removed"] == 1
+    remaining = {p["listing_id"] for p in db.list_publications()}
+    assert remaining == {"live1", "boom1"}      # 404 gone; live + transient kept
+
+
 def test_display_name_shows_design_without_redundancy():
     from onassis.content_engine import ContentEngine as CE
     assert CE._display_name("Salt & Olive Bathing Bar", "Ceramic Mug") == \

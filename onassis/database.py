@@ -2761,6 +2761,13 @@ class Database:
                 "UPDATE short_form_content SET views=?, likes=?, shares=?, clicks=? "
                 "WHERE id = ?", (views, likes, shares, clicks, clip_id))
 
+    def delete_publication(self, publication_id: int) -> bool:
+        """Remove a publication row (e.g. one pointing at a deleted marketplace
+        listing). Does not touch the product or other platforms' publications."""
+        with self._connect() as conn:
+            return conn.execute("DELETE FROM publications WHERE id = ?",
+                                (publication_id,)).rowcount > 0
+
     def set_product_name(self, product_row_id: int, name: str) -> None:
         """Rename a product row (its display/storefront name)."""
         with self._connect() as conn:

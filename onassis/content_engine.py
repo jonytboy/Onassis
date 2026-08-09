@@ -959,6 +959,66 @@ class ContentEngine:
         return {"ok": True, "applied": apply, "changed": changed, "errors": errors,
                 "count": len(rows), "products": rows}
 
+    def _listing_alive(self, platform: str, listing_id: str, shop: Any,
+                       etsy_holder: dict[str, Any]) -> bool:
+        """Does this marketplace listing still exist? Only a definite 404 counts
+        as dead — any other error is treated as alive (never prune on a transient
+        failure)."""
+        try:
+            if platform == "shopify":
+                if not shop.can_publish:
+                    return True
+                shop.product_price(listing_id)
+                return True
+            if platform == "etsy":
+                if "engine" not in etsy_holder:
+                    from onassis.etsy_automation import EtsyAutomationEngine
+                    e = EtsyAutomationEngine(self.config, self.db)
+                    etsy_holder["engine"] = e if e.is_configured else None
+                e = etsy_holder["engine"]
+                if e is None:
+                    return True
+                e.client.get_listing_inventory(listing_id)
+                return True
+        except Exception as exc:
+            msg = str(exc)
+            return not ("404" in msg or "Not Found" in msg or "not found" in msg)
+        return True
+
+    def prune_dead_publications(self, apply: bool = False) -> dict[str, Any]:
+        """Remove publication rows whose marketplace listing has been deleted (404)
+        — the stale rows that make the reprice/library show phantom products. Keeps
+        the product and any live listings it still has. Preview by default."""
+        from onassis.connectors.shopify import ShopifyConnector
+        shop = getattr(self, "_shopify_conn", None) or ShopifyConnector(self.config, self.db)
+        etsy_holder: dict[str, Any] = {}
+        alive_cache: dict[tuple, bool] = {}
+        dead: list[dict[str, Any]] = []
+        checked = 0
+        for pub in self.db.list_publications():
+            plat = pub.get("platform")
+            lid = pub.get("listing_id")
+            pid = pub.get("id")
+            if plat not in ("shopify", "etsy") or not lid or pid is None:
+                continue
+            key = (plat, str(lid))
+            if key not in alive_cache:
+                checked += 1
+                alive_cache[key] = self._listing_alive(plat, str(lid), shop, etsy_holder)
+            if not alive_cache[key]:
+                dead.append({"id": pid, "platform": plat, "listing_id": lid,
+                             "campaign_id": pub.get("campaign_id"),
+                             "product_id": pub.get("product_id")})
+        removed = 0
+        if apply:
+            for row in dead:
+                if self.db.delete_publication(row["id"]):
+                    removed += 1
+        log.info("Prune dead listings %s: checked %d, %d dead, %d removed.",
+                 "APPLY" if apply else "preview", checked, len(dead), removed)
+        return {"ok": True, "applied": apply, "checked": checked, "dead": len(dead),
+                "removed": removed, "publications": dead}
+
     @staticmethod
     def _display_name(design: str | None, type_name: str | None) -> str:
         """A storefront name that shows the design, e.g. 'Salt & Olive Bathing Bar

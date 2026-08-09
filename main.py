@@ -229,6 +229,11 @@ def _parse_args() -> argparse.Namespace:
              "push the new titles to Shopify + Etsy).",
     )
     parser.add_argument(
+        "--prune-listings", action="store_true",
+        help="Preview removing publications whose marketplace listing was deleted "
+             "(404) — the phantom rows (add --apply to remove them).",
+    )
+    parser.add_argument(
         "--run-marketing", action="store_true",
         help="Run the full content-marketing suite once (blog schedule, clips, "
              "product/Etsy videos, Facebook, distribution). Cron this daily.",
@@ -1150,6 +1155,22 @@ def main() -> int:
             match.get("campaign_id"), match["product_key"])
         print(f"\nLAUNCH {match.get('name') or sku} — blog {r['blog']} posted, "
               f"{r['clips']} clip(s), Facebook {r['facebook']} posted.")
+        return 0
+
+    if args.prune_listings:
+        from onassis.content_engine import ContentEngine
+        from onassis.integrations import apply_integration_overrides
+
+        apply_integration_overrides(config, db)
+        r = ContentEngine(config, db).prune_dead_publications(apply=args.apply)
+        print(f"\nPRUNE DEAD LISTINGS — {'APPLIED' if r['applied'] else 'PREVIEW'} "
+              f"(checked {r['checked']} listing(s), {r['dead']} dead, "
+              f"{r['removed']} removed):")
+        for row in r["publications"]:
+            print(f"  {row['platform']:8} listing {row['listing_id']}  "
+                  f"(product {row['product_id']})")
+        if not r["applied"] and r["dead"]:
+            print("\nRun again with --apply to remove these dead publications.")
         return 0
 
     if args.rename:
