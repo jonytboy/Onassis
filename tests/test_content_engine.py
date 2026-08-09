@@ -457,15 +457,29 @@ def test_prune_dead_publications_removes_only_404s(config, db):
     assert remaining == {"live1", "boom1"}      # 404 gone; live + transient kept
 
 
-def test_display_name_shows_design_without_redundancy():
+def test_display_name_shows_design_and_never_mislabels_type():
     from onassis.content_engine import ContentEngine as CE
     assert CE._display_name("Salt & Olive Bathing Bar", "Ceramic Mug") == \
         "Salt & Olive Bathing Bar — Ceramic Mug"
-    # Redundant type word already in the campaign name → don't double it up.
-    assert CE._display_name("Porto Raffia Market Tote", "Tote Bag") == "Porto Raffia Market Tote"
+    # Design already names THIS exact type → collapse.
     assert CE._display_name("Riviera Sunset Heavyweight Hoodie", "Heavyweight Hoodie") == \
         "Riviera Sunset Heavyweight Hoodie"
+    # But a DIFFERENT type must never be dropped (the bug: a sweatshirt read as a
+    # hoodie). The type is always kept.
+    assert CE._display_name("Riviera Sunset Heavyweight Hoodie", "Sweatshirt") == \
+        "Riviera Sunset Heavyweight Hoodie — Sweatshirt"
     assert CE._display_name(None, "Ceramic Mug") == "Ceramic Mug"
+    # Idempotent: feeding a composed name back doesn't collapse it.
+    composed = CE._display_name("Salt & Olive Bathing Bar", "Ceramic Mug")
+    assert CE._display_name(composed, "Ceramic Mug") == composed
+
+
+def test_type_label_comes_from_product_key():
+    from onassis.content_engine import ContentEngine as CE
+    assert CE._type_label("ceramic_mug") == "Ceramic Mug"
+    assert CE._type_label("heavyweight_hoodie") == "Heavyweight Hoodie"
+    assert CE._type_label("sweatshirt") == "Sweatshirt"
+    assert CE._type_label("some_new_thing") == "Some New Thing"
 
 
 def test_rename_products_names_by_design_and_pushes(config, db):
@@ -492,6 +506,11 @@ def test_rename_products_names_by_design_and_pushes(config, db):
     applied = eng.rename_products(apply=True)
     assert applied["changed"] == 1
     assert eng._shopify_conn.titles == [("700", "Salt & Olive Bathing Bar — Ceramic Mug")]
+    assert db.list_products()[0]["name"] == "Salt & Olive Bathing Bar — Ceramic Mug"
+    # Re-run is a NO-OP — it must not collapse the name or re-push (the bug where a
+    # second run dropped the product type).
+    again = eng.rename_products(apply=True)
+    assert again["changed"] == 0
     assert db.list_products()[0]["name"] == "Salt & Olive Bathing Bar — Ceramic Mug"
 
 

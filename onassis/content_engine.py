@@ -1019,21 +1019,39 @@ class ContentEngine:
         return {"ok": True, "applied": apply, "checked": checked, "dead": len(dead),
                 "removed": removed, "publications": dead}
 
+    _TYPE_LABELS = {
+        "ceramic_mug": "Ceramic Mug", "premium_poster": "Premium Poster",
+        "tote_bag": "Tote Bag", "premium_tshirt": "Premium T-Shirt",
+        "heavyweight_hoodie": "Heavyweight Hoodie", "sweatshirt": "Sweatshirt",
+    }
+
+    @staticmethod
+    def _type_label(product_key: str | None) -> str:
+        """The product's TYPE label from its stable product_key (never the mutable
+        name — that fed back on re-runs and dropped the type)."""
+        pk = str(product_key or "").lower()
+        return ContentEngine._TYPE_LABELS.get(pk, pk.replace("_", " ").title())
+
     @staticmethod
     def _display_name(design: str | None, type_name: str | None) -> str:
         """A storefront name that shows the design, e.g. 'Salt & Olive Bathing Bar
-        — Ceramic Mug'. Avoids redundancy when the campaign name already contains
-        the product type (e.g. 'Porto Raffia Market Tote' on a Tote Bag)."""
+        — Ceramic Mug'. Only drops the type when the design ALREADY names this exact
+        type (e.g. a Heavyweight Hoodie whose design is 'Riviera Sunset Heavyweight
+        Hoodie'); a Sweatshirt with that design still gets '— Sweatshirt' so the
+        type is never mislabelled. Idempotent: re-running yields the same name."""
         cn = (design or "").strip()
         tn = (type_name or "").strip()
         if not cn:
             return tn or "Product"
         if not tn:
             return cn
-        low = cn.lower()
-        if tn.lower() in low or (tn.split() and tn.split()[0].lower() in low):
+        composed = f"{cn} — {tn}"
+        # Already in final form (re-run) → leave it.
+        if cn.endswith(f"— {tn}") or cn == composed:
             return cn
-        return f"{cn} — {tn}"
+        if tn.lower() in cn.lower():   # design already names THIS exact type
+            return cn
+        return composed
 
     def rename_products(self, apply: bool = False,
                         limit: int | None = None) -> dict[str, Any]:
@@ -1053,8 +1071,10 @@ class ContentEngine:
             camp = self.db.get_campaign(cid) if cid else None
             design = (camp or {}).get("name")
             old_name = p.get("name")
-            new_name = self._display_name(design, old_name)
             key = p.get("product_key") or p.get("sku")
+            # Type comes from the STABLE product_key, never the current name —
+            # otherwise a re-run feeds the composed name back and drops the type.
+            new_name = self._display_name(design, self._type_label(key))
             row: dict[str, Any] = {"id": p.get("id"), "old_name": old_name,
                                    "new_name": new_name, "design": design,
                                    "platforms": [], "status": "ok"}
