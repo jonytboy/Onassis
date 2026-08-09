@@ -1148,17 +1148,31 @@ def main() -> int:
         return 0
 
     if args.reprice:
-        from onassis.content_engine import ContentEngine
         from onassis.integrations import apply_integration_overrides
 
         apply_integration_overrides(config, db)
-        r = ContentEngine(config, db).reprice_products(apply=args.apply)
-        print(f"\nREPRICE — {'APPLIED' if r['applied'] else 'PREVIEW'} "
-              f"({r['count']} product(s), {r['errors']} error(s)):")
-        for p in r["products"]:
-            old = f"£{p['old_price']:.2f}" if p.get("old_price") else "  —  "
-            new = f"£{p['new_price']:.2f}" if p.get("new_price") else "  —  "
-            print(f"  {old} -> {new}   {p['status']:18} {p['name']}")
+        strat = str((config.pricing or {}).get("strategy", "")).lower()
+        if strat == "adaptive":
+            from onassis.adaptive_pricing import AdaptivePricer
+            r = AdaptivePricer(config, db).reprice(apply=args.apply)
+            print(f"\nADAPTIVE REPRICE — {'APPLIED' if r['applied'] else 'PREVIEW'} "
+                  f"(window {r['window_days']}d, {r['count']} product(s), "
+                  f"{r['errors']} error(s)):")
+            for p in r["products"]:
+                old = f"£{p['old_price']:.2f}" if p.get("old_price") else "  —  "
+                new = f"£{p['new_price']:.2f}" if p.get("new_price") else "  —  "
+                arrow = {"up": "↑", "down": "↓", "seed": "•", "hold": "="}.get(p["direction"], " ")
+                print(f"  {arrow} {old}->{new}  net£{p['new_target']:.1f}  "
+                      f"{p['sales_window']} sale(s)  {p['status']:16} {p['name']}")
+        else:
+            from onassis.content_engine import ContentEngine
+            r = ContentEngine(config, db).reprice_products(apply=args.apply)
+            print(f"\nREPRICE — {'APPLIED' if r['applied'] else 'PREVIEW'} "
+                  f"({r['count']} product(s), {r['errors']} error(s)):")
+            for p in r["products"]:
+                old = f"£{p['old_price']:.2f}" if p.get("old_price") else "  —  "
+                new = f"£{p['new_price']:.2f}" if p.get("new_price") else "  —  "
+                print(f"  {old} -> {new}   {p['status']:18} {p['name']}")
         if not r["applied"]:
             print("\nRun again with --apply to push these prices to Shopify.")
         return 0

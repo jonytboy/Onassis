@@ -228,6 +228,16 @@ class DailyCycle:
             channels["by_channel"].update(r.get("by_channel", {}))
         else:
             channels = self.distribution.distribute()
+        # Adaptive price discovery — walks each product's price on the sales signal
+        # (self-gated to once per window, so calling every run is safe/cheap).
+        try:
+            if str((self.config.pricing or {}).get("strategy", "")).lower() == "adaptive":
+                from onassis.adaptive_pricing import AdaptivePricer
+                ap = AdaptivePricer(self.config, self.db).reprice(apply=True, today=today)
+                if ap.get("changed"):
+                    log.info("Adaptive pricing: %d product price(s) moved.", ap["changed"])
+        except Exception:  # pricing is best-effort, never fail the push
+            log.debug("adaptive pricing skipped", exc_info=True)
         funnel = self.traffic.snapshot(today)
         try:
             self.marketing_learning.record()

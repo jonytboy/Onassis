@@ -152,10 +152,16 @@ fees:
 # engine evaluates a grid and picks the peak of the profit curve (real fees +
 # VAT + shipping included), never a loss-making price.
 pricing:
-  strategy: flat                 # "flat" -> thin-margin cost-plus (nets flat_profit
-                                 #   per sale after cost+shipping+fees); "" -> the
-                                 #   expected-profit optimiser below.
-  flat_profit: 1.0              # target NET £ profit per sale under strategy=flat
+  strategy: adaptive             # "adaptive" -> price discovery (start at a margin,
+                                 #   walk DOWN on no-sales, UP on sales); "flat" ->
+                                 #   fixed thin margin; "" -> profit optimiser below.
+  # Adaptive price discovery (strategy=adaptive)
+  adaptive_start_profit: 3.0     # new products launch netting ~£this per sale
+  adaptive_min_profit: 0.5       # hard floor — never price below cost+ship+fees+this
+  adaptive_max_profit: 8.0       # ceiling the margin can climb to while selling
+  adaptive_step: 0.5             # £ the target margin moves each window
+  adaptive_window_days: 7        # only adjust a product once per this many days
+  flat_profit: 1.0               # target NET £/sale under strategy=flat
   shipping_cost: 5.0             # Gelato per-item shipping — SET THIS to your real
                                  #   Gelato ship cost, or the thin margin is a loss.
   optimise: true                 # true -> expected-profit pricing; false -> cost-plus

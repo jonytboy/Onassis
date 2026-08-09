@@ -53,8 +53,14 @@ class PricingEngine:
     ) -> dict[str, Any]:
         """Return the profit-max price + the full expected-profit curve."""
         production_cost = float(production_cost or 0)
-        if str(self.cfg.get("strategy", "")).lower() == "flat":
-            return self._flat_markup(production_cost)
+        strategy = str(self.cfg.get("strategy", "")).lower()
+        if strategy == "flat":
+            return self._flat_markup(production_cost, float(self.cfg.get("flat_profit", 1.0)))
+        if strategy == "adaptive":
+            # New products launch at the adaptive starting margin; the Adaptive
+            # Pricer then walks each product from there on real sales signal.
+            return self._flat_markup(production_cost,
+                                     float(self.cfg.get("adaptive_start_profit", 3.0)))
         ref = float(reference_price or 0) or (market or {}).get("avg_selling_price") \
             or self._cost_plus(production_cost, 0.55)
         ref = max(ref, self._floor(production_cost))
@@ -107,23 +113,25 @@ class PricingEngine:
 
     # --- Flat (thin-margin cost-plus) pricing -----------------------
 
-    def _flat_markup(self, production_cost: float) -> dict[str, Any]:
-        """Thin-margin cost-plus: the LOWEST price that still nets a fixed profit
-        per sale AFTER production, shipping and real fees — a deliberate volume
-        play (``pricing.strategy: flat``). Solves
-
-            net = price - (cost+shipping) - (var_rate·price + fixed_fees) = target
-            price = (cost + shipping + target + fixed_fees) / (1 - var_rate)
-
-        so the tiny margin is REAL, not wiped out by shipping/fees. Advertising is
-        not costed in here — that comes off the top separately."""
-        target = float(self.cfg.get("flat_profit", 1.0))
-        landed = production_cost + self.shipping_cost
+    def flat_price_for(self, production_cost: float, target_profit: float) -> float:
+        """The price that nets ``target_profit`` per sale after production, shipping
+        and real fees:  price = (cost + shipping + target + fixed_fees)/(1 - var_rate).
+        Shared by the flat strategy and the Adaptive Pricer."""
+        landed = float(production_cost) + self.shipping_cost
         fm = self.fee_model
         var = (fm.transaction_rate + fm.payment_rate + fm.regulatory_rate + fm.vat_rate
                + fm.offsite_ads_rate * fm.offsite_ads_share)
         fixed = fm.payment_fixed + fm.listing_fee
-        price = round((landed + target + fixed) / max(0.05, 1.0 - var), 2)
+        return round((landed + float(target_profit) + fixed) / max(0.05, 1.0 - var), 2)
+
+    def _flat_markup(self, production_cost: float, target: float) -> dict[str, Any]:
+        """Thin-margin cost-plus: the LOWEST price that still nets ``target`` net
+        profit per sale AFTER production, shipping and real fees — a deliberate
+        volume play. The margin is REAL, not wiped out by shipping/fees. Advertising
+        is not costed in here — that comes off the top separately."""
+        landed = production_cost + self.shipping_cost
+        fm = self.fee_model
+        price = self.flat_price_for(production_cost, target)
         unit = fm.unit_net_profit(price, landed)
         net_margin = round(unit / price, 4) if price else 0.0
         return {

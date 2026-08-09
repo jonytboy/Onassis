@@ -254,6 +254,18 @@ CREATE TABLE IF NOT EXISTS short_form_content (
 CREATE INDEX IF NOT EXISTS idx_shortform_status ON short_form_content(status);
 CREATE INDEX IF NOT EXISTS idx_shortform_fmt ON short_form_content(fmt);
 
+-- Adaptive pricing state: the per-product target net profit the pricer is
+-- currently trying, walked down on no-sales and up on sales (price discovery).
+CREATE TABLE IF NOT EXISTS price_state (
+    campaign_id   INTEGER,
+    product_key   TEXT,
+    target_profit REAL    NOT NULL,          -- current target £ net profit / sale
+    price         REAL,                       -- last price we set
+    last_adjusted TEXT,                        -- ISO date of the last move
+    direction     TEXT,                        -- up | down | hold
+    PRIMARY KEY (campaign_id, product_key)
+);
+
 CREATE TABLE IF NOT EXISTS products (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at      TEXT    NOT NULL,
@@ -1685,6 +1697,44 @@ class Database:
                 "SELECT * FROM orders WHERE product_id = ? ORDER BY id", (product_id,)
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def count_product_sales_since(self, product_ids: list[str], since_date: str) -> int:
+        """Units sold for any of ``product_ids`` on/after ``since_date`` (YYYY-MM-DD)
+        — the signal the adaptive pricer reads. Matches on the orders.product_id,
+        which may be the sku, product_key or campaign-key form, so we pass all."""
+        ids = [p for p in product_ids if p]
+        if not ids:
+            return 0
+        placeholders = ",".join("?" * len(ids))
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT COALESCE(SUM(quantity), 0) AS n FROM orders "
+                f"WHERE product_id IN ({placeholders}) AND sale_date >= ?",
+                (*ids, since_date)).fetchone()
+        return int(row["n"] if row else 0)
+
+    # --- Adaptive pricing state -------------------------------------
+
+    def get_price_state(self, campaign_id: Any, product_key: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM price_state WHERE campaign_id IS ? AND product_key = ?",
+                (campaign_id, product_key)).fetchone()
+        return dict(row) if row else None
+
+    def set_price_state(self, campaign_id: Any, product_key: str, *,
+                        target_profit: float, price: float | None,
+                        direction: str, last_adjusted: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO price_state
+                       (campaign_id, product_key, target_profit, price, last_adjusted, direction)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(campaign_id, product_key) DO UPDATE SET
+                       target_profit = excluded.target_profit, price = excluded.price,
+                       last_adjusted = excluded.last_adjusted, direction = excluded.direction""",
+                (campaign_id, product_key, float(target_profit),
+                 price, last_adjusted, direction))
 
     def get_existing_order_refs(self) -> set[str]:
         """All known external order refs — used to never import a duplicate."""
