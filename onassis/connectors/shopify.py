@@ -667,6 +667,27 @@ class ShopifyAdminClient:
     def update_product(self, product_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self._put(f"/products/{product_id}.json", payload)
 
+    def product_price(self, product_id: str) -> float | None:
+        """Current price of a product (its first variant), or None."""
+        prod = (self.get_product(product_id) or {}).get("product") or {}
+        variants = prod.get("variants") or []
+        try:
+            return float(variants[0]["price"]) if variants else None
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    def set_product_price(self, product_id: str, price: float) -> dict[str, Any]:
+        """Set every variant of a product to ``price`` (a blanket reprice)."""
+        prod = (self.get_product(product_id) or {}).get("product") or {}
+        vids = [v.get("id") for v in (prod.get("variants") or []) if v.get("id")]
+        if not vids:
+            return {"ok": False, "error": "no variants to price"}
+        payload = {"product": {"id": product_id,
+                               "variants": [{"id": vid, "price": f"{float(price):.2f}"}
+                                            for vid in vids]}}
+        self.update_product(product_id, payload)
+        return {"ok": True, "variants": len(vids)}
+
     def add_product_image(self, product_id: str, image_path: str, *, position: int = 1,
                           alt_text: str | None = None) -> dict[str, Any]:
         data = base64.b64encode(Path(image_path).read_bytes()).decode("ascii")

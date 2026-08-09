@@ -427,6 +427,35 @@ def test_content_skips_products_pending_approval(config, db, tmp_path):
     assert "pending_tee" not in {p["product_key"] for p in eng._content_products()}
 
 
+def test_reprice_products_previews_then_applies(config, db):
+    """reprice_products previews old->new per product, and --apply pushes it."""
+    config.pricing = {"strategy": "flat", "flat_profit": 1.0, "shipping_cost": 5.0}
+    config.fees = {}
+    cid, key = 3, "tee"
+    db.insert_product({"sku": "TEE", "name": "Riviera Tee", "campaign_id": cid,
+                       "product_key": key, "active": True, "production_cost": 12.0})
+    db.insert_publication({"campaign_id": cid, "product_id": f"{cid}-{key}",
+                           "platform": "shopify", "listing_id": "999",
+                           "mode": "live", "status": "active"})
+
+    class _Shop:
+        can_publish = True
+        def __init__(self): self.set = []
+        def product_price(self, pid): return 33.0
+        def set_product_price(self, pid, price): self.set.append((pid, price)); return {"ok": True}
+
+    eng = _engine(config, db)
+    eng._shopify_conn = _Shop()
+    preview = eng.reprice_products(apply=False)
+    row = preview["products"][0]
+    assert row["old_price"] == 33.0 and row["new_price"] < 33.0   # cheaper
+    assert row["status"] == "would_reprice" and preview["changed"] == 0
+    assert not eng._shopify_conn.set                              # nothing pushed
+
+    applied = eng.reprice_products(apply=True)
+    assert applied["changed"] == 1 and eng._shopify_conn.set[0][0] == "999"
+
+
 def test_clear_marketing_bulk_deletes_by_channel_and_status(config, db):
     """clear_marketing wipes failed items and clears a channel's pending queue."""
     a = db.insert_marketing_asset({"campaign_id": 1, "product_key": "p", "channel": "blog",

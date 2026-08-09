@@ -905,6 +905,60 @@ class ContentEngine:
         return {"ok": ok, "kind": kind, "id": item_id,
                 "error": None if ok else "No such asset."}
 
+    def reprice_products(self, apply: bool = False,
+                         limit: int | None = None) -> dict[str, Any]:
+        """Recompute every live product's price with the current pricing strategy
+        and (when ``apply``) push it to its Shopify listing. Default is a PREVIEW —
+        it returns the old→new price for each product and changes nothing, so you
+        can eyeball a blanket reprice before it touches the store."""
+        from onassis.connectors.shopify import ShopifyConnector
+        from onassis.pricing import PricingEngine
+        pe = PricingEngine(self.config, self.db)
+        shop = getattr(self, "_shopify_conn", None) or ShopifyConnector(self.config, self.db)
+        rows: list[dict[str, Any]] = []
+        changed = errors = 0
+        for p in self.db.list_products():
+            if not p.get("active", 1):
+                continue
+            pk = p.get("product_key") or p.get("sku")
+            cid = p.get("campaign_id")
+            cost = float(p.get("production_cost") or 0)
+            new_price = pe.optimise(cost)["price"] if cost > 0 else None
+            pub = (self.db.get_latest_publication(cid, "shopify", product_id=f"{cid}-{pk}")
+                   if cid else None)
+            listing_id = (pub or {}).get("listing_id")
+            row: dict[str, Any] = {"name": p.get("name") or pk, "product_key": pk,
+                                   "production_cost": cost, "new_price": new_price,
+                                   "old_price": None, "listing_id": listing_id,
+                                   "status": "ok"}
+            if not new_price:
+                row["status"] = "no_cost"          # can't price without a cost
+            elif not listing_id:
+                row["status"] = "not_on_shopify"
+            elif shop.can_publish:
+                try:
+                    row["old_price"] = shop.product_price(listing_id)
+                    if apply:
+                        shop.set_product_price(listing_id, new_price)
+                        row["status"] = "repriced"
+                        changed += 1
+                    else:
+                        row["status"] = "would_reprice"
+                except Exception as exc:  # never let one product abort the run
+                    row["status"] = "error"
+                    row["error"] = str(exc)[:200]
+                    errors += 1
+            else:
+                row["status"] = "shopify_not_connected"
+            rows.append(row)
+            if limit and len(rows) >= limit:
+                break
+        log.info("Reprice %s: %d product(s), %d %s, %d error(s).",
+                 "APPLY" if apply else "preview", len(rows), changed,
+                 "repriced" if apply else "to change", errors)
+        return {"ok": True, "applied": apply, "changed": changed, "errors": errors,
+                "count": len(rows), "products": rows}
+
     def clear_marketing(self, channel: str | None = None,
                         status: str | None = None) -> dict[str, Any]:
         """Bulk-delete marketing assets to de-clutter the Marketing tab — e.g. every

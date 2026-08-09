@@ -215,6 +215,15 @@ def _parse_args() -> argparse.Namespace:
         help="Queue + post product videos to TikTok.",
     )
     parser.add_argument(
+        "--reprice", action="store_true",
+        help="Preview a blanket reprice of live products at the current strategy "
+             "(add --apply to push the new prices to Shopify).",
+    )
+    parser.add_argument(
+        "--apply", action="store_true",
+        help="With --reprice: actually push the new prices (not just preview).",
+    )
+    parser.add_argument(
         "--run-marketing", action="store_true",
         help="Run the full content-marketing suite once (blog schedule, clips, "
              "product/Etsy videos, Facebook, distribution). Cron this daily.",
@@ -1136,6 +1145,22 @@ def main() -> int:
             match.get("campaign_id"), match["product_key"])
         print(f"\nLAUNCH {match.get('name') or sku} — blog {r['blog']} posted, "
               f"{r['clips']} clip(s), Facebook {r['facebook']} posted.")
+        return 0
+
+    if args.reprice:
+        from onassis.content_engine import ContentEngine
+        from onassis.integrations import apply_integration_overrides
+
+        apply_integration_overrides(config, db)
+        r = ContentEngine(config, db).reprice_products(apply=args.apply)
+        print(f"\nREPRICE — {'APPLIED' if r['applied'] else 'PREVIEW'} "
+              f"({r['count']} product(s), {r['errors']} error(s)):")
+        for p in r["products"]:
+            old = f"£{p['old_price']:.2f}" if p.get("old_price") else "  —  "
+            new = f"£{p['new_price']:.2f}" if p.get("new_price") else "  —  "
+            print(f"  {old} -> {new}   {p['status']:18} {p['name']}")
+        if not r["applied"]:
+            print("\nRun again with --apply to push these prices to Shopify.")
         return 0
 
     if args.run_marketing:
