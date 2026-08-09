@@ -1,5 +1,20 @@
 # ONASSIS — tooling configuration
 
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "onassis"
+version = "0.1.0"
+description = "ONASSIS — autonomous print-on-demand commerce platform"
+requires-python = ">=3.9"
+
+[tool.setuptools.packages.find]
+# Only the code package — never the data/logs/exports/… top-level dirs (that
+# flat-layout ambiguity is what broke `pip install -e .`).
+include = ["onassis*"]
+
 [tool.pytest.ini_options]
 # Put the repo root on sys.path so `onassis` and `tests` import cleanly,
 # and only collect from the tests/ directory.
