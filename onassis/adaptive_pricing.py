@@ -50,8 +50,8 @@ class AdaptivePricer:
 
     def _etsy_auto(self) -> Any:
         if self._etsy is None:
-            from onassis.etsy_automation import EtsyAutomation
-            self._etsy = EtsyAutomation(self.config, self.db)
+            from onassis.etsy_automation import EtsyAutomationEngine
+            self._etsy = EtsyAutomationEngine(self.config, self.db)
         return self._etsy
 
     def _apply_to_platform(self, platform: str, listing_id: str,

@@ -111,6 +111,23 @@ def test_reprices_both_shopify_and_etsy(config, db):
     assert "shopify:repriced" in row["status"] and "etsy:repriced" in row["status"]
 
 
+def test_etsy_leg_imports_the_real_class(config, db):
+    """Regression: the Etsy leg must import EtsyAutomationEngine (not the
+    nonexistent EtsyAutomation). With no etsy injected the real class is built;
+    an unconfigured Etsy reports not_connected, whereas the import bug surfaced as
+    'etsy:error'."""
+    _cfg(config)
+    cid, key = 1, "tee"
+    db.insert_product({"sku": "TEE", "name": "Tee", "campaign_id": cid,
+                       "product_key": key, "active": True, "production_cost": 12.0})
+    db.insert_publication({"campaign_id": cid, "product_id": f"{cid}-{key}",
+                           "platform": "etsy", "listing_id": "ET1",
+                           "mode": "live", "status": "active"})
+    p = AdaptivePricer(config, db, shopify=FakeShop())   # NO etsy injected → real class
+    row = p.reprice(apply=True, today="2026-08-10")["products"][0]
+    assert "etsy:not_connected" in row["status"] and "etsy:error" not in row["status"]
+
+
 def test_floor_is_never_breached(config, db):
     _product(db)
     shop = FakeShop()

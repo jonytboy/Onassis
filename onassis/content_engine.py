@@ -1019,8 +1019,8 @@ class ContentEngine:
                             row["platforms"].append("shopify")
                         elif platform == "etsy":
                             if etsy is None:
-                                from onassis.etsy_automation import EtsyAutomation
-                                etsy = EtsyAutomation(self.config, self.db)
+                                from onassis.etsy_automation import EtsyAutomationEngine
+                                etsy = EtsyAutomationEngine(self.config, self.db)
                             if etsy.is_configured:
                                 etsy.update_title(lid, new_name, source="rename")
                                 row["platforms"].append("etsy")
