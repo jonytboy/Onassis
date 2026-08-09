@@ -361,3 +361,27 @@ def test_publisher_records_failure(config, db):
     assert stored["status"] == "failed" and stored["listing_id"] is None
     # A failure leaves no active publication, so a retry is possible.
     assert db.get_active_publication(1, "shopify", product_id="1-mug") is None
+
+
+def test_connector_and_client_expose_price_methods():
+    """Regression: the repricer calls product_price/set_product_price on a
+    ShopifyConnector, so BOTH the connector and its Admin client must expose them
+    (the bug was defining them only on the low-level client)."""
+    from onassis.connectors.shopify import ShopifyAdminClient, ShopifyConnector
+    assert hasattr(ShopifyConnector, "product_price")
+    assert hasattr(ShopifyConnector, "set_product_price")
+    assert hasattr(ShopifyAdminClient, "product_price")
+    assert hasattr(ShopifyAdminClient, "set_product_price")
+
+
+def test_connector_delegates_price_to_the_client(config):
+    from onassis.connectors.shopify import ShopifyConnector
+
+    class _Client:
+        def __init__(self): self.set = []
+        def product_price(self, pid): return 42.0
+        def set_product_price(self, pid, price): self.set.append((pid, price)); return {"ok": True}
+
+    conn = ShopifyConnector(config, client=_Client())
+    assert conn.product_price("77") == 42.0
+    assert conn.set_product_price("77", 19.99)["ok"] and conn._c().set == [("77", 19.99)]

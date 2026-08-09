@@ -176,6 +176,14 @@ class ShopifyConnector:
                     api_version=version)
         return self._client
 
+    def product_price(self, product_id: str) -> float | None:
+        """Current price of a live product (delegates to the Admin client)."""
+        return self._c().product_price(product_id)
+
+    def set_product_price(self, product_id: str, price: float) -> dict[str, Any]:
+        """Set every variant of a live product to ``price`` — a blanket reprice."""
+        return self._c().set_product_price(product_id, price)
+
     def test_connection(self) -> dict[str, Any]:
         """Read-only auth check — confirms the store + token work (GET shop.json)."""
         if not self.can_publish:
