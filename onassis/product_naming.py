@@ -1,14 +1,19 @@
 """Storefront product naming — a single source of truth.
 
-Products carry a design (the campaign name, e.g. 'Salt & Olive Bathing Bar') and
-a type (from the stable ``product_key``, e.g. Ceramic Mug). The storefront name
-is ``'{design} — {type}'`` so 28 mugs of different designs are 28 distinct
-listings — never 28 identical 'Ceramic Mug's.
+A product carries a DESIGN (its campaign) and a TYPE (from the stable
+``product_key``). The catch: the design engine names campaigns after physical
+product *concepts* — "Persiana Sun-Stripe Cushion", "Tavola Lunga Linen Tea
+Towel" — but ONASSIS prints them on mugs / totes / posters / apparel. So the
+full campaign name would mislabel a tote as a "Cushion".
 
-Used at BOTH ends so they can't drift: listing creation (Expansion Engine) names
-products correctly from the start, and the rename tool (Content Engine) repairs
-older ones the same way. The rule is idempotent — re-deriving a name yields the
-same name, never dropping or duplicating the type.
+We therefore take only the **collection** — the leading brand/theme words of the
+campaign name ("Persiana Sun-Stripe", "Tavola Lunga", "Salt & Olive") — and
+append the **actual** product type: ``'{collection} — {type}'``. A tote is
+'Persiana Sun-Stripe — Tote Bag', the mug 'Persiana Sun-Stripe — Ceramic Mug':
+correct type, distinct listing, never a conflicting concept.
+
+Used at BOTH ends so they can't drift: listing creation (Expansion Engine) and
+the rename tool (Content Engine). Deterministic and idempotent.
 """
 
 from __future__ import annotations
@@ -19,29 +24,43 @@ _TYPE_LABELS = {
     "heavyweight_hoodie": "Heavyweight Hoodie", "sweatshirt": "Sweatshirt",
 }
 
+# Small connector words that shouldn't be the last word of a collection.
+_CONNECTORS = {"&", "and", "of", "the", "de", "di", "la", "le"}
+
 
 def type_label(product_key: str | None) -> str:
-    """The product's TYPE label from its stable ``product_key`` (never the mutable
-    name — that fed back on re-runs and dropped the type)."""
+    """The product's TYPE label from its stable ``product_key``."""
     pk = str(product_key or "").lower()
     return _TYPE_LABELS.get(pk, pk.replace("_", " ").title())
 
 
+def collection(design: str | None) -> str:
+    """The leading brand/theme of a campaign name — the part worth keeping — so a
+    product-concept campaign ('Persiana Sun-Stripe Cushion') yields the collection
+    ('Persiana Sun-Stripe'), never the concept ('Cushion'). Heuristic: the first
+    two words, extended across connectors like '&' ('Salt & Olive')."""
+    words = (design or "").strip().split()
+    if not words:
+        return ""
+    n = min(2, len(words))
+    # Extend while we'd otherwise end on a connector (or the next word is one).
+    while n < len(words) and (words[n - 1].lower() in _CONNECTORS
+                              or words[n].lower() in _CONNECTORS):
+        n += 1
+    return " ".join(words[:n])
+
+
 def display_name(design: str | None, *, product_key: str | None = None,
                  type_name: str | None = None) -> str:
-    """The storefront name ``'{design} — {type}'``. Only drops the type when the
-    design ALREADY names this exact type (e.g. a Heavyweight Hoodie whose design is
-    'Riviera Sunset Heavyweight Hoodie'); a Sweatshirt with that design still gets
-    '— Sweatshirt', so the type is never mislabelled. Idempotent."""
+    """The storefront name ``'{collection} — {type}'`` — correct product type,
+    distinct per design. Idempotent: re-deriving yields the same name."""
     tn = (type_name if type_name is not None else type_label(product_key)).strip()
-    cn = (design or "").strip()
-    if not cn:
+    col = collection(design)
+    if not col:
         return tn or "Product"
     if not tn:
-        return cn
-    composed = f"{cn} — {tn}"
-    if cn.endswith(f"— {tn}") or cn == composed:   # already final (re-run)
-        return cn
-    if tn.lower() in cn.lower():                    # design already names THIS type
-        return cn
-    return composed
+        return col
+    # If a previously-composed name is fed back in, don't double the type.
+    if col.lower().endswith(tn.lower()):
+        return col
+    return f"{col} — {tn}"

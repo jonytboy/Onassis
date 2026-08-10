@@ -457,19 +457,22 @@ def test_prune_dead_publications_removes_only_404s(config, db):
     assert remaining == {"live1", "boom1"}      # 404 gone; live + transient kept
 
 
-def test_display_name_shows_design_and_never_mislabels_type():
+def test_display_name_uses_collection_and_real_type():
     from onassis.content_engine import ContentEngine as CE
+    # Campaign names ARE product concepts ('… Cushion', '… Tea Towel'); we keep the
+    # COLLECTION and append the ACTUAL type so a tote is never named 'Cushion'.
+    assert CE._display_name("Persiana Sun-Stripe Cushion", "Tote Bag") == \
+        "Persiana Sun-Stripe — Tote Bag"
+    assert CE._display_name("Tavola Lunga Linen Tea Towel", "Ceramic Mug") == \
+        "Tavola Lunga — Ceramic Mug"
+    # '&' collections keep three words.
     assert CE._display_name("Salt & Olive Bathing Bar", "Ceramic Mug") == \
-        "Salt & Olive Bathing Bar — Ceramic Mug"
-    # Design already names THIS exact type → collapse.
-    assert CE._display_name("Riviera Sunset Heavyweight Hoodie", "Heavyweight Hoodie") == \
-        "Riviera Sunset Heavyweight Hoodie"
-    # But a DIFFERENT type must never be dropped (the bug: a sweatshirt read as a
-    # hoodie). The type is always kept.
+        "Salt & Olive — Ceramic Mug"
+    # A hoodie campaign on a Sweatshirt is a SWEATSHIRT, never a hoodie.
     assert CE._display_name("Riviera Sunset Heavyweight Hoodie", "Sweatshirt") == \
-        "Riviera Sunset Heavyweight Hoodie — Sweatshirt"
+        "Riviera Sunset — Sweatshirt"
     assert CE._display_name(None, "Ceramic Mug") == "Ceramic Mug"
-    # Idempotent: feeding a composed name back doesn't collapse it.
+    # Idempotent: feeding a composed name back yields the same name.
     composed = CE._display_name("Salt & Olive Bathing Bar", "Ceramic Mug")
     assert CE._display_name(composed, "Ceramic Mug") == composed
 
@@ -500,18 +503,18 @@ def test_rename_products_names_by_design_and_pushes(config, db):
     eng._shopify_conn = _Shop()
     preview = eng.rename_products(apply=False)
     row = preview["products"][0]
-    assert row["new_name"] == "Salt & Olive Bathing Bar — Ceramic Mug"
+    assert row["new_name"] == "Salt & Olive — Ceramic Mug"
     assert not eng._shopify_conn.titles                 # preview pushes nothing
 
     applied = eng.rename_products(apply=True)
     assert applied["changed"] == 1
-    assert eng._shopify_conn.titles == [("700", "Salt & Olive Bathing Bar — Ceramic Mug")]
-    assert db.list_products()[0]["name"] == "Salt & Olive Bathing Bar — Ceramic Mug"
+    assert eng._shopify_conn.titles == [("700", "Salt & Olive — Ceramic Mug")]
+    assert db.list_products()[0]["name"] == "Salt & Olive — Ceramic Mug"
     # Re-run is a NO-OP — it must not collapse the name or re-push (the bug where a
     # second run dropped the product type).
     again = eng.rename_products(apply=True)
     assert again["changed"] == 0
-    assert db.list_products()[0]["name"] == "Salt & Olive Bathing Bar — Ceramic Mug"
+    assert db.list_products()[0]["name"] == "Salt & Olive — Ceramic Mug"
 
 
 def test_reprice_products_previews_then_applies(config, db):

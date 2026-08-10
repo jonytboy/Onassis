@@ -223,4 +223,4 @@ def test_launched_product_is_named_by_design_at_creation(engine, db):
         "product_key": "ceramic_mug", "product_name": "Ceramic Mug",
         "production_cost": 7.5, "retail_price": 18.71})
     prod = db.get_product_by_sku(f"{cid}-ceramic_mug")
-    assert prod["name"] == "Salt & Olive Bathing Bar — Ceramic Mug"
+    assert prod["name"] == "Salt & Olive — Ceramic Mug"
