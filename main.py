@@ -229,6 +229,11 @@ def _parse_args() -> argparse.Namespace:
              "push the new titles to Shopify + Etsy).",
     )
     parser.add_argument(
+        "--restore-names", action="store_true",
+        help="Preview restoring each product's ORIGINAL title from its listing.json "
+             "package — undo a rename (add --apply to push to Shopify + Etsy).",
+    )
+    parser.add_argument(
         "--prune-listings", action="store_true",
         help="Preview removing publications whose marketplace listing was deleted "
              "(404) — the phantom rows (add --apply to remove them).",
@@ -1155,6 +1160,24 @@ def main() -> int:
             match.get("campaign_id"), match["product_key"])
         print(f"\nLAUNCH {match.get('name') or sku} — blog {r['blog']} posted, "
               f"{r['clips']} clip(s), Facebook {r['facebook']} posted.")
+        return 0
+
+    if args.restore_names:
+        from onassis.content_engine import ContentEngine
+        from onassis.integrations import apply_integration_overrides
+
+        apply_integration_overrides(config, db)
+        r = ContentEngine(config, db).restore_product_names(apply=args.apply)
+        print(f"\nRESTORE NAMES — {'APPLIED' if r['applied'] else 'PREVIEW'} "
+              f"({r['count']} product(s), {r['changed']} restored, {r['errors']} error(s)):")
+        for p in r["products"]:
+            if p["status"] in ("unchanged", "no_package"):
+                continue
+            plats = ",".join(p.get("platforms", [])) or ("[shopify,etsy]"
+                                                         if not r["applied"] else "—")
+            print(f"  {p['old_name']}  ->  {p['original']}   {p['status']} {plats}")
+        if not r["applied"]:
+            print("\nRun again with --apply to push the original titles to Shopify + Etsy.")
         return 0
 
     if args.prune_listings:

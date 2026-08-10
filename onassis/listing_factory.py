@@ -333,13 +333,8 @@ class ListingFactory:
             [f"{campaign['name']} image" for _ in range(self.gallery_count)], "image",
         )
         pricing = self._pricing(production_cost, retail_price)
-        # Storefront title = the design-led name ('{design} — {type}'), so a new
-        # listing is a distinct, correctly-named product from creation and never
-        # needs the rename pass. The LLM's SEO line rides along as a seed for tags.
-        seo_title = _safe_title(gen["title"], 140)
-        from onassis.product_naming import display_name
-        title = (display_name(campaign.get("name"), type_name=product_name)
-                 if product_name else seo_title)
+        title = _safe_title(gen["title"], 140)
+        seo_title = title
 
         # The commercial brief the Artwork Studio renders from. The approved
         # master design (customer, emotion, palette, artwork intent, rationale)

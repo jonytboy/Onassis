@@ -427,6 +427,33 @@ def test_content_skips_products_pending_approval(config, db, tmp_path):
     assert "pending_tee" not in {p["product_key"] for p in eng._content_products()}
 
 
+def test_restore_product_names_puts_back_the_listing_title(config, db, tmp_path):
+    """restore_product_names reads the original title from listing.json and puts it
+    back on the DB row + the live Shopify listing (undo a bad rename)."""
+    cid, key = _build_package(config, tmp_path)     # listing.json title = 'Casa Med Ceramic Mug'
+    db.insert_product({"sku": "MUG", "name": "WRONG — renamed badly", "campaign_id": cid,
+                       "product_key": key, "active": True})
+    db.insert_publication({"campaign_id": cid, "product_id": f"{cid}-{key}",
+                           "platform": "shopify", "listing_id": "800",
+                           "mode": "live", "status": "active"})
+
+    class _Shop:
+        can_publish = True
+        def __init__(self): self.titles = []
+        def set_product_title(self, pid, title): self.titles.append((pid, title)); return {"ok": True}
+
+    eng = _engine(config, db)
+    eng._shopify_conn = _Shop()
+    preview = eng.restore_product_names(apply=False)
+    assert preview["products"][0]["original"] == "Casa Med Ceramic Mug"
+    assert not eng._shopify_conn.titles                 # preview pushes nothing
+
+    applied = eng.restore_product_names(apply=True)
+    assert applied["changed"] == 1
+    assert eng._shopify_conn.titles == [("800", "Casa Med Ceramic Mug")]
+    assert db.list_products()[0]["name"] == "Casa Med Ceramic Mug"
+
+
 def test_prune_dead_publications_removes_only_404s(config, db):
     """Prune drops publications whose Shopify listing 404s, keeps the live one,
     and never prunes on a non-404 error."""

@@ -214,13 +214,15 @@ def test_learning_is_idempotent(config, db):
     assert second[0]["units_sold"] == 2   # not 4
 
 
-def test_launched_product_is_named_by_design_at_creation(engine, db):
-    """The product row is named '{design} — {type}' from creation (not the generic
-    type), so a new listing never needs the rename pass."""
+def test_launched_product_keeps_its_base_name(db, config):
+    """Baseline: a launched product is registered with its product_name (the
+    storefront title is set by the Listing Factory / left to the operator)."""
+    from onassis.expansion import RevenueExpansionEngine
+    engine = RevenueExpansionEngine(config, db)
     brief_id = db.insert_brief({"brief_date": "2026-06-26", "theme": "T", "keywords": []})
     cid = db.insert_campaign({"name": "Salt & Olive Bathing Bar", "brief_id": brief_id})
     engine._register_product(cid, {"brand": "Onassis"}, {
         "product_key": "ceramic_mug", "product_name": "Ceramic Mug",
         "production_cost": 7.5, "retail_price": 18.71})
     prod = db.get_product_by_sku(f"{cid}-ceramic_mug")
-    assert prod["name"] == "Salt & Olive — Ceramic Mug"
+    assert prod["name"] == "Ceramic Mug"

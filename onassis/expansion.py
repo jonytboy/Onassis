@@ -352,17 +352,9 @@ class RevenueExpansionEngine:
         sku = f"{campaign_id}-{s['product_key']}"
         if self.db.get_product_by_sku(sku):
             return
-        # Name the product after its DESIGN (the campaign), not just its type, so a
-        # new listing is a distinct '{design} — {type}' from the start — never a
-        # generic 'Ceramic Mug' that needs renaming later.
-        from onassis.product_naming import display_name
-        camp = self.db.get_campaign(campaign_id) if campaign_id else None
-        design = (camp or {}).get("name")
-        name = (display_name(design, type_name=s["product_name"])
-                if design else s["product_name"])
         self.db.insert_product({
             "sku": sku,
-            "name": name,
+            "name": s["product_name"],
             "campaign_id": campaign_id,
             "brand": (opportunity or {}).get("brand"),
             "marketplace": "gelato",

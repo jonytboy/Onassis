@@ -1019,6 +1019,62 @@ class ContentEngine:
         return {"ok": True, "applied": apply, "checked": checked, "dead": len(dead),
                 "removed": removed, "publications": dead}
 
+    def restore_product_names(self, apply: bool = False) -> dict[str, Any]:
+        """Restore each product's ORIGINAL title from its listing.json package —
+        undo a bad rename. Preview by default; ``apply`` sets the DB name and pushes
+        the original title back to every live Shopify + Etsy listing."""
+        from onassis.connectors.shopify import ShopifyConnector
+        shop = getattr(self, "_shopify_conn", None) or ShopifyConnector(self.config, self.db)
+        etsy = None
+        rows: list[dict[str, Any]] = []
+        changed = errors = 0
+        for p in self.db.list_products():
+            if not p.get("active", 1):
+                continue
+            cid = p.get("campaign_id")
+            key = p.get("product_key") or p.get("sku")
+            listing = self._gather(cid, key) if (cid and key) else None
+            original = (listing or {}).get("title")
+            old_name = p.get("name")
+            row: dict[str, Any] = {"id": p.get("id"), "old_name": old_name,
+                                   "original": original, "platforms": [], "status": "ok"}
+            if not original:
+                row["status"] = "no_package"        # no listing.json title to restore
+            elif original == old_name:
+                row["status"] = "unchanged"
+            elif apply:
+                self.db.set_product_name(p["id"], original)
+                for platform in ("shopify", "etsy"):
+                    pub = (self.db.get_latest_publication(cid, platform,
+                                                          product_id=f"{cid}-{key}")
+                           if cid else None)
+                    lid = (pub or {}).get("listing_id")
+                    if not lid:
+                        continue
+                    try:
+                        if platform == "shopify" and shop.can_publish:
+                            shop.set_product_title(lid, original)
+                            row["platforms"].append("shopify")
+                        elif platform == "etsy":
+                            if etsy is None:
+                                from onassis.etsy_automation import EtsyAutomationEngine
+                                etsy = EtsyAutomationEngine(self.config, self.db)
+                            if etsy.is_configured:
+                                etsy.update_title(lid, original, source="restore")
+                                row["platforms"].append("etsy")
+                    except Exception as exc:
+                        row["status"] = "error"
+                        row["error"] = str(exc)[:150]
+                        errors += 1
+                if row["status"] != "error":
+                    row["status"] = "restored"
+                    changed += 1
+            rows.append(row)
+        log.info("Restore names %s: %d product(s), %d restored, %d error(s).",
+                 "APPLY" if apply else "preview", len(rows), changed, errors)
+        return {"ok": True, "applied": apply, "changed": changed, "errors": errors,
+                "count": len(rows), "products": rows}
+
     @staticmethod
     def _type_label(product_key: str | None) -> str:
         from onassis.product_naming import type_label
