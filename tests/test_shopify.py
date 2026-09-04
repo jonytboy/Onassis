@@ -323,6 +323,51 @@ def test_publish_article_fails_when_unverifiable(config):
     assert "not found" in res["error"].lower()
 
 
+def test_publish_article_retries_without_image_on_422(config):
+    """A dead hero image must NOT kill the whole post. Shopify 422-rejects the
+    article when it can't fetch the featured image; we retry once without it so
+    the post still publishes (text-only) instead of stalling the blog."""
+    _configured(config)
+    config.shopify["blog_id"] = 7
+
+    class _ImgRejects(FakeAdminClient):
+        def __init__(self):
+            super().__init__()
+            self.attempts = []
+
+        def create_article(self, blog_id, payload):
+            self.attempts.append(dict(payload["article"]))
+            if "image" in payload["article"]:
+                raise RuntimeError(
+                    'Shopify POST /blogs/7/articles.json HTTP 422: '
+                    '{"errors":{"base":["Image upload failed. Image '
+                    'https://x/hero.jpg failed to download. - file not found."]}}')
+            return super().create_article(blog_id, payload)
+
+    client = _ImgRejects()
+    res = ShopifyConnector(config, client=client).publish_article(
+        {"title": "x", "body": "y", "image": "https://x/hero.jpg"})
+    assert res["ok"] is True and res["id"] == "555"
+    # Two attempts: first WITH image (rejected), retry WITHOUT it (published).
+    assert len(client.attempts) == 2
+    assert "image" in client.attempts[0] and "image" not in client.attempts[1]
+
+
+def test_publish_article_reraises_non_image_422(config):
+    """A 422 that is NOT about the image is a real failure — do not swallow it."""
+    _configured(config)
+    config.shopify["blog_id"] = 7
+
+    class _HardFail(FakeAdminClient):
+        def create_article(self, blog_id, payload):
+            raise RuntimeError("Shopify POST HTTP 422: title has already been taken")
+
+    import pytest
+    with pytest.raises(RuntimeError):
+        ShopifyConnector(config, client=_HardFail()).publish_article(
+            {"title": "x", "body": "y", "image": "https://x/hero.jpg"})
+
+
 # --- Publisher (records a shopify publication) -----------------------
 
 def test_publisher_records_shopify_publication(config, db, tmp_path):

@@ -303,9 +303,22 @@ class ContentEngine:
         return (self.cfg.get("public_base")
                 or (self.config.gelato or {}).get("file_base_url") or "").rstrip("/")
 
+    def _hero_path(self, campaign_id: int, product_key: str) -> Path:
+        """Where the hero image lives on disk (mirrors the /exports URL layout)."""
+        return (self._exports_base() / str(campaign_id) / str(product_key)
+                / "images" / "hero.jpg")
+
     def _hero_url(self, campaign_id: int, product_key: str) -> str | None:
         base = self._public_base()
-        return f"{base}/{campaign_id}/{product_key}/images/hero.jpg" if base else None
+        if not base:
+            return None
+        # Only advertise a hero image that actually exists on disk. A missing
+        # file makes Shopify 422-reject the WHOLE blog post ("image failed to
+        # download"), which silently stalls the entire blog pipeline — so a
+        # product whose art is gone publishes text-only instead of blocking.
+        if not self._hero_path(campaign_id, product_key).exists():
+            return None
+        return f"{base}/{campaign_id}/{product_key}/images/hero.jpg"
 
     def _product_url(self, campaign_id: int, product_key: str) -> str | None:
         """Best public product link (Etsy/Shopify) for the article's SEO link."""
@@ -1359,18 +1372,21 @@ class ContentEngine:
                              else self.cfg.get("blog_horizon_days", 21)))
         today = datetime.now(timezone.utc).date()
         today_s = today.strftime("%Y-%m-%d")
-        pending = [a for a in self.db.list_marketing_assets(channel="blog")
-                   if (a.get("status") or "pending") == "pending"]
         used: dict[str, int] = {}
         have_variants: set = set()
         to_place = []                       # already-generated pending, needs a date
-        for a in pending:
+        for a in self.db.list_marketing_assets(channel="blog"):
+            status = a.get("status") or "pending"
             sd = a.get("scheduled_date")
             pl = a.get("payload") or {}
             if sd and sd >= today_s:
+                # ANY asset already sitting on a future day fills that slot — a
+                # day that has already posted (or already failed) must not get a
+                # second post piled on, nor a failed one re-queued every run.
                 used[sd] = used.get(sd, 0) + 1
                 have_variants.add((a.get("product_key"), pl.get("angle")))
-            else:
+            elif status == "pending":
+                # Undated / past-dated PENDING assets can be re-dated forward.
                 to_place.append(a)
         to_place.sort(key=lambda a: a.get("id") or 0)
         pool = self._blog_pool()

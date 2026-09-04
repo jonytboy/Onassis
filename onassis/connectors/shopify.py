@@ -586,7 +586,21 @@ class ShopifyConnector:
         img = article.get("image")
         if img:
             body["image"] = {"src": img}
-        resp = client.create_article(str(blog_id), {"article": body})
+        try:
+            resp = client.create_article(str(blog_id), {"article": body})
+        except Exception as exc:  # noqa: BLE001
+            # Shopify fetches the featured image server-side; if it can't
+            # (dead/moved URL) it 422-rejects the ENTIRE post. A missing hero
+            # must never block the article — retry once WITHOUT the image so the
+            # post still publishes (text-only) instead of stalling the blog.
+            msg = str(exc)
+            if "image" in body and "422" in msg and "image" in msg.lower():
+                log.warning("Blog image unreachable (%s) — publishing without "
+                            "the hero image.", img)
+                body.pop("image", None)
+                resp = client.create_article(str(blog_id), {"article": body})
+            else:
+                raise
         art = (resp or {}).get("article") or {}
         art_id = art.get("id")
         if not art_id:

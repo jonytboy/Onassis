@@ -707,3 +707,22 @@ def test_batch_build_is_idempotent(config, db, tmp_path):
     again = eng.build_batch()                  # nothing new to build
     assert again["built"] == 0 and again["skipped"] == 1
     assert len(db.list_short_form(limit=100)) == 3   # no duplicates
+
+
+def test_hero_url_only_when_image_on_disk(config, db, tmp_path):
+    """A hero URL is advertised only when the file exists on disk. A missing
+    image makes Shopify 422-reject the entire blog post ('failed to download'),
+    which silently stalls the whole blog — so a product whose art is gone
+    publishes text-only instead of blocking the pipeline."""
+    config.content = {"public_base": "https://api.example.com/exports"}
+    config.listing = {**(config.listing or {}),
+                      "exports_dir": str(tmp_path / "exports")}
+    eng = ContentEngine(config, db)
+    # No file yet -> no URL (so the article omits the image and still posts).
+    assert eng._hero_url(44, "OPP-x") is None
+    # Create the hero file -> the URL appears.
+    imgs = tmp_path / "exports" / "44" / "OPP-x" / "images"
+    imgs.mkdir(parents=True, exist_ok=True)
+    (imgs / "hero.jpg").write_bytes(b"\xff\xd8\xff")   # pretend jpg
+    assert eng._hero_url(44, "OPP-x") == (
+        "https://api.example.com/exports/44/OPP-x/images/hero.jpg")
