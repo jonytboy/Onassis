@@ -1052,7 +1052,7 @@ class ContentEngine:
             # Safety guard (the rename-disaster failure mode): never push a title
             # that mislabels the garment type (hoodie -> "crewneck", etc.). Flag
             # it for manual review instead of applying.
-            conflict = type_conflict(seo["title"], pk)
+            conflict = type_conflict(seo["title"], pk, old_title=row["old_title"])
             if conflict:
                 row["status"] = "type_conflict"
                 row["conflict"] = conflict

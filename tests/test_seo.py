@@ -100,3 +100,19 @@ def test_has_word_is_whole_word():
     assert _has_word("tee", "cotton tee shirt") is True
     assert _has_word("tee", "canteen menu") is False
     assert _has_word("t-shirt", "lemon t-shirt, cotton") is True
+
+
+def test_type_conflict_uses_old_title_when_key_unknown():
+    from onassis.seo import type_conflict
+    # A duplicate listing whose product_key drifted (not a known apparel key),
+    # but the ORIGINAL title says "Heavyweight Hoodie" — a new "Sweatshirt /
+    # Crewneck" title must STILL be caught via the old-title fallback.
+    assert type_conflict(
+        "Sunset Embroidered Sweatshirt, Muted Stone Pullover, Brushed Cotton Crewneck",
+        "legacy-riviera-123",
+        old_title="Riviera Sunset Heavyweight Hoodie in Muted Stone") != ""
+    # A correct hoodie title passes even with the drifted key.
+    assert type_conflict(
+        "Heavyweight Hoodie, Sunset Pullover Hoodie",
+        "legacy-riviera-123",
+        old_title="Riviera Sunset Heavyweight Hoodie") == ""

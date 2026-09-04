@@ -89,21 +89,30 @@ def normalize_tags(raw: Any, *, max_tags: int = ETSY_MAX_TAGS,
     return out
 
 
-# Garment types are DISTINCT products on the store (a hoodie is not a
-# sweatshirt is not a tee). The LLM occasionally relabels one as another, which
-# mislabels the listing (buyer searches "crewneck", lands on a hoodie) — the
-# rename-disaster failure mode. `type_conflict` enforces the true type from the
-# stable product_key: the right garment word must appear, a wrong one must not.
-_APPAREL_TERMS: dict[str, dict[str, tuple[str, ...]]] = {
-    "heavyweight_hoodie": {
-        "need": ("hoodie", "hooded"),
-        "avoid": ("crewneck", "crew neck", "t-shirt", "t shirt", "tshirt", "tee")},
-    "sweatshirt": {
-        "need": ("sweatshirt", "crewneck", "crew neck", "jumper"),
-        "avoid": ("hoodie", "hooded", "t-shirt", "t shirt", "tshirt", "tee")},
-    "premium_tshirt": {
-        "need": ("t-shirt", "t shirt", "tshirt", "tee"),
-        "avoid": ("hoodie", "hooded", "sweatshirt", "crewneck", "crew neck")},
+# Garment types are DISTINCT products on the store (a hoodie is not a crewneck is
+# not a tee). The LLM occasionally relabels one as another, which mislabels the
+# listing (buyer searches "crewneck", lands on a hoodie) — the rename-disaster
+# failure mode. `type_conflict` enforces the true type: the right garment word
+# must appear and a conflicting one must not.
+#
+# The words that identify each garment family. Hoodie and sweatshirt overlap in
+# real life (a hoodie is a hooded sweatshirt), so "sweatshirt" is NOT treated as
+# a conflict for a hoodie — but "crewneck" (explicitly no hood) and "tee" are.
+_GARMENT_WORDS: dict[str, tuple[str, ...]] = {
+    "hoodie": ("hoodie", "hooded"),
+    "sweatshirt": ("sweatshirt", "crewneck", "crew neck", "jumper"),
+    "tshirt": ("t-shirt", "t shirt", "tshirt", "tee"),
+}
+# Distinctive words that mean a DIFFERENT garment — their presence is a conflict.
+_CONFLICT_WORDS: dict[str, tuple[str, ...]] = {
+    "hoodie": ("crewneck", "crew neck", "t-shirt", "t shirt", "tshirt", "tee"),
+    "sweatshirt": ("hoodie", "hooded", "t-shirt", "t shirt", "tshirt", "tee"),
+    "tshirt": ("hoodie", "hooded", "sweatshirt", "crewneck", "crew neck"),
+}
+# The stable product_key -> true garment (authoritative when recognised).
+_KEY_TO_GARMENT = {
+    "heavyweight_hoodie": "hoodie", "sweatshirt": "sweatshirt",
+    "premium_tshirt": "tshirt",
 }
 
 
@@ -114,19 +123,34 @@ def _has_word(term: str, text: str) -> bool:
                      text, re.IGNORECASE) is not None
 
 
-def type_conflict(title: str, product_key: str | None) -> str:
-    """Reason string if ``title`` mislabels the garment type for this product,
-    else "". Only apparel (where the model actually confuses types) is guarded;
-    mugs/posters/totes return "". A row with a conflict must NOT be applied."""
-    spec = _APPAREL_TERMS.get(str(product_key or "").lower())
-    if not spec:
+def _true_garment(product_key: str | None, old_title: str | None) -> str | None:
+    """The product's real garment family — from the stable product_key when it's
+    recognised, else inferred from the ORIGINAL title (which reliably names the
+    physical type even when the key has drifted, e.g. duplicate listings)."""
+    g = _KEY_TO_GARMENT.get(str(product_key or "").lower())
+    if g:
+        return g
+    for garment, words in _GARMENT_WORDS.items():
+        if any(_has_word(w, old_title or "") for w in words):
+            return garment
+    return None
+
+
+def type_conflict(title: str, product_key: str | None,
+                  old_title: str | None = None) -> str:
+    """Reason string if ``title`` mislabels the garment type, else "". Only
+    apparel is guarded (mugs/posters/totes return ""). A row with a conflict must
+    NOT be applied. ``old_title`` is used as a fallback type signal when the
+    product_key isn't a recognised apparel key."""
+    garment = _true_garment(product_key, old_title)
+    if not garment:
         return ""
     title = title or ""
-    if not any(_has_word(w, title) for w in spec["need"]):
-        return f"title never says '{spec['need'][0]}' (wrong or missing garment type)"
-    bad = [w for w in spec["avoid"] if _has_word(w, title)]
+    if not any(_has_word(w, title) for w in _GARMENT_WORDS[garment]):
+        return f"title never says '{garment}' (wrong or missing garment type)"
+    bad = [w for w in _CONFLICT_WORDS[garment] if _has_word(w, title)]
     if bad:
-        return f"title calls it a {'/'.join(bad)} — not a {spec['need'][0]}"
+        return f"title calls it a {'/'.join(bad)} — not a {garment}"
     return ""
 
 
