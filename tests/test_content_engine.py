@@ -753,3 +753,87 @@ def test_hero_url_only_when_image_on_disk(config, db, tmp_path):
     (imgs / "hero.jpg").write_bytes(b"\xff\xd8\xff")   # pretend jpg
     assert eng._hero_url(44, "OPP-x") == (
         "https://api.example.com/exports/44/OPP-x/images/hero.jpg")
+
+
+class _SeoLLM:
+    """Stub LLM for SEO: returns a buyer-phrase title + tags, echoes context."""
+
+    def __init__(self):
+        self.calls = []
+
+    def generate_json(self, *, system, prompt, schema):
+        self.calls.append(prompt)
+        return {"title": "Ceramic Mug, Mediterranean Coastal Mug, Greek Gift Mug",
+                "tags": ["mediterranean mug", "coastal gift mug", "greek island mug"]}
+
+
+class _FakeEtsyEngine:
+    is_configured = True
+
+    def __init__(self):
+        self.titles = []
+        self.tags = []
+
+    def update_title(self, listing_id, title, *, reason="", source=""):
+        self.titles.append((listing_id, title))
+
+    def update_tags(self, listing_id, tags, *, reason="", source=""):
+        self.tags.append((listing_id, list(tags)))
+
+
+class _NoShop:
+    can_publish = False
+
+
+def test_rewrite_seo_preview_builds_titles_and_tags(config, db):
+    """Preview rewrites a published product's title+tags around buyer phrases and
+    changes nothing — returning the proposed values and target platforms."""
+    db.insert_product({"sku": "MUG", "name": "Meridiano Coastal Ceramic Mug",
+                       "campaign_id": 5, "product_key": "ceramic_mug", "active": True})
+    db.insert_publication({"platform": "etsy", "product_id": "5-ceramic_mug",
+                           "campaign_id": 5, "listing_id": "L555", "status": "live"})
+    eng = _engine(config, db)
+    eng._seo_llm = _SeoLLM()
+    eng._shopify_conn = _NoShop()
+    r = eng.rewrite_seo(apply=False)
+    assert r["ok"] and r["applied"] is False and r["count"] == 1
+    row = r["products"][0]
+    assert row["status"] == "would_rewrite"
+    assert row["platforms"] == ["etsy"]
+    assert row["new_title"].startswith("Ceramic Mug")          # buyer phrase, not brand
+    assert row["new_tags"] == ["mediterranean mug", "coastal gift mug",
+                               "greek island mug"]
+    # The product's real type reached the SEO prompt.
+    assert "Ceramic Mug" in eng._seo_llm.calls[0]
+
+
+def test_rewrite_seo_apply_pushes_to_etsy(config, db):
+    """Apply pushes the new title + tags to the Etsy listing."""
+    db.insert_product({"sku": "MUG", "name": "Meridiano Coastal Ceramic Mug",
+                       "campaign_id": 5, "product_key": "ceramic_mug", "active": True})
+    db.insert_publication({"platform": "etsy", "product_id": "5-ceramic_mug",
+                           "campaign_id": 5, "listing_id": "L555", "status": "live"})
+    eng = _engine(config, db)
+    eng._seo_llm = _SeoLLM()
+    eng._shopify_conn = _NoShop()
+    fake_etsy = _FakeEtsyEngine()
+    eng._seo_etsy = fake_etsy
+    r = eng.rewrite_seo(apply=True)
+    assert r["applied"] is True and r["changed"] == 1
+    assert r["products"][0]["status"] == "rewritten"
+    assert fake_etsy.titles == [("L555", "Ceramic Mug, Mediterranean Coastal Mug, "
+                                          "Greek Gift Mug")]
+    assert fake_etsy.tags == [("L555", ["mediterranean mug", "coastal gift mug",
+                                        "greek island mug"])]
+
+
+def test_rewrite_seo_skips_unpublished_products(config, db):
+    """A product with no marketplace listing is reported, not pushed."""
+    db.insert_product({"sku": "X", "name": "Ghost", "campaign_id": 9,
+                       "product_key": "poster", "active": True})
+    eng = _engine(config, db)
+    eng._seo_llm = _SeoLLM()
+    eng._shopify_conn = _NoShop()
+    r = eng.rewrite_seo(apply=True)
+    assert r["products"][0]["status"] == "not_published"
+    assert r["changed"] == 0

@@ -239,6 +239,16 @@ def _parse_args() -> argparse.Namespace:
              "(404) — the phantom rows (add --apply to remove them).",
     )
     parser.add_argument(
+        "--rewrite-seo", action="store_true",
+        help="Preview rewriting live listings' Etsy title+tags (and Shopify title) "
+             "around buyer-searched phrases so Etsy search shows them (add --apply "
+             "to push; --limit N caps how many products — each costs one LLM call).",
+    )
+    parser.add_argument(
+        "--limit", type=int, default=None,
+        help="With --rewrite-seo: cap how many products to process (start small).",
+    )
+    parser.add_argument(
         "--run-marketing", action="store_true",
         help="Run the full content-marketing suite once (blog schedule, clips, "
              "product/Etsy videos, Facebook, distribution). Cron this daily.",
@@ -1243,6 +1253,30 @@ def main() -> int:
                 print(f"  {old} -> {new}   {p['status']:18} {p['name']}")
         if not r["applied"]:
             print("\nRun again with --apply to push these prices to Shopify.")
+        return 0
+
+    if args.rewrite_seo:
+        from onassis.content_engine import ContentEngine
+        from onassis.integrations import apply_integration_overrides
+
+        apply_integration_overrides(config, db)
+        r = ContentEngine(config, db).rewrite_seo(apply=args.apply, limit=args.limit)
+        print(f"\nREWRITE SEO — {'APPLIED' if r['applied'] else 'PREVIEW'} "
+              f"({r['count']} product(s), {r['changed']} changed, "
+              f"{r['errors']} error(s)):\n")
+        for p in r["products"]:
+            plats = ",".join(p.get("platforms") or []) or "—"
+            print(f"  [{p['status']:13}] [{plats}]")
+            print(f"      OLD: {p.get('old_title') or '—'}")
+            if p.get("new_title"):
+                print(f"      NEW: {p['new_title']}")
+                print(f"      tags: {', '.join(p.get('new_tags') or [])}")
+            if p.get("error"):
+                print(f"      error: {p['error']}")
+        if not r["applied"]:
+            print("\nNothing was changed — this was a PREVIEW. Descriptions are "
+                  "NOT touched (title + tags only). Re-run with --apply only once "
+                  "the NEW titles above look right.")
         return 0
 
     if args.run_marketing:

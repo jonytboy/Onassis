@@ -994,6 +994,106 @@ class ContentEngine:
         return {"ok": True, "applied": apply, "changed": changed, "errors": errors,
                 "count": len(rows), "products": rows}
 
+    def _seo_context(self, cid: int | None, pk: str,
+                     product: dict[str, Any]) -> dict[str, Any]:
+        """What the SEO writer needs about a product: its real type, the design
+        subject/theme, and the current (weak) title to improve on."""
+        from onassis.product_naming import type_label
+        ctx = (self._gather(cid, pk) if cid else None) or {}
+        return {
+            "product_type": type_label(pk),
+            "subject": ctx.get("theme") or ctx.get("product_name") or "",
+            "current_title": ctx.get("title") or product.get("name") or pk,
+        }
+
+    def rewrite_seo(self, apply: bool = False, limit: int | None = None,
+                    product_key: str | None = None) -> dict[str, Any]:
+        """Rewrite every live product's Etsy title + tags (and Shopify title)
+        around buyer-searched phrases, so Etsy search actually shows the listing.
+
+        Default is a PREVIEW — it returns old→new for each product and changes
+        nothing, so a blanket SEO rewrite can be eyeballed first. ``apply`` pushes
+        the changes; ``limit`` caps how many products are processed (each costs
+        one LLM call, so start small); ``product_key`` targets a single product.
+        """
+        from onassis.connectors.shopify import ShopifyConnector
+        from onassis.etsy_automation import EtsyAutomationEngine
+        from onassis.llm import LLMClient
+        from onassis.seo import build_seo
+
+        llm = getattr(self, "_seo_llm", None) or LLMClient(self.config)
+        shop = getattr(self, "_shopify_conn", None) or ShopifyConnector(self.config, self.db)
+        etsy = getattr(self, "_seo_etsy", None) or EtsyAutomationEngine(self.config, self.db)
+        rows: list[dict[str, Any]] = []
+        changed = errors = 0
+        for p in self.db.list_products():
+            if not p.get("active", 1):
+                continue
+            pk = p.get("product_key") or p.get("sku")
+            if product_key and pk != product_key:
+                continue
+            cid = p.get("campaign_id")
+            row: dict[str, Any] = {"name": p.get("name") or pk, "product_key": pk,
+                                   "old_title": None, "new_title": None,
+                                   "new_tags": [], "platforms": [], "status": "ok"}
+            try:
+                seo = build_seo(self._seo_context(cid, pk, p), llm)
+            except Exception as exc:  # LLM failure never aborts the whole run
+                row["status"] = "error"
+                row["error"] = str(exc)[:200]
+                errors += 1
+                rows.append(row)
+                if limit and len(rows) >= limit:
+                    break
+                continue
+            row["new_title"] = seo["title"]
+            row["new_tags"] = seo["tags"]
+            row["old_title"] = row["name"]
+            etsy_pub = (self.db.get_latest_publication(cid, "etsy",
+                        product_id=f"{cid}-{pk}") if cid else None)
+            shop_pub = (self.db.get_latest_publication(cid, "shopify",
+                        product_id=f"{cid}-{pk}") if cid else None)
+            etsy_id = (etsy_pub or {}).get("listing_id")
+            shop_id = (shop_pub or {}).get("listing_id")
+            if not etsy_id and not shop_id:
+                row["status"] = "not_published"
+                rows.append(row)
+                if limit and len(rows) >= limit:
+                    break
+                continue
+            if not apply:
+                row["status"] = "would_rewrite"
+                if etsy_id:
+                    row["platforms"].append("etsy")
+                if shop_id and shop.can_publish:
+                    row["platforms"].append("shopify")
+            else:
+                try:
+                    if etsy_id and etsy.is_configured:
+                        etsy.update_title(etsy_id, seo["title"], reason="seo",
+                                          source="seo")
+                        etsy.update_tags(etsy_id, seo["tags"], reason="seo",
+                                         source="seo")
+                        row["platforms"].append("etsy")
+                    if shop_id and shop.can_publish:
+                        shop.set_product_title(shop_id, seo["title"])
+                        row["platforms"].append("shopify")
+                    row["status"] = "rewritten" if row["platforms"] else "no_target"
+                    if row["platforms"]:
+                        changed += 1
+                except Exception as exc:  # one product must not abort the run
+                    row["status"] = "error"
+                    row["error"] = str(exc)[:200]
+                    errors += 1
+            rows.append(row)
+            if limit and len(rows) >= limit:
+                break
+        log.info("Rewrite SEO %s: %d product(s), %d %s, %d error(s).",
+                 "APPLY" if apply else "preview", len(rows), changed,
+                 "rewritten" if apply else "to change", errors)
+        return {"ok": True, "applied": apply, "changed": changed, "errors": errors,
+                "count": len(rows), "products": rows}
+
     def _listing_alive(self, platform: str, listing_id: str, shop: Any,
                        etsy_holder: dict[str, Any]) -> bool:
         """Does this marketplace listing still exist? Only a definite 404 counts
