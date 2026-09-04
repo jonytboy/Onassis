@@ -254,6 +254,12 @@ class IntegrationManager:
     def _activity(self, key: str) -> dict[str, Any]:
         last_ok = self.db.last_integration_event(key, status="ok")
         last_err = self.db.last_integration_event(key, status="failed")
+        # A failure OLDER than the most recent success is stale — a later call
+        # succeeded, so the service is fine. Don't surface that error (it would
+        # show a red "401 …" under a green badge and pile up forever). Only keep
+        # an error that is still the latest word from the service.
+        if last_err and last_ok and (last_ok.get("id") or 0) > (last_err.get("id") or 0):
+            last_err = None
         last_pub = None
         for platform in ({"etsy": "etsy", "shopify": "shopify"}.get(key),):
             if platform:

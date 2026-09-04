@@ -132,3 +132,25 @@ def test_pricing_dials_overlay_onto_config(config, db):
     assert config.pricing["strategy"] == "adaptive"
     assert config.pricing["adaptive_start_profit"] == 4.0
     assert config.pricing["shipping_cost"] == 6.5
+
+
+def test_stale_error_is_hidden_after_a_later_success(config, db):
+    """A failure OLDER than the most recent success must not show under a green
+    badge — otherwise old errors (e.g. a past 401) pile up on healthy services.
+    Only an error that is still the latest word from the service is surfaced."""
+    config.shopify = {"store_domain": "x.myshopify.com", "client_id": "c",
+                      "client_secret": "s"}
+    # An old failure, then a later successful test → healthy, error suppressed.
+    db.insert_integration_event({"integration": "shopify", "kind": "test",
+                                 "status": "failed", "detail": "HTTP 401 old"})
+    db.insert_integration_event({"integration": "shopify", "kind": "test",
+                                 "status": "ok", "detail": "Connected"})
+    card = _mgr(config, db).detail("shopify")
+    assert card["health"] == "healthy"
+    assert card["activity"]["last_error"] is None          # stale error hidden
+
+    # A NEW failure after the success is current → it shows again.
+    db.insert_integration_event({"integration": "shopify", "kind": "test",
+                                 "status": "failed", "detail": "HTTP 500 now"})
+    card = _mgr(config, db).detail("shopify")
+    assert card["activity"]["last_error"] == "HTTP 500 now"
