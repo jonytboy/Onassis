@@ -43,7 +43,9 @@ _SCHEMA: dict[str, Any] = {
     "properties": {
         "title": {"type": "string",
                   "description": "Etsy title, <=140 chars, buyer phrase first."},
-        "tags": {"type": "array", "maxItems": ETSY_MAX_TAGS,
+        # NB: no maxItems here — Anthropic's structured-output schema rejects it
+        # on arrays. The 13-tag cap is enforced in normalize_tags instead.
+        "tags": {"type": "array",
                  "items": {"type": "string"},
                  "description": "Up to 13 long-tail tags, <=20 chars each."},
     },

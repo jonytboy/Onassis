@@ -2,8 +2,16 @@
 
 from __future__ import annotations
 
-from onassis.seo import (ETSY_TAG_MAX, ETSY_TITLE_MAX, build_seo, clip_title,
-                         normalize_tags)
+import json
+
+from onassis.seo import (_SCHEMA, ETSY_TAG_MAX, ETSY_TITLE_MAX, build_seo,
+                         clip_title, normalize_tags)
+
+
+def test_schema_has_no_maxitems():
+    """Anthropic's structured-output schema rejects maxItems on arrays (400).
+    The tag cap is enforced in normalize_tags instead — keep the schema clean."""
+    assert "maxItems" not in json.dumps(_SCHEMA)
 
 
 def test_clip_title_keeps_short_titles():
