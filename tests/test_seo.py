@@ -69,3 +69,34 @@ def test_build_seo_normalises_model_output():
     assert "greek island art" == out["tags"][0] and out["tags"].count("greek island art") == 1
     # The product context reached the model prompt.
     assert "Wall Art Print" in llm.calls[0]["prompt"]
+
+
+def test_type_conflict_flags_wrong_garment():
+    from onassis.seo import type_conflict
+    # A hoodie the model relabelled a sweatshirt/crewneck (the real bug we saw).
+    assert type_conflict("Embroidered Sunset Sweatshirt, Cozy Crewneck",
+                         "heavyweight_hoodie")
+    # A sweatshirt titled as a hoodie.
+    assert type_conflict("Cozy Hoodie Pullover", "sweatshirt")
+    # A hoodie titled as a tee.
+    assert type_conflict("Mediterranean Tee, Soft Cotton Shirt", "heavyweight_hoodie")
+
+
+def test_type_conflict_passes_correct_garment():
+    from onassis.seo import type_conflict
+    assert type_conflict("Heavyweight Hoodie, Sunset Pullover", "heavyweight_hoodie") == ""
+    assert type_conflict("Mediterranean Sweatshirt, Cozy Crewneck", "sweatshirt") == ""
+    assert type_conflict("Lemon T-Shirt, Cotton Tee", "premium_tshirt") == ""
+
+
+def test_type_conflict_ignores_non_apparel():
+    from onassis.seo import type_conflict
+    assert type_conflict("Anything at all here", "ceramic_mug") == ""
+    assert type_conflict("Coastal Print Wall Art", "premium_poster") == ""
+
+
+def test_has_word_is_whole_word():
+    from onassis.seo import _has_word
+    assert _has_word("tee", "cotton tee shirt") is True
+    assert _has_word("tee", "canteen menu") is False
+    assert _has_word("t-shirt", "lemon t-shirt, cotton") is True

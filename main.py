@@ -1267,6 +1267,8 @@ def main() -> int:
             if p.get("new_title"):
                 print(f"      NEW: {p['new_title']}")
                 print(f"      tags: {', '.join(p.get('new_tags') or [])}")
+            if p.get("conflict"):
+                print(f"      ⚠ SKIPPED (type guard): {p['conflict']}")
             if p.get("error"):
                 print(f"      error: {p['error']}")
         if not r["applied"]:

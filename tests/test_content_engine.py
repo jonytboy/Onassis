@@ -837,3 +837,31 @@ def test_rewrite_seo_skips_unpublished_products(config, db):
     r = eng.rewrite_seo(apply=True)
     assert r["products"][0]["status"] == "not_published"
     assert r["changed"] == 0
+
+
+class _BadTypeLLM:
+    """LLM that relabels a hoodie as a sweatshirt/crewneck — the type-swap bug."""
+
+    def generate_json(self, *, system, prompt, schema):
+        return {"title": "Embroidered Sunset Sweatshirt, Cozy Crewneck Pullover",
+                "tags": ["sweatshirt", "crewneck sweater"]}
+
+
+def test_rewrite_seo_flags_garment_type_conflict_and_never_applies(config, db):
+    """The type guard blocks the rename-disaster failure mode: a hoodie the model
+    relabelled a sweatshirt/crewneck is flagged and NEVER pushed."""
+    db.insert_product({"sku": "H", "name": "Riviera Sunset Hoodie", "campaign_id": 3,
+                       "product_key": "heavyweight_hoodie", "active": True})
+    db.insert_publication({"platform": "etsy", "product_id": "3-heavyweight_hoodie",
+                           "campaign_id": 3, "listing_id": "L9", "status": "live"})
+    eng = _engine(config, db)
+    eng._seo_llm = _BadTypeLLM()
+    eng._shopify_conn = _NoShop()
+    fake_etsy = _FakeEtsyEngine()
+    eng._seo_etsy = fake_etsy
+    r = eng.rewrite_seo(apply=True)
+    row = r["products"][0]
+    assert row["status"] == "type_conflict"
+    assert row.get("conflict")
+    assert r["changed"] == 0
+    assert fake_etsy.titles == [] and fake_etsy.tags == []   # nothing pushed

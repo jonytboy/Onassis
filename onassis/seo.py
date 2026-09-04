@@ -13,6 +13,7 @@ pushing to Etsy/Shopify, preview vs apply) lives in
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 # Etsy's hard limits (2024): 140-char title, up to 13 tags of 20 chars each.
@@ -88,6 +89,47 @@ def normalize_tags(raw: Any, *, max_tags: int = ETSY_MAX_TAGS,
     return out
 
 
+# Garment types are DISTINCT products on the store (a hoodie is not a
+# sweatshirt is not a tee). The LLM occasionally relabels one as another, which
+# mislabels the listing (buyer searches "crewneck", lands on a hoodie) — the
+# rename-disaster failure mode. `type_conflict` enforces the true type from the
+# stable product_key: the right garment word must appear, a wrong one must not.
+_APPAREL_TERMS: dict[str, dict[str, tuple[str, ...]]] = {
+    "heavyweight_hoodie": {
+        "need": ("hoodie", "hooded"),
+        "avoid": ("crewneck", "crew neck", "t-shirt", "t shirt", "tshirt", "tee")},
+    "sweatshirt": {
+        "need": ("sweatshirt", "crewneck", "crew neck", "jumper"),
+        "avoid": ("hoodie", "hooded", "t-shirt", "t shirt", "tshirt", "tee")},
+    "premium_tshirt": {
+        "need": ("t-shirt", "t shirt", "tshirt", "tee"),
+        "avoid": ("hoodie", "hooded", "sweatshirt", "crewneck", "crew neck")},
+}
+
+
+def _has_word(term: str, text: str) -> bool:
+    """Whole-word (case-insensitive) containment, so 'tee' does not match
+    'canteen' and 't-shirt' is found next to punctuation."""
+    return re.search(r"(?<![a-z])" + re.escape(term) + r"(?![a-z])",
+                     text, re.IGNORECASE) is not None
+
+
+def type_conflict(title: str, product_key: str | None) -> str:
+    """Reason string if ``title`` mislabels the garment type for this product,
+    else "". Only apparel (where the model actually confuses types) is guarded;
+    mugs/posters/totes return "". A row with a conflict must NOT be applied."""
+    spec = _APPAREL_TERMS.get(str(product_key or "").lower())
+    if not spec:
+        return ""
+    title = title or ""
+    if not any(_has_word(w, title) for w in spec["need"]):
+        return f"title never says '{spec['need'][0]}' (wrong or missing garment type)"
+    bad = [w for w in spec["avoid"] if _has_word(w, title)]
+    if bad:
+        return f"title calls it a {'/'.join(bad)} — not a {spec['need'][0]}"
+    return ""
+
+
 def _prompt(context: dict[str, Any]) -> str:
     ptype = context.get("product_type") or "product"
     subject = context.get("subject") or context.get("theme") or ""
@@ -96,6 +138,11 @@ def _prompt(context: dict[str, Any]) -> str:
         f"Product type: {ptype}",
         f"Design subject / style: {subject}" if subject else "",
         f"Current (weak) title: {current}" if current else "",
+        "",
+        f"This item is a {ptype}. The title and tags MUST describe it as a "
+        f"{ptype} and MUST NOT call it any other product (never say 'hoodie' for "
+        "a sweatshirt, 'sweatshirt' or 'crewneck' for a hoodie, 'tee'/'t-shirt' "
+        "for either, etc.). Keep the exact garment/product type.",
         "",
         f"Write a new Etsy SEO title (<= {ETSY_TITLE_MAX} characters) and up to "
         f"{ETSY_MAX_TAGS} tags (each <= {ETSY_TAG_MAX} characters). Lead the "

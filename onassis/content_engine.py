@@ -1019,7 +1019,7 @@ class ContentEngine:
         from onassis.connectors.shopify import ShopifyConnector
         from onassis.etsy_automation import EtsyAutomationEngine
         from onassis.llm import LLMClient
-        from onassis.seo import build_seo
+        from onassis.seo import build_seo, type_conflict
 
         llm = getattr(self, "_seo_llm", None) or LLMClient(self.config)
         shop = getattr(self, "_shopify_conn", None) or ShopifyConnector(self.config, self.db)
@@ -1049,6 +1049,17 @@ class ContentEngine:
             row["new_title"] = seo["title"]
             row["new_tags"] = seo["tags"]
             row["old_title"] = row["name"]
+            # Safety guard (the rename-disaster failure mode): never push a title
+            # that mislabels the garment type (hoodie -> "crewneck", etc.). Flag
+            # it for manual review instead of applying.
+            conflict = type_conflict(seo["title"], pk)
+            if conflict:
+                row["status"] = "type_conflict"
+                row["conflict"] = conflict
+                rows.append(row)
+                if limit and len(rows) >= limit:
+                    break
+                continue
             etsy_pub = (self.db.get_latest_publication(cid, "etsy",
                         product_id=f"{cid}-{pk}") if cid else None)
             shop_pub = (self.db.get_latest_publication(cid, "shopify",
