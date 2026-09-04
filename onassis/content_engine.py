@@ -733,6 +733,19 @@ class ContentEngine:
         out["tiktok"] = tt.get("posted", 0)
         return out
 
+    def _channel_delivery_failing(self, channel: str, look: int = 6,
+                                  need: int = 4) -> bool:
+        """True when a channel's most-recent deliveries are ALL failing (e.g. the
+        Make webhook is out of operations, or a token expired). Used to pause the
+        evergreen drip so it doesn't manufacture a new asset every run that just
+        piles up as 'failed' while the channel is down. It resumes automatically
+        the moment one delivery succeeds again (a single 'posted' clears it)."""
+        decided = [a for a in self.db.list_marketing_assets(channel=channel)
+                   if a.get("status") in ("posted", "failed")][:look]
+        if len(decided) < need:
+            return False                        # not enough evidence to pause
+        return all(a.get("status") == "failed" for a in decided)
+
     def queue_evergreen_facebook(self, per_day: int | None = None) -> dict[str, Any]:
         """Re-share product videos to Facebook on a rotation — least-recently-
         shared products first — so social cycles through the whole catalogue and
@@ -744,6 +757,10 @@ class ContentEngine:
         base = self._public_base()
         if per_day <= 0 or not base:
             return {"queued": 0}
+        # Don't manufacture new re-shares while the channel is down — they'd only
+        # pile up as 'failed'. Resumes automatically once a post succeeds.
+        if self._channel_delivery_failing("facebook"):
+            return {"queued": 0, "paused": "facebook delivery failing"}
         last_share: dict[str, str] = {}
         for a in self.db.list_marketing_assets(channel="facebook"):
             post = (a.get("payload") or {}).get("post") or {}
@@ -789,6 +806,11 @@ class ContentEngine:
         base = self._public_base()
         if per_run <= 0 or not base:
             return {"queued": 0}
+        # Don't manufacture new re-shares while the channel is down (e.g. Make
+        # out of operations) — they'd only pile up as 'failed'. Resumes
+        # automatically once a reel posts successfully again.
+        if self._channel_delivery_failing("tiktok"):
+            return {"queued": 0, "paused": "tiktok delivery failing"}
         last_share: dict[str, str] = {}
         for a in self.db.list_marketing_assets(channel="tiktok"):
             k = a.get("product_key")

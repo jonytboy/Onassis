@@ -353,6 +353,33 @@ def test_evergreen_reels_cycles_and_respects_per_run(config, db):
     assert eng.queue_evergreen_reels(per_run=0)["queued"] == 0
 
 
+def test_evergreen_reels_pause_when_channel_failing(config, db):
+    """When the tiktok channel's recent deliveries are ALL failing (e.g. Make is
+    out of operations), the evergreen drip stops manufacturing new reels so
+    failed rows don't pile up — and resumes the moment a post succeeds again."""
+    db.insert_product({"sku": "P1", "name": "Alpha", "campaign_id": 1,
+                       "product_key": "p1", "active": True})
+    db.insert_short_form({"campaign_id": 1, "product_id": "1-p1",
+                          "product_key": "p1", "fmt": "style_slide",
+                          "path": "/x.mp4", "caption": "c", "hashtags": [],
+                          "sound": "s", "duration_s": 8, "listing_url": "u"})
+    eng = _engine(config, db)
+    eng.cfg["public_base"] = "https://cdn.example"
+    # 4 recent tiktok deliveries, all failed → channel considered down.
+    for _ in range(4):
+        aid = db.insert_marketing_asset(
+            {"campaign_id": 1, "product_key": "p1", "channel": "tiktok",
+             "payload": {"post": {"video_url": "https://cdn/x.mp4"}}})
+        db.set_marketing_asset_delivery(aid, "failed", error="Make 400")
+    assert eng.queue_evergreen_reels(per_run=1)["queued"] == 0        # paused
+    # A single success clears the breaker → the drip resumes.
+    aid = db.insert_marketing_asset(
+        {"campaign_id": 1, "product_key": "p1", "channel": "tiktok",
+         "payload": {"post": {"video_url": "https://cdn/y.mp4"}}})
+    db.set_marketing_asset_delivery(aid, "posted", ref="ok")
+    assert eng.queue_evergreen_reels(per_run=1)["queued"] == 1        # resumed
+
+
 def test_marketing_overview_aggregates_per_product(config, db):
     """The Marketing tab data groups clips, blogs and FB posts under each product
     with totals."""
