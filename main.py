@@ -245,10 +245,6 @@ def _parse_args() -> argparse.Namespace:
              "to push; --limit N caps how many products — each costs one LLM call).",
     )
     parser.add_argument(
-        "--limit", type=int, default=None,
-        help="With --rewrite-seo: cap how many products to process (start small).",
-    )
-    parser.add_argument(
         "--run-marketing", action="store_true",
         help="Run the full content-marketing suite once (blog schedule, clips, "
              "product/Etsy videos, Facebook, distribution). Cron this daily.",
