@@ -1281,6 +1281,63 @@ class ContentEngine:
         img.convert("RGB").save(fp, "JPEG", quality=90)
         return str(fp)
 
+    class _NoSample(RuntimeError):
+        """A photo product has no real example image — never list it on a text card."""
+
+    def _personaliser_tier2_sample(self, product: Any, out_dir: Path) -> tuple[str, str]:
+        """A REAL example for a photo product: generate a sample subject with the
+        image model, run it through the product's first style, cache both on disk.
+        Returns ``(subject_path, portrait_path)``. Raises ``_NoSample`` if the
+        provider can't (no key, blocked, error) — the listing is then skipped
+        rather than published without a convincing image."""
+        from onassis.connectors.image_backend import ImageSpec, build_image_backend
+        out_dir.mkdir(parents=True, exist_ok=True)
+        subj = out_dir / f"{product.key}-subject.png"
+        port = out_dir / f"{product.key}-portrait.png"
+        if subj.exists() and port.exists():
+            return str(subj), str(port)
+        backend = build_image_backend(self.config)
+        if not hasattr(backend, "edit"):
+            raise self._NoSample("AI image provider not configured — cannot make a "
+                                 "real example for a photo product.")
+        subject_prompt = {
+            "pet-portrait": "A candid, natural photograph of a happy golden retriever "
+                            "sitting in soft window light, looking at the camera, "
+                            "shallow depth of field, no text.",
+        }.get(product.key, "A natural candid photograph of a smiling person in a "
+                           "linen shirt, soft daylight, neutral background, no text.")
+        try:
+            if not subj.exists():
+                subj.write_bytes(backend.generate(ImageSpec(
+                    kind="PRODUCT", width=1024, height=1024, prompt=subject_prompt)))
+            style = product.styles[0]["prompt"]
+            port.write_bytes(backend.edit(subj.read_bytes(), style, n=1)[0])
+        except Exception as exc:
+            raise self._NoSample(f"could not generate an example: {exc}") from exc
+        return str(subj), str(port)
+
+    def _personaliser_listing_images(self, product: Any, out_dir: Path) -> list[str]:
+        """The listing gallery, in rank order: (1) the product framed on a wall,
+        (2) the flat render — or, for photo products, the before→after strip —
+        (3) the how-it-works card. Shoppers see the *result* first."""
+        from PIL import Image
+
+        from onassis.wall_mockup import before_after, frame_on_wall
+        out_dir.mkdir(parents=True, exist_ok=True)
+        card = self._personaliser_sample_image(product, out_dir)   # flat render / card
+        if product.tier == 1:
+            art = Image.open(card)
+            wall = out_dir / f"{product.key}-wall.jpg"
+            frame_on_wall(art).save(wall, "JPEG", quality=90)
+            return [str(wall), card]
+        subj, port = self._personaliser_tier2_sample(product, out_dir)
+        portrait = Image.open(port)
+        wall = out_dir / f"{product.key}-wall.jpg"
+        frame_on_wall(portrait).save(wall, "JPEG", quality=90)
+        strip = out_dir / f"{product.key}-before-after.jpg"
+        before_after(Image.open(subj), portrait).save(strip, "JPEG", quality=90)
+        return [str(wall), str(strip), card]
+
     def _personaliser_access_pdf(self, product: Any, link: str, out_dir: Path) -> str:
         """The digital 'download' Etsy hands the buyer: a one-page card with their
         personaliser link and the steps. (The real product is made in the app.)"""
@@ -1357,6 +1414,9 @@ class ContentEngine:
                 row["status"] = "etsy_not_connected"
             else:
                 try:
+                    # Real gallery images first — a photo product with no genuine
+                    # example is skipped, never listed on a text card.
+                    images = self._personaliser_listing_images(p, out_dir)
                     desc = (f"{p.blurb}\n\nHOW IT WORKS\n1. Buy this listing.\n"
                             f"2. Your download is a card with your personal link.\n"
                             f"3. Open it, enter your Etsy order number, and "
@@ -1372,13 +1432,15 @@ class ContentEngine:
                     etsy.client.upload_listing_file(
                         lid, self._personaliser_access_pdf(p, link, out_dir),
                         name="Your personaliser link.pdf")
-                    etsy.client.upload_listing_image(
-                        lid, self._personaliser_sample_image(p, out_dir), rank=1)
+                    for rank, img in enumerate(images, start=1):
+                        etsy.client.upload_listing_image(lid, img, rank=rank)
                     self.db.insert_publication({
                         "platform": "etsy", "product_id": pid, "campaign_id": 0,
                         "listing_id": lid, "mode": "draft", "status": "draft"})
                     row.update(status="draft_created", listing_id=lid, link=link)
                     created += 1
+                except self._NoSample as exc:
+                    row.update(status="no_sample", error=str(exc)[:200])
                 except Exception as exc:
                     row.update(status="error", error=str(exc)[:200])
                     errors += 1

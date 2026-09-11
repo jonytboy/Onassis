@@ -52,7 +52,9 @@ _PUBLIC_EXACT = {
     "/pinterest/oauth/login",
     "/pinterest/oauth/callback",
 }
-_PUBLIC_PREFIXES = ("/exports", "/operations/api", "/operations/static")
+# /make is the buyer-facing Personaliser: shoppers arrive from an Etsy download
+# link with no API key, so it must be public (it gates access by Etsy order).
+_PUBLIC_PREFIXES = ("/exports", "/operations/api", "/operations/static", "/make")
 
 _DEFAULT_HEADERS = {
     "X-Content-Type-Options": "nosniff",
