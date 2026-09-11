@@ -414,10 +414,15 @@ def verify_order(config: Any, db: Any, order_ref: str) -> tuple[bool, str]:
     ref = (order_ref or "").strip()
     if not ref:
         return False, "Enter your Etsy order number."
-    pcfg = dict(getattr(config, "personaliser", None) or {})
-    demo = {str(c).strip().upper() for c in (pcfg.get("demo_codes") or ["DEMO"])}
-    if ref.upper() in demo:
-        return True, "demo"
+    # The DEMO code only works while "Personaliser test mode" is ON in Business
+    # Settings (dashboard toggle, OFF by default) — never a standing backdoor.
+    if ref.upper() == "DEMO":
+        from onassis.business_settings import BusinessSettings
+        try:
+            test_mode = bool(BusinessSettings(db, config).get("personaliser_test_mode"))
+        except Exception:
+            test_mode = False
+        return (True, "demo") if test_mode else (False, "That code isn't valid.")
     digits = "".join(ch for ch in ref if ch.isdigit())
     if not digits:
         return False, "That doesn't look like an Etsy order number."

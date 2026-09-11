@@ -60,6 +60,11 @@ SCHEMA: list[Setting] = [
             lambda c: bool((getattr(c, "launch", None) or {}).get("auto_go_live", False)),
             group="Approvals",
             help="Publish approved products to Etsy automatically."),
+    Setting("personaliser_test_mode", "Personaliser test mode", "bool",
+            lambda c: bool(_cfg(c, "personaliser", "test_mode", False)),
+            group="Personaliser",
+            help="Accept the order code DEMO to try the buyer flow without a "
+                 "purchase. Turn OFF before going live."),
     Setting("marketing_enabled", "Marketing", "bool",
             lambda c: bool(_cfg(c, "marketing", "enabled", True)),
             group="Channels", help="Generate marketing content."),

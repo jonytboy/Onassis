@@ -89,7 +89,12 @@ def test_upscale_for_print_reaches_target_long_edge():
 
 # --- Unlocking by Etsy order --------------------------------------------
 
-def test_verify_order_demo_code_and_empty(config, db):
+def test_verify_order_demo_code_only_in_test_mode(config, db):
+    # OFF by default: DEMO is not a backdoor.
+    ok, _ = verify_order(config, db, "DEMO")
+    assert ok is False
+    # The dashboard toggle turns it on for trying the buyer flow.
+    config.personaliser = {"test_mode": True}
     assert verify_order(config, db, "DEMO") == (True, "demo")
     ok, why = verify_order(config, db, "")
     assert ok is False and "order number" in why
@@ -122,7 +127,8 @@ def client(config, db, tmp_path):
 
     from onassis.personaliser_web import build_personaliser_router
     from fastapi import FastAPI
-    config.personaliser = {"out_dir": str(tmp_path / "out"), "render_px": 400}
+    config.personaliser = {"out_dir": str(tmp_path / "out"), "render_px": 400,
+                           "test_mode": True}                # DEMO unlock for tests
     app = FastAPI()
     app.include_router(build_personaliser_router(config, db))
     return TestClient(app)
