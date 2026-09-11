@@ -499,3 +499,62 @@ def test_set_price_resolves_readiness_when_missing(monkeypatch):
     client.set_price_and_quantity(123, price=19.99)
     off = captured["json"]["products"][0]["offerings"][0]
     assert off["readiness_state_id"] == 77
+
+
+def test_create_draft_download_omits_physical_fields(monkeypatch):
+    """A digital (download) listing must send type='download' and MUST NOT carry
+    shipping_profile_id/readiness_state_id (Etsy rejects them) — nor hit the API
+    to resolve them."""
+    from onassis.connectors import etsy_client as ec
+
+    captured = {}
+
+    class _Resp:
+        status_code = 201
+
+        def json(self):
+            return {"listing_id": 5555}
+
+    def _fake_post(url, headers=None, json=None, timeout=None, **_):
+        captured["json"] = json
+        return _Resp()
+
+    def _boom(*a, **k):
+        raise AssertionError("must not resolve physical fields for a download")
+
+    monkeypatch.setattr(ec.httpx, "post", _fake_post)
+    client = ec.EtsyDraftClient(api_key="k", shop_id="9", access_token="t")
+    monkeypatch.setattr(client, "resolve_shipping_profile_id", _boom)
+    monkeypatch.setattr(client, "resolve_readiness_state_id", _boom)
+    client.create_draft({"title": "T", "description": "D", "price": 5.0,
+                         "type": "download", "tags": ["printable wall art"]})
+    body = captured["json"]
+    assert body["type"] == "download"
+    assert "shipping_profile_id" not in body
+    assert "readiness_state_id" not in body
+
+
+def test_upload_listing_file_posts_multipart(monkeypatch, tmp_path):
+    """The digital file is POSTed as multipart with a buyer-facing name + rank."""
+    from onassis.connectors import etsy_client as ec
+
+    f = tmp_path / "printable_set.zip"
+    f.write_bytes(b"PK\x03\x04zipbytes")
+    captured = {}
+
+    class _Resp:
+        status_code = 201
+
+        def json(self):
+            return {"listing_file_id": 42}
+
+    def _fake_post(url, headers=None, data=None, files=None, timeout=None, **_):
+        captured.update(url=url, data=data, has_file="file" in (files or {}))
+        return _Resp()
+
+    monkeypatch.setattr(ec.httpx, "post", _fake_post)
+    client = ec.EtsyDraftClient(api_key="k", shop_id="9", access_token="t")
+    client.upload_listing_file(777, str(f), name="My Prints.zip", rank=1)
+    assert captured["url"].endswith("/listings/777/files")
+    assert captured["has_file"] is True
+    assert captured["data"]["name"] == "My Prints.zip" and captured["data"]["rank"] == 1

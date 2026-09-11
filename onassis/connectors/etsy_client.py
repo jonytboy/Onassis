@@ -264,23 +264,14 @@ class EtsyDraftClient(EtsyClient):
     """
 
     def create_draft(self, listing: dict[str, Any]) -> dict[str, Any]:
-        """Create a draft listing on Etsy and return ``{listing_id, ...}``."""
-        # Etsy requires shipping_profile_id as an int for physical listings. Use
-        # the configured value (coerced to int); when none is configured, resolve
-        # it automatically from the shop's shipping profiles.
-        configured = listing.get("shipping_profile_id")
-        shipping_profile_id = (
-            int(configured) if configured not in (None, "")
-            else self.resolve_shipping_profile_id()
-        )
-        # Etsy also requires readiness_state_id for physical listings; use the
-        # configured value or resolve it from the shop (same pattern).
-        configured_rs = listing.get("readiness_state_id")
-        readiness_state_id = (
-            int(configured_rs) if configured_rs not in (None, "")
-            else self.resolve_readiness_state_id()
-        )
-        body = {
+        """Create a draft listing on Etsy and return ``{listing_id, ...}``.
+
+        ``listing['type']`` may be ``'physical'`` (default) or ``'download'`` for
+        an instant-download digital product. Digital listings must NOT carry a
+        shipping profile or readiness state (Etsy rejects them), so those fields
+        — and the API calls that resolve them — are skipped for downloads."""
+        is_download = str(listing.get("type", "physical")).lower() == "download"
+        body: dict[str, Any] = {
             "quantity": listing.get("quantity", 1),
             "title": listing["title"],
             "description": listing["description"],
@@ -288,14 +279,24 @@ class EtsyDraftClient(EtsyClient):
             "who_made": listing.get("who_made", "i_did"),
             "when_made": listing.get("when_made", "made_to_order"),
             "taxonomy_id": listing.get("taxonomy_id"),
-            "shipping_profile_id": shipping_profile_id,
-            "readiness_state_id": readiness_state_id,
             "tags": listing.get("tags", []),
             # Etsy allows only letters/numbers/whitespace in materials.
             "materials": _sanitise_materials(listing.get("materials")),
-            "type": "physical",
+            "type": "download" if is_download else "physical",
             "state": "draft",  # NEVER publish live from here
         }
+        if not is_download:
+            # Physical-only: Etsy requires shipping_profile_id and
+            # readiness_state_id (as ints). Use configured values, else resolve
+            # them from the shop. Digital downloads must omit both entirely.
+            configured = listing.get("shipping_profile_id")
+            body["shipping_profile_id"] = (
+                int(configured) if configured not in (None, "")
+                else self.resolve_shipping_profile_id())
+            configured_rs = listing.get("readiness_state_id")
+            body["readiness_state_id"] = (
+                int(configured_rs) if configured_rs not in (None, "")
+                else self.resolve_readiness_state_id())
         url = f"{self.base_url}/shops/{self.resolve_shop_id()}/listings"
         # Send JSON so integer fields keep their type — form-urlencoded stringifies
         # every value, which makes Etsy reject shipping_profile_id as a string.
@@ -453,6 +454,36 @@ class EtsyDraftClient(EtsyClient):
                       resp.status_code, detail)
             raise EtsyApiError(
                 f"Etsy uploadListingImage returned HTTP {resp.status_code}: {detail}"
+            )
+        return resp.json()
+
+    def upload_listing_file(
+        self, listing_id: int | str, file_path: str, *, name: str | None = None,
+        rank: int = 1,
+    ) -> dict[str, Any]:
+        """Attach one downloadable file to a digital listing (uploadListingFile).
+
+        POST multipart/form-data to
+        ``/shops/{shop_id}/listings/{listing_id}/files``. ``name`` is the buyer-
+        facing file name (defaults to the file's own name); ``rank`` orders the
+        files. Only valid on ``type='download'`` listings.
+        """
+        from pathlib import Path
+
+        url = (f"{self.base_url}/shops/{self.resolve_shop_id()}"
+               f"/listings/{listing_id}/files")
+        path = Path(file_path)
+        data: dict[str, Any] = {"name": (name or path.name)[:255], "rank": int(rank)}
+        with path.open("rb") as fh:
+            files = {"file": (path.name, fh, "application/octet-stream")}
+            resp = httpx.post(url, headers=self._headers(), data=data, files=files,
+                              timeout=self.timeout)
+        if resp.status_code >= 400:
+            detail = _response_detail(resp)
+            log.error("Etsy uploadListingFile failed: HTTP %s\n%s",
+                      resp.status_code, detail)
+            raise EtsyApiError(
+                f"Etsy uploadListingFile returned HTTP {resp.status_code}: {detail}"
             )
         return resp.json()
 
