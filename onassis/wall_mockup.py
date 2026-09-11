@@ -60,6 +60,48 @@ def frame_on_wall(art: Any, *, size: int = 1600, art_frac: float = 0.62,
     return bg
 
 
+def stationery_flatlay(card: Any, *, size: int = 1600, linen=(236, 231, 221),
+                       kraft=(199, 178, 148), flap=(184, 162, 132)):
+    """A card lying on linen with an envelope behind it — the stationery mockup
+    (an invitation is a card, not wall art). Pure PIL fallback for when the
+    photographic scene isn't available."""
+    from PIL import Image, ImageDraw, ImageFilter
+
+    W = H = size
+    bg = Image.new("RGB", (W, H), linen)
+    d = ImageDraw.Draw(bg)
+    for y in range(0, H, 3):                                   # faint weave
+        d.line([0, y, W, y], fill=tuple(int(v * 0.985) for v in linen))
+    # Envelope (behind, offset down-right), with a flap.
+    ex, ey, ew, eh = int(W * 0.30), int(H * 0.36), int(W * 0.50), int(H * 0.36)
+    d.rectangle([ex, ey, ex + ew, ey + eh], fill=kraft)
+    d.polygon([(ex, ey), (ex + ew, ey), (ex + ew / 2, ey + eh * 0.55)], fill=flap)
+    # Card, slightly rotated, with a soft shadow.
+    card = card.convert("RGB")
+    ch = int(H * 0.60)
+    cw = int(card.width * ch / card.height)
+    card = card.resize((cw, ch), Image.LANCZOS)
+    rot = card.rotate(-5, expand=True, fillcolor=(0, 0, 0))
+    mask = Image.new("L", card.size, 255).rotate(-5, expand=True)
+    cx, cy = int(W * 0.24), int(H * 0.16)
+    shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    sh = Image.new("RGBA", rot.size, (0, 0, 0, 0))
+    sh.paste((0, 0, 0, 95), (0, 0), mask)
+    shadow.paste(sh, (cx + int(size * 0.012), cy + int(size * 0.02)), sh)
+    shadow = shadow.filter(ImageFilter.GaussianBlur(int(size * 0.018)))
+    bg = Image.alpha_composite(bg.convert("RGBA"), shadow).convert("RGB")
+    bg.paste(rot, (cx, cy), mask)
+    # A gold sprig in the corner.
+    d = ImageDraw.Draw(bg)
+    gx, gy = int(W * 0.80), int(H * 0.84)
+    d.line([gx - W * 0.10, gy, gx, gy - H * 0.06], fill=(184, 146, 84), width=max(2, W // 500))
+    for t in (0.25, 0.5, 0.75):
+        px, py = gx - W * 0.10 * (1 - t), gy - H * 0.06 * t
+        d.ellipse([px - W * 0.012, py - H * 0.006, px + W * 0.012, py + H * 0.006],
+                  fill=(184, 146, 84))
+    return bg
+
+
 def before_after(photo: Any, result: Any, *, size: int = 1600,
                  labels=("your photo", "your portrait")):
     """A side-by-side strip: the original photo next to the finished portrait."""

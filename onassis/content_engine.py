@@ -1316,27 +1316,42 @@ class ContentEngine:
             raise self._NoSample(f"could not generate an example: {exc}") from exc
         return str(subj), str(port)
 
+    def _personaliser_hero(self, product: Any, art: Any, out_dir: Path):
+        """The listing's main image, matched to what the product IS: a framed
+        print in a photographic room for wall art (living room / nursery), a
+        flat-lay with an envelope for stationery. Photographic scenes come from
+        the image model once and are cached; drawn fallbacks otherwise."""
+        from onassis.connectors.image_backend import build_image_backend
+        from onassis.room_mockup import room_mockup
+        from onassis.wall_mockup import frame_on_wall, stationery_flatlay
+        backend = build_image_backend(self.config)
+        cache = self._exports_base() / "personaliser" / "mockups"
+        scene = "stationery" if product.mockup == "stationery" else product.scene
+        img = room_mockup(backend, art, cache, scene)
+        if img is None:
+            img = (stationery_flatlay(art) if product.mockup == "stationery"
+                   else frame_on_wall(art))
+        fp = out_dir / f"{product.key}-mockup.jpg"
+        img.save(fp, "JPEG", quality=90)
+        return str(fp)
+
     def _personaliser_listing_images(self, product: Any, out_dir: Path) -> list[str]:
-        """The listing gallery, in rank order: (1) the product framed on a wall,
-        (2) the flat render — or, for photo products, the before→after strip —
-        (3) the how-it-works card. Shoppers see the *result* first."""
+        """The listing gallery, in rank order: (1) the product as a buyer would
+        own it — in a room, or as a card on linen — (2) the flat render, or for
+        photo products the before→after strip, (3) the how-it-works card."""
         from PIL import Image
 
-        from onassis.wall_mockup import before_after, frame_on_wall
+        from onassis.wall_mockup import before_after
         out_dir.mkdir(parents=True, exist_ok=True)
         card = self._personaliser_sample_image(product, out_dir)   # flat render / card
         if product.tier == 1:
-            art = Image.open(card)
-            wall = out_dir / f"{product.key}-wall.jpg"
-            frame_on_wall(art).save(wall, "JPEG", quality=90)
-            return [str(wall), card]
+            return [self._personaliser_hero(product, Image.open(card), out_dir), card]
         subj, port = self._personaliser_tier2_sample(product, out_dir)
         portrait = Image.open(port)
-        wall = out_dir / f"{product.key}-wall.jpg"
-        frame_on_wall(portrait).save(wall, "JPEG", quality=90)
+        hero = self._personaliser_hero(product, portrait, out_dir)
         strip = out_dir / f"{product.key}-before-after.jpg"
         before_after(Image.open(subj), portrait).save(strip, "JPEG", quality=90)
-        return [str(wall), str(strip), card]
+        return [hero, str(strip), card]
 
     def _personaliser_access_pdf(self, product: Any, link: str, out_dir: Path) -> str:
         """The digital 'download' Etsy hands the buyer: a one-page card with their

@@ -199,6 +199,17 @@ def _draw_caption(draw, lines, W, top, H, sky, accent):
     from PIL import ImageFont
 
     def font(px, bold=False):
+        # Prefer the bundled Cormorant Garamond (OFL) for a proper display serif.
+        bundled = Path(__file__).parent / "data" / "fonts" / "CormorantGaramond-Variable.ttf"
+        try:
+            f = ImageFont.truetype(str(bundled), int(px * 1.18))
+            try:
+                f.set_variation_by_name("SemiBold" if bold else "Medium")
+            except Exception:
+                pass
+            return f
+        except Exception:
+            pass
         for name in (("DejaVuSerif-Bold.ttf",) if bold else ()) + (
                 "DejaVuSerif.ttf", "DejaVuSans.ttf"):
             try:

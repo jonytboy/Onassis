@@ -49,7 +49,7 @@ def eng(config, db, tmp_path):
 def test_tier1_gallery_leads_with_a_framed_wall_mockup(eng, tmp_path):
     imgs = eng._personaliser_listing_images(PRODUCTS["place-poster"], tmp_path / "L")
     assert len(imgs) == 2
-    assert imgs[0].endswith("-wall.jpg") and Path(imgs[0]).exists()
+    assert imgs[0].endswith("-mockup.jpg") and Path(imgs[0]).exists()
     assert Path(imgs[1]).exists()
 
 
@@ -66,7 +66,7 @@ def test_publish_creates_tier1_drafts_and_skips_tier2_without_examples(eng):
         assert by[key]["status"] == "draft_created", by[key]
         lid = by[key]["listing_id"]
         ranks = sorted((rk, p) for l, p, rk in eng._seo_etsy.images if l == lid)
-        assert ranks and ranks[0][0] == 1 and ranks[0][1].endswith("-wall.jpg")
+        assert ranks and ranks[0][0] == 1 and ranks[0][1].endswith("-mockup.jpg")
     # No photo product is published on a text card.
     for key in ("pet-portrait", "renaissance-portrait", "vintage-photo"):
         assert by[key]["status"] == "no_sample", by[key]

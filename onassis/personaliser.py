@@ -24,7 +24,11 @@ import io
 import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
+
+_FONT_DIR = Path(__file__).parent / "data" / "fonts"
+SAGE = (140, 158, 132)
 
 from onassis.logger import get_logger
 
@@ -46,6 +50,8 @@ class Product:
     fields: list[dict[str, Any]] = field(default_factory=list)
     styles: list[dict[str, str]] = field(default_factory=list)   # tier 2
     price: float = 9.0
+    mockup: str = "wall"          # "wall" (framed print in a room) | "stationery" (flat lay)
+    scene: str = "living"         # room scene for wall mockups: living | nursery
 
 
 PRODUCTS: dict[str, Product] = {
@@ -80,7 +86,7 @@ PRODUCTS: dict[str, Product] = {
             {"key": "weight", "label": "Weight", "type": "text", "placeholder": "3.4 kg"},
             {"key": "length", "label": "Length", "type": "text", "placeholder": "51 cm"},
             {"key": "place", "label": "Place", "type": "text", "placeholder": "Bristol"},
-        ], price=9.0),
+        ], price=9.0, scene="nursery"),
     "invite": Product(
         "invite", "Wedding & Party Invitation", 1,
         "An elegant printable invitation with your names, date, venue and a personal "
@@ -92,7 +98,7 @@ PRODUCTS: dict[str, Product] = {
             {"key": "time", "label": "Time", "type": "time"},
             {"key": "venue", "label": "Venue", "type": "text", "placeholder": "Villa Cimbrone, Ravello"},
             {"key": "message", "label": "A line (optional)", "type": "text", "placeholder": "dinner, dancing & the sea"},
-        ], price=9.0),
+        ], price=9.0, mockup="stationery"),
     "pet-portrait": Product(
         "pet-portrait", "Custom Pet Portrait", 2,
         "Upload a photo of your pet and get a painterly portrait of *them* — likeness, "
@@ -135,7 +141,20 @@ PRODUCTS: dict[str, Product] = {
 # --- Shared drawing helpers -------------------------------------------
 
 def _font(px: int, bold: bool = False):
+    """Cormorant Garamond (bundled, OFL) — a proper display serif; SemiBold for
+    ``bold``. Cormorant has a small x-height, so sizes are scaled up a touch.
+    Falls back to DejaVu when the bundled font is missing."""
     from PIL import ImageFont
+    p = _FONT_DIR / "CormorantGaramond-Variable.ttf"
+    try:
+        f = ImageFont.truetype(str(p), max(8, int(px * 1.18)))
+        try:
+            f.set_variation_by_name("SemiBold" if bold else "Medium")
+        except Exception:
+            pass
+        return f
+    except Exception:
+        pass
     names = (("DejaVuSerif-Bold.ttf",) if bold else ()) + ("DejaVuSerif.ttf", "DejaVuSans.ttf")
     for n in names:
         try:
@@ -143,6 +162,60 @@ def _font(px: int, bold: bool = False):
         except Exception:
             continue
     return ImageFont.load_default()
+
+
+def _italic(px: int):
+    from PIL import ImageFont
+    p = _FONT_DIR / "CormorantGaramond-Italic-Variable.ttf"
+    try:
+        f = ImageFont.truetype(str(p), max(8, int(px * 1.18)))
+        try:
+            f.set_variation_by_name("Medium Italic")
+        except Exception:
+            pass
+        return f
+    except Exception:
+        return _font(px)
+
+
+def _script(px: int):
+    """Great Vibes (bundled, OFL) — the calligraphic face for names on stationery."""
+    from PIL import ImageFont
+    try:
+        return ImageFont.truetype(str(_FONT_DIR / "GreatVibes-Regular.ttf"), max(8, int(px)))
+    except Exception:
+        return _font(px, bold=True)
+
+
+def _olive_branch(d, cx: float, cy: float, length: float, *, flip: bool = False,
+                  stem=SAGE, leaf=SAGE):
+    """A gently curved olive sprig: a stem with alternating pointed leaves."""
+    n = 40
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        x = cx - length / 2 + t * length
+        y = cy + (-1 if flip else 1) * math.sin(t * math.pi) * length * 0.08
+        pts.append((x, y))
+    d.line(pts, fill=stem, width=max(1, int(length / 140)))
+    leaf_len, leaf_w = length * 0.11, length * 0.035
+    for i in range(3, n - 2, 5):
+        x, y = pts[i]
+        # local tangent → leaf angle, alternating sides
+        dx, dy = pts[i + 1][0] - pts[i - 1][0], pts[i + 1][1] - pts[i - 1][1]
+        ang = math.atan2(dy, dx) + (0.75 if (i // 5) % 2 == 0 else -0.75)
+        poly = []
+        for k in range(13):
+            u = k / 12
+            lx, ly = u * leaf_len, math.sin(u * math.pi) * leaf_w
+            poly.append((x + lx * math.cos(ang) - ly * math.sin(ang),
+                         y + lx * math.sin(ang) + ly * math.cos(ang)))
+        for k in range(11, 0, -1):
+            u = k / 12
+            lx, ly = u * leaf_len, -math.sin(u * math.pi) * leaf_w
+            poly.append((x + lx * math.cos(ang) - ly * math.sin(ang),
+                         y + lx * math.sin(ang) + ly * math.cos(ang)))
+        d.polygon(poly, fill=leaf)
 
 
 def _fit_font(draw, text: str, max_w: float, px: int, bold: bool = False):
@@ -305,22 +378,31 @@ def render_invite(fields: dict[str, Any], size: int = 2000):
     m2 = m + W * 0.012
     d.rectangle([m2, m2, W - m2, H - m2], outline=GOLD, width=max(1, W // 900))
     names = (fields.get("names") or "").strip()
-    f_names = _fit_font(d, names, W * 0.78, int(W / 9), bold=True)
+    # Calligraphic names, sized to fit.
+    px = int(W / 6)
+    f_names = _script(px)
+    while d.textlength(names, font=f_names) > W * 0.8 and px > 20:
+        px = int(px * 0.92)
+        f_names = _script(px)
     when = _fmt_date(fields.get("date", ""))
     if fields.get("time"):
         when += f"  ·  {fields['time']}"
+    sprig = W * 0.34
     items: list = [
-        ("text", "together with their families", _font(int(W / 32)), SEA, W * 0.02),
-        ("text", names, f_names, INK, W * 0.01),
+        ("custom", sprig * 0.12, W * 0.03,
+         lambda y: _olive_branch(d, W / 2, y + sprig * 0.06, sprig)),
+        ("text", "together with their families", _italic(int(W / 30)), SEA, W * 0.02),
+        ("text", names, f_names, INK, W * 0.0),
         ("text", fields.get("event") or "invite you to celebrate",
-         _font(int(W / 26)), INK, W * 0.03),
-        ("rule", W * 0.05),
-        ("text", when, _font(int(W / 22), bold=True), INK, 0),
+         _italic(int(W / 24)), INK, W * 0.045),
+        ("text", when, _font(int(W / 20), bold=True), INK, 0),
     ]
     if fields.get("venue"):
-        items.append(("text", fields["venue"], _font(int(W / 28)), SEA, W * 0.04))
+        items.append(("text", fields["venue"], _font(int(W / 26)), SEA, W * 0.035))
     if fields.get("message"):
-        items.append(("text", fields["message"], _font(int(W / 32)), INK, 0))
+        items.append(("text", fields["message"], _italic(int(W / 30)), INK, W * 0.03))
+    items.append(("custom", sprig * 0.12, 0,
+                  lambda y: _olive_branch(d, W / 2, y + sprig * 0.06, sprig, flip=True)))
     _stack(d, items, W, H, centre_frac=0.5)
     return img
 
