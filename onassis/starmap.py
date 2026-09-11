@@ -1,43 +1,31 @@
 """Personalised star-map generator — the night sky for a date, time and place.
 
 Give it *when* (UTC) and *where* (lat/lon) and it computes the real positions of
-the stars overhead at that moment and renders a print-ready poster. This is the
-computed, personalised product the machine does better than a human: every order
-is a unique, accurate sky — a wedding night, a birth, a first date.
+the stars overhead at that moment and renders a print-ready poster: ~5,000 stars
+to magnitude 6 plus the constellation figures, projected onto the visible dome.
+This is the computed, personalised product the machine does better than a human —
+every order is a unique, accurate sky (a wedding night, a birth, a first date).
 
-Pure Python maths (no numpy) + PIL rendering (no matplotlib), so it runs anywhere
-the app already runs. Star positions come from a catalogue file when present
-(HYG format: columns ``ra`` in hours, ``dec`` in degrees, ``mag``) and otherwise
-from a small built-in bright-star set so it always produces *something*.
+Pure-Python astronomy (no numpy) + PIL rendering (no matplotlib), supersampled
+for smooth stars and lines. Star/constellation data ships in ``onassis/data``.
 """
 
 from __future__ import annotations
 
-import csv
+import json
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
 
-# --- A small built-in bright-star fallback (J2000: ra°, dec°, magnitude) ------
-# Enough to render a recognisable sky (Orion, the Plough, bright stars) when no
-# full catalogue file is installed. Production uses the full HYG catalogue.
+_DATA_DIR = Path(__file__).parent / "data"
+
+# Small built-in bright-star fallback (J2000 ra°, dec°, mag) if data is missing.
 _BRIGHT_STARS: list[tuple[float, float, float]] = [
-    (101.287, -16.716, -1.46), (95.988, -52.696, -0.74), (213.915, 19.182, -0.05),
-    (279.234, 38.784, 0.03), (79.172, 45.998, 0.08), (78.634, -8.202, 0.13),
-    (114.825, 5.225, 0.34), (88.793, 7.407, 0.42), (24.428, -57.237, 0.46),
-    (297.696, 8.868, 0.77), (68.980, 16.509, 0.85), (247.352, -26.432, 0.96),
-    (201.298, -11.161, 0.97), (116.329, 28.026, 1.14), (344.413, -29.622, 1.16),
-    (310.358, 45.280, 1.25), (152.093, 11.967, 1.35), (186.650, -63.099, 0.58),
-    (191.930, -59.688, 1.63), (210.956, -60.373, 0.61), (85.190, -1.943, 1.77),
-    (84.053, -1.202, 1.69), (83.002, -0.299, 2.23), (165.932, 61.751, 1.79),
-    (165.460, 56.382, 2.37), (183.856, 57.033, 2.44), (193.507, 55.960, 3.31),
-    (200.981, 54.925, 1.77), (206.885, 49.313, 2.27), (37.954, 89.264, 1.98),
-    (51.081, 49.861, 1.79), (177.265, 14.572, 2.14), (146.463, 23.774, 3.88),
-    (222.676, -16.042, 2.75), (263.402, -37.104, 1.62), (276.043, -34.385, 1.85),
-    (306.412, 40.257, 1.25), (332.058, -46.961, 1.74), (326.046, 9.875, 2.39),
-    (10.897, 35.620, 2.07), (2.097, 29.090, 2.06), (17.433, 35.621, 2.27),
+    (101.287, -16.716, -1.46), (279.234, 38.784, 0.03), (78.634, -8.202, 0.13),
+    (88.793, 7.407, 0.42), (213.915, 19.182, -0.05), (297.696, 8.868, 0.77),
+    (37.954, 89.264, 1.98), (165.932, 61.751, 1.79), (85.190, -1.943, 1.77),
+    (84.053, -1.202, 1.69), (83.002, -0.299, 2.23),
 ]
 
 
@@ -47,6 +35,8 @@ class SkyStar:
     dec_deg: float
     mag: float
 
+
+# --- Astronomy ---------------------------------------------------------------
 
 def julian_date(dt: datetime) -> float:
     """Julian Date for a UTC datetime (Gregorian calendar)."""
@@ -64,9 +54,8 @@ def julian_date(dt: datetime) -> float:
 
 
 def local_sidereal_time(dt: datetime, lon_deg: float) -> float:
-    """Local apparent sidereal time in degrees (0–360). ``lon_deg`` east-positive."""
-    jd = julian_date(dt)
-    d = jd - 2451545.0
+    """Local sidereal time in degrees (0–360). ``lon_deg`` east-positive."""
+    d = julian_date(dt) - 2451545.0
     t = d / 36525.0
     gmst = (280.46061837 + 360.98564736629 * d
             + 0.000387933 * t * t - (t * t * t) / 38710000.0)
@@ -75,9 +64,8 @@ def local_sidereal_time(dt: datetime, lon_deg: float) -> float:
 
 def equatorial_to_altaz(ra_deg: float, dec_deg: float, lst_deg: float,
                         lat_deg: float) -> tuple[float, float]:
-    """Convert a star's (RA, Dec) to (altitude, azimuth) in degrees for an
-    observer at ``lat_deg`` with local sidereal time ``lst_deg``. Azimuth is
-    measured from North, increasing eastward."""
+    """(RA, Dec) → (altitude, azimuth) in degrees for an observer at ``lat_deg``
+    with local sidereal time ``lst_deg``. Azimuth from North, increasing east."""
     ha = math.radians((lst_deg - ra_deg) % 360.0)
     dec = math.radians(dec_deg)
     lat = math.radians(lat_deg)
@@ -90,87 +78,145 @@ def equatorial_to_altaz(ra_deg: float, dec_deg: float, lst_deg: float,
     cos_az = (math.sin(dec) - math.sin(alt) * math.sin(lat)) / (cos_alt * math.cos(lat))
     cos_az = max(-1.0, min(1.0, cos_az))
     az = math.degrees(math.acos(cos_az))
-    if math.sin(ha) > 0:            # east/west disambiguation
+    if math.sin(ha) > 0:
         az = 360.0 - az
     return math.degrees(alt), az
 
 
-def load_catalog(path: str | None) -> list[SkyStar]:
-    """Load stars from an HYG-format CSV (``ra`` hours, ``dec`` deg, ``mag``),
-    keeping the naked-eye set (mag ≤ 6.5). Falls back to the built-in bright
-    stars when no usable file is given."""
-    if path and Path(path).exists():
-        stars: list[SkyStar] = []
-        with open(path, newline="") as fh:
-            for row in csv.DictReader(fh):
-                try:
-                    mag = float(row.get("mag", ""))
-                    if mag > 6.5:
-                        continue
-                    stars.append(SkyStar(float(row["ra"]) * 15.0,   # hours→deg
-                                         float(row["dec"]), mag))
-                except (TypeError, ValueError, KeyError):
-                    continue
-        if stars:
-            return stars
+# --- Data --------------------------------------------------------------------
+
+def load_stars(path: str | None = None) -> list[SkyStar]:
+    """Load the star catalogue (GeoJSON: coordinates ``[ra°, dec°]``, ``mag``).
+    Defaults to the bundled ``stars.6.json``; falls back to the built-in set."""
+    p = Path(path) if path else _DATA_DIR / "stars.6.json"
+    try:
+        data = json.loads(p.read_text())
+        out: list[SkyStar] = []
+        for f in data.get("features", []):
+            ra, dec = f["geometry"]["coordinates"]
+            mag = float(f["properties"].get("mag", 99))
+            out.append(SkyStar(float(ra) % 360.0, float(dec), mag))
+        if out:
+            return out
+    except Exception:
+        pass
     return [SkyStar(ra, dec, mag) for ra, dec, mag in _BRIGHT_STARS]
 
 
-def render_star_map(dt: datetime, lat: float, lon: float, *, size: int = 2400,
-                    catalog_path: str | None = None,
-                    caption: Iterable[str] | None = None,
-                    sky=(11, 18, 38), ink=(245, 242, 233)):
-    """Render the sky over (lat, lon) at UTC ``dt`` as a print-ready poster.
+def load_constellation_lines(path: str | None = None) -> list[list[tuple[float, float]]]:
+    """Load constellation stick-figures as a list of polylines of ``(ra°, dec°)``."""
+    p = Path(path) if path else _DATA_DIR / "constellations.lines.json"
+    lines: list[list[tuple[float, float]]] = []
+    try:
+        data = json.loads(p.read_text())
+        for f in data.get("features", []):
+            geom = f.get("geometry", {})
+            for seg in geom.get("coordinates", []):
+                lines.append([(float(pt[0]) % 360.0, float(pt[1])) for pt in seg])
+    except Exception:
+        return []
+    return lines
 
-    Returns a PIL ``Image``. ``caption`` lines (place, date, coordinates) are
-    drawn beneath the disc — the personalisation. ``sky`` is the disc colour,
-    ``ink`` the paper/star colour."""
+
+# --- Rendering ---------------------------------------------------------------
+
+def render_star_map(dt: datetime, lat: float, lon: float, *, size: int = 2000,
+                    caption: list[str] | None = None, constellations: bool = True,
+                    supersample: int = 2,
+                    paper=(244, 241, 233), sky=(11, 19, 36),
+                    star=(247, 246, 240), line=(90, 106, 140)):
+    """Render the sky over (lat, lon) at UTC ``dt`` as a print-ready poster
+    (PIL Image). ``caption`` lines (place, date, coordinates, words) go beneath
+    the disc. Supersampled then downscaled for smooth stars and lines."""
     from PIL import Image, ImageDraw
 
-    W = size
-    H = int(size * 1.4)                                  # portrait poster
-    img = Image.new("RGB", (W, H), ink)
+    ss = max(1, int(supersample))
+    W, H = size * ss, int(size * 1.4) * ss
+    img = Image.new("RGB", (W, H), paper)
     draw = ImageDraw.Draw(img)
 
-    margin = int(W * 0.08)
-    disc = W - 2 * margin
-    R = disc / 2
-    cx = W / 2
-    cy = margin + R
+    margin = int(W * 0.075)
+    R = (W - 2 * margin) / 2
+    cx, cy = W / 2, margin + R
     draw.ellipse([cx - R, cy - R, cx + R, cy + R], fill=sky)
 
     lst = local_sidereal_time(dt, lon)
-    for s in load_catalog(catalog_path):
-        alt, az = equatorial_to_altaz(s.ra_deg, s.dec_deg, lst, lat)
-        if alt < 0:                                      # below the horizon
-            continue
-        r = (90.0 - alt) / 90.0 * R                      # zenith centre, horizon edge
-        a = math.radians(az)
-        x = cx + r * math.sin(a)
-        y = cy - r * math.cos(a)
-        rad = max(0.6, (2.6 - s.mag) * (W / 1400))       # brighter = bigger
-        draw.ellipse([x - rad, y - rad, x + rad, y + rad], fill=ink)
+    la = lat
 
-    # thin border ring
-    ring = max(2, int(W / 600))
-    draw.ellipse([cx - R, cy - R, cx + R, cy + R], outline=ink, width=ring)
+    def project(ra, dec):
+        alt, az = equatorial_to_altaz(ra, dec, lst, la)
+        if alt < -2:
+            return None
+        r = (90.0 - alt) / 90.0 * R
+        a = math.radians(az)
+        # Looking UP: North at top, East to the left (sky is mirrored vs a map).
+        return (cx - r * math.sin(a), cy - r * math.cos(a), alt)
+
+    # Constellation lines first (under the stars), only segments fully up.
+    if constellations:
+        lw = max(1, int(W / 1400))
+        for poly in load_constellation_lines():
+            prev = None
+            for ra, dec in poly:
+                cur = project(ra, dec)
+                if prev and cur and prev[2] > 0 and cur[2] > 0:
+                    draw.line([prev[0], prev[1], cur[0], cur[1]], fill=line, width=lw)
+                prev = cur
+
+    # Stars, brightest largest; the brightest get a soft halo.
+    for s in load_stars():
+        pr = project(s.ra_deg, s.dec_deg)
+        if not pr or pr[2] < 0:
+            continue
+        x, y, _ = pr
+        rad = max(0.5 * ss, (6.3 - s.mag) * 0.42 * ss)
+        if s.mag < 1.6:                                  # bright-star glow
+            halo = rad * 2.6
+            draw.ellipse([x - halo, y - halo, x + halo, y + halo],
+                         fill=_blend(sky, star, 0.18))
+        draw.ellipse([x - rad, y - rad, x + rad, y + rad], fill=star)
+
+    # Double border ring.
+    rw = max(1, int(W / 900))
+    draw.ellipse([cx - R, cy - R, cx + R, cy + R], outline=star, width=rw)
+    inset = R * 0.965
+    draw.ellipse([cx - inset, cy - inset, cx + inset, cy + inset],
+                 outline=_blend(paper, star, 0.5), width=max(1, rw // 2))
 
     if caption:
-        _draw_caption(draw, list(caption), W, cy + R, H, sky)
+        _draw_caption(draw, caption, W, cy + R, H, sky, star)
+
+    if ss > 1:
+        img = img.resize((size, int(size * 1.4)), Image.LANCZOS)
     return img
 
 
-def _draw_caption(draw, lines, W, top, H, colour):
+def _blend(a, b, t):
+    return tuple(int(round(a[i] + (b[i] - a[i]) * t)) for i in range(3))
+
+
+def _draw_caption(draw, lines, W, top, H, sky, accent):
     from PIL import ImageFont
 
-    try:
-        big = ImageFont.truetype("DejaVuSerif.ttf", int(W / 22))
-        small = ImageFont.truetype("DejaVuSerif.ttf", int(W / 40))
-    except Exception:
-        big = small = ImageFont.load_default()
-    y = top + (H - top) * 0.18
-    for i, line in enumerate(lines):
-        font = big if i == 0 else small
-        w = draw.textlength(line, font=font)
-        draw.text(((W - w) / 2, y), line, fill=colour, font=font)
-        y += (int(W / 18) if i == 0 else int(W / 28))
+    def font(px, bold=False):
+        for name in (("DejaVuSerif-Bold.ttf",) if bold else ()) + (
+                "DejaVuSerif.ttf", "DejaVuSans.ttf"):
+            try:
+                return ImageFont.truetype(name, px)
+            except Exception:
+                continue
+        return ImageFont.load_default()
+
+    area_top = top + (H - top) * 0.16
+    title = font(int(W / 20), bold=True)
+    sub = font(int(W / 40))
+    # A thin divider above the title.
+    dw = W * 0.12
+    draw.line([W / 2 - dw, area_top - int(W / 30), W / 2 + dw, area_top - int(W / 30)],
+              fill=_blend(sky, accent, 0.35), width=max(1, int(W / 1400)))
+    y = area_top
+    for i, ln in enumerate(lines):
+        f = title if i == 0 else sub
+        w = draw.textlength(ln, font=f)
+        draw.text(((W - w) / 2, y), ln, fill=sky, font=f)
+        y += int(W / 16) if i == 0 else int(W / 26)

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from onassis.starmap import (equatorial_to_altaz, julian_date, load_catalog,
+from onassis.starmap import (equatorial_to_altaz, julian_date,
+                             load_constellation_lines, load_stars,
                              local_sidereal_time, render_star_map)
 
 
@@ -29,18 +30,16 @@ def test_star_below_horizon_has_negative_altitude():
     assert alt < 0
 
 
-def test_load_catalog_falls_back_to_builtin():
-    stars = load_catalog(None)
-    assert len(stars) > 20
-    assert all(s.mag <= 6.5 for s in stars)
+def test_bundled_star_catalogue_loads():
+    stars = load_stars()
+    assert len(stars) > 1000                           # the real ~5k catalogue
+    assert all(0 <= s.ra_deg <= 360 for s in stars)
 
 
-def test_load_catalog_reads_hyg_csv(tmp_path):
-    p = tmp_path / "cat.csv"
-    p.write_text("ra,dec,mag\n6.75,-16.7,-1.46\n0.0,0.0,9.9\n")   # 2nd is too faint
-    stars = load_catalog(str(p))
-    assert len(stars) == 1
-    assert abs(stars[0].ra_deg - 101.25) < 0.1        # 6.75h × 15 = 101.25°
+def test_bundled_constellations_load():
+    lines = load_constellation_lines()
+    assert len(lines) > 50                             # constellation stick figures
+    assert all(len(seg) >= 2 for seg in lines)
 
 
 def test_render_star_map_produces_a_poster(tmp_path):
