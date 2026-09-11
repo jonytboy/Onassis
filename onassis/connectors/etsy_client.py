@@ -179,6 +179,11 @@ class EtsyClient:
             self.shop_id = str(shop_id)
         return self.shop_id
 
+    def get_receipt(self, receipt_id: int | str) -> dict[str, Any]:
+        """One shop receipt (order) by id — used to verify a buyer really bought
+        before unlocking the personaliser. Raises on 404/403."""
+        return self._get(f"/shops/{self.resolve_shop_id()}/receipts/{int(receipt_id)}")
+
     def get_receipts(self, min_created: int | None = None) -> list[dict[str, Any]]:
         """Shop receipts (orders). ``min_created`` is a unix timestamp filter."""
         params: dict[str, Any] = {}

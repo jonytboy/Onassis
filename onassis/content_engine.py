@@ -1233,6 +1233,161 @@ class ContentEngine:
         return {"ok": True, "applied": apply, "created": created, "errors": errors,
                 "count": len(rows), "products": rows}
 
+    # --- Personaliser: publish the self-serve products to Etsy ------------
+
+    _PERSONALISER_SAMPLES: dict[str, dict[str, Any]] = {
+        "place-poster": {"place": "Positano, Italy", "lat": 40.628, "lon": 14.485,
+                         "date": "2024-06-14", "names": "Sam & Ellie",
+                         "message": "where it all began"},
+        "star-map": {"place": "London, United Kingdom", "lat": 51.5074, "lon": -0.1278,
+                     "date": "2024-06-21", "time": "22:30",
+                     "message": "the night we said yes"},
+        "birth-stats": {"name": "Isla Rose", "date": "2024-03-08", "time": "06:42",
+                        "weight": "3.4 kg", "length": "51 cm", "place": "Bristol"},
+        "invite": {"names": "Sam & Ellie", "event": "invite you to their wedding",
+                   "date": "2025-06-14", "time": "15:00",
+                   "venue": "Villa Cimbrone, Ravello",
+                   "message": "dinner, dancing & the sea"},
+    }
+
+    def _personaliser_base(self) -> str:
+        """Public root of THIS app (where /make lives). Configurable; else derived
+        from the exports base by dropping its trailing /exports."""
+        pcfg = dict(getattr(self.config, "personaliser", None) or {})
+        base = (pcfg.get("public_base") or self._public_base() or "").rstrip("/")
+        if base.endswith("/exports"):
+            base = base[: -len("/exports")]
+        return base
+
+    def _personaliser_sample_image(self, product: Any, out_dir: Path) -> str:
+        """The listing's main photo: a rendered sample (tier 1) or a promo card
+        explaining the photo flow (tier 2)."""
+        from onassis.personaliser import GOLD, INK, PAPER, SEA, _canvas, _centre, _font, render_tier1
+        out_dir.mkdir(parents=True, exist_ok=True)
+        fp = out_dir / f"{product.key}-sample.jpg"
+        if product.tier == 1:
+            img = render_tier1(product.key, self._PERSONALISER_SAMPLES[product.key], size=1400)
+        else:
+            img, d, W, H = _canvas(1400)
+            y = H * 0.30
+            y = _centre(d, product.name, y, _font(int(W / 12), bold=True), INK, W)
+            d.line([W * 0.38, y + W * 0.01, W * 0.62, y + W * 0.01], fill=GOLD, width=3)
+            y += W * 0.06
+            for ln in ("1. Upload your photo", "2. Choose a style",
+                       "3. Pick your favourite of three", "4. Download instantly"):
+                y = _centre(d, ln, y, _font(int(W / 26)), SEA, W)
+            r = W * 0.05
+            d.ellipse([W / 2 - r, H * 0.80 - r, W / 2 + r, H * 0.80 + r], fill=GOLD)
+        img.convert("RGB").save(fp, "JPEG", quality=90)
+        return str(fp)
+
+    def _personaliser_access_pdf(self, product: Any, link: str, out_dir: Path) -> str:
+        """The digital 'download' Etsy hands the buyer: a one-page card with their
+        personaliser link and the steps. (The real product is made in the app.)"""
+        from onassis.personaliser import GOLD, INK, PAPER, SEA, _canvas, _centre, _font
+        out_dir.mkdir(parents=True, exist_ok=True)
+        img, d, W, H = _canvas(1240)
+        y = H * 0.12
+        y = _centre(d, "Thank you for your order", y, _font(int(W / 22)), SEA, W)
+        y = _centre(d, product.name, y, _font(int(W / 14), bold=True), INK, W)
+        d.line([W * 0.38, y + W * 0.01, W * 0.62, y + W * 0.01], fill=GOLD, width=3)
+        y += W * 0.07
+        y = _centre(d, "Make yours here:", y, _font(int(W / 30)), SEA, W)
+        y = _centre(d, link, y, _font(int(W / 34), bold=True), INK, W)
+        y += W * 0.05
+        for ln in ("1. Open the link above",
+                   "2. Enter your Etsy order number to unlock",
+                   "3. Add your details" + (" or upload your photo" if product.tier == 2 else ""),
+                   "4. Preview, then download your high-resolution file"):
+            y = _centre(d, ln, y, _font(int(W / 32)), INK, W)
+        y += W * 0.05
+        _centre(d, "Your file is 300 DPI and print-ready. For personal use.", y,
+                _font(int(W / 40)), SEA, W)
+        fp = out_dir / f"{product.key}-access.pdf"
+        img.convert("RGB").save(fp, "PDF", resolution=150.0)
+        return str(fp)
+
+    def publish_personaliser_listings(self, apply: bool = False,
+                                      product_key: str | None = None) -> dict[str, Any]:
+        """Create one digital Etsy DRAFT listing per personaliser product. The
+        buyer's download is an access card linking into /make/<product>, where
+        they personalise and collect the real file. Preview by default; idempotent
+        (skips a product that already has a listing)."""
+        from onassis.etsy_automation import EtsyAutomationEngine
+        from onassis.llm import LLMClient
+        from onassis.personaliser import PRODUCTS
+        from onassis.seo import build_seo
+
+        etsy = getattr(self, "_seo_etsy", None) or EtsyAutomationEngine(self.config, self.db)
+        llm = getattr(self, "_seo_llm", None) or LLMClient(self.config)
+        listing_cfg = getattr(self.config, "listing", None) or {}
+        taxonomy_id = (listing_cfg.get("printable_taxonomy_id")
+                       or listing_cfg.get("taxonomy_id"))
+        base = self._personaliser_base()
+        out_dir = self._exports_base() / "personaliser" / "listings"
+        rows: list[dict[str, Any]] = []
+        created = errors = 0
+        for p in PRODUCTS.values():
+            if product_key and p.key != product_key:
+                continue
+            pid = f"personaliser-{p.key}"
+            row: dict[str, Any] = {"product": p.key, "name": p.name, "tier": p.tier,
+                                   "status": "ok", "listing_id": None}
+            if self.db.get_latest_publication(0, "etsy", product_id=pid):
+                row["status"] = "exists"
+                rows.append(row)
+                continue
+            if not base:
+                row["status"] = "no_public_base"
+                rows.append(row)
+                continue
+            link = f"{base}/make/{p.key}"
+            try:
+                seo = build_seo({"product_type": p.name, "subject": p.blurb,
+                                 "current_title": p.name}, llm)
+            except Exception as exc:
+                row.update(status="seo_error", error=str(exc)[:200])
+                errors += 1
+                rows.append(row)
+                continue
+            row["new_title"] = seo["title"]
+            if not apply:
+                row["status"] = "would_create"
+            elif not etsy.is_configured:
+                row["status"] = "etsy_not_connected"
+            else:
+                try:
+                    desc = (f"{p.blurb}\n\nHOW IT WORKS\n1. Buy this listing.\n"
+                            f"2. Your download is a card with your personal link.\n"
+                            f"3. Open it, enter your Etsy order number, and "
+                            f"{'upload your photo, choose a style and pick your favourite of three' if p.tier == 2 else 'add your details and see a live preview'}.\n"
+                            "4. Download your high-resolution (300 DPI) print-ready file instantly.\n\n"
+                            "DIGITAL PRODUCT — nothing is posted. Personal use only.")
+                    draft = etsy.client.create_draft({
+                        "title": seo["title"], "description": desc, "price": p.price,
+                        "tags": seo["tags"], "taxonomy_id": taxonomy_id,
+                        "type": "download", "who_made": "i_did",
+                        "when_made": "2020_2025", "quantity": 999})
+                    lid = draft.get("listing_id") or (draft.get("results") or [{}])[0].get("listing_id")
+                    etsy.client.upload_listing_file(
+                        lid, self._personaliser_access_pdf(p, link, out_dir),
+                        name="Your personaliser link.pdf")
+                    etsy.client.upload_listing_image(
+                        lid, self._personaliser_sample_image(p, out_dir), rank=1)
+                    self.db.insert_publication({
+                        "platform": "etsy", "product_id": pid, "campaign_id": 0,
+                        "listing_id": lid, "mode": "draft", "status": "draft"})
+                    row.update(status="draft_created", listing_id=lid, link=link)
+                    created += 1
+                except Exception as exc:
+                    row.update(status="error", error=str(exc)[:200])
+                    errors += 1
+            rows.append(row)
+        log.info("Personaliser listings %s: %d product(s), %d draft(s), %d error(s).",
+                 "APPLY" if apply else "preview", len(rows), created, errors)
+        return {"ok": True, "applied": apply, "created": created, "errors": errors,
+                "count": len(rows), "products": rows, "base": base}
+
     def _listing_alive(self, platform: str, listing_id: str, shop: Any,
                        etsy_holder: dict[str, Any]) -> bool:
         """Does this marketplace listing still exist? Only a definite 404 counts

@@ -152,6 +152,12 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.ops_state = OperationsState()
     app.include_router(build_operations_router(lambda a: a.state.ops_state))
 
+    # The Personaliser — buyer self-serve personalised products, unlocked by an
+    # Etsy order number. Serves /make. Reuses the engines; no business logic.
+    from onassis.personaliser_web import build_personaliser_router
+
+    app.include_router(build_personaliser_router(config, db))
+
     # Expose services for tests / introspection.
     app.state.config = config
     app.state.orchestrator = orchestrator

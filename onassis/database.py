@@ -266,6 +266,16 @@ CREATE TABLE IF NOT EXISTS price_state (
     PRIMARY KEY (campaign_id, product_key)
 );
 
+CREATE TABLE IF NOT EXISTS personaliser_sessions (
+    token       TEXT PRIMARY KEY,
+    product     TEXT    NOT NULL,             -- personaliser product key
+    order_ref   TEXT,                          -- Etsy receipt id (or demo code)
+    status      TEXT    NOT NULL,              -- unlocked | previewed | done
+    fields      TEXT,                          -- JSON of the buyer's inputs
+    file_path   TEXT,                          -- finished deliverable
+    created_at  TEXT    NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS products (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at      TEXT    NOT NULL,
@@ -2819,6 +2829,35 @@ class Database:
                 params.append(status)
         with self._connect() as conn:
             return conn.execute(sql, params).rowcount
+
+    # --- Personaliser sessions (buyer self-serve, Etsy-unlocked) --------
+
+    def insert_personaliser_session(self, s: dict[str, Any]) -> str:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO personaliser_sessions (token, product, order_ref, status, "
+                "fields, file_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (s["token"], s["product"], s.get("order_ref"), s.get("status", "unlocked"),
+                 json.dumps(s.get("fields") or {}), s.get("file_path"), _utcnow()))
+        return s["token"]
+
+    def get_personaliser_session(self, token: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM personaliser_sessions WHERE token = ?",
+                               (token,)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["fields"] = json.loads(d.get("fields") or "{}")
+        return d
+
+    def update_personaliser_session(self, token: str, **fields: Any) -> None:
+        if "fields" in fields:
+            fields["fields"] = json.dumps(fields["fields"] or {})
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        with self._connect() as conn:
+            conn.execute(f"UPDATE personaliser_sessions SET {sets} WHERE token = ?",
+                         (*fields.values(), token))
 
     def upsert_product_performance(self, perf: dict[str, Any]) -> None:
         with self._connect() as conn:

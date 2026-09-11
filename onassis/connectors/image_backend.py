@@ -420,6 +420,45 @@ class OpenAIImageBackend(ImageBackend):
             "OpenAI returned HTTP 200 but no decodable image "
             f"(response keys={sorted(body)}, data[0] keys={sorted(item)}).")
 
+    def edit(self, image_bytes: bytes, prompt: str, *, n: int = 3,
+             size: str = "1024x1536") -> list[bytes]:
+        """Image-to-image: transform a buyer's photo per ``prompt`` (pet portrait,
+        Renaissance painting, aged photograph…) and return ``n`` variations.
+
+        POST multipart to ``/images/edits`` (GPT Image supports edits). Raises
+        RuntimeError with the provider's detail on any HTTP error — callers
+        classify it and must hard-fail on billing/quota, never substitute junk."""
+        import httpx
+
+        data: dict[str, Any] = {"model": self.model, "prompt": prompt[:32000],
+                                "n": int(n), "size": size, "quality": self.quality}
+        files = {"image": ("photo.png", image_bytes, "image/png")}
+        resp = httpx.post(
+            f"{self.base_url}/images/edits",
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            data=data, files=files, timeout=self.timeout,
+        )
+        if resp.status_code >= 400:
+            try:
+                detail = resp.json()
+            except (ValueError, KeyError):
+                detail = resp.text
+            raise RuntimeError(f"OpenAI image edit HTTP {resp.status_code}: {detail}")
+        body = resp.json()
+        out: list[bytes] = []
+        for item in body.get("data") or []:
+            b64 = item.get("b64_json") or item.get("b64")
+            if b64:
+                out.append(base64.b64decode(b64))
+            elif item.get("url"):
+                img = httpx.get(item["url"], timeout=self.timeout)
+                img.raise_for_status()
+                out.append(img.content)
+        if not out:
+            raise RuntimeError("OpenAI image edit returned HTTP 200 but no images "
+                               f"(response keys={sorted(body)}).")
+        return out
+
     @classmethod
     def _size(cls, w: int, h: int) -> str:
         if abs(w - h) <= max(w, h) * 0.1:
