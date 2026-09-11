@@ -172,6 +172,32 @@ def _rule(draw, W, y, colour=GOLD, frac=0.12, width=2):
     draw.line([W / 2 - W * frac, y, W / 2 + W * frac, y], fill=colour, width=width)
 
 
+def _stack(draw, items, W: float, H: float, centre_frac: float = 0.5) -> float:
+    """Draw a vertical stack centred on the page, so a poster is composed rather
+    than top-heavy. Items: ``("text", text, font, fill, gap)``, ``("rule", gap)``,
+    or ``("custom", height, gap, fn)`` where ``fn(y)`` draws at ``y``."""
+    rule_h = max(2, int(W // 400))
+    total = 0.0
+    for it in items:
+        if it[0] == "text":
+            total += it[2].size * 1.25 + it[4]
+        elif it[0] == "rule":
+            total += rule_h + it[1]
+        else:
+            total += it[1] + it[2]
+    y = H * centre_frac - total / 2
+    for it in items:
+        if it[0] == "text":
+            y = _centre(draw, it[1], y, it[2], it[3], W) + it[4]
+        elif it[0] == "rule":
+            _rule(draw, W, y + rule_h / 2)
+            y += rule_h + it[1]
+        else:
+            it[3](y)
+            y += it[1] + it[2]
+    return y
+
+
 def _fmt_date(s: str) -> str:
     try:
         return datetime.strptime(s, "%Y-%m-%d").strftime("%d %B %Y")
@@ -240,33 +266,34 @@ def render_star_map(fields: dict[str, Any], size: int = 2000):
 def render_birth_stats(fields: dict[str, Any], size: int = 2000):
     img, d, W, H = _canvas(size)
     name = (fields.get("name") or "Baby").strip()
-    y = H * 0.12
-    y = _centre(d, "welcome to the world", y, _font(int(W / 30)), SEA, W)
-    y += W * 0.02
     f_name = _fit_font(d, name, W * 0.82, int(W / 7), bold=True)
-    y = _centre(d, name, y, f_name, INK, W)
-    _rule(d, W, y + W * 0.01)
-    y += W * 0.06
     born = _fmt_date(fields.get("date", ""))
     if fields.get("time"):
         born += f"  ·  {fields['time']}"
-    y = _centre(d, born, y, _font(int(W / 24)), INK, W)
+    items: list = [
+        ("text", "welcome to the world", _font(int(W / 30)), SEA, W * 0.02),
+        ("text", name, f_name, INK, W * 0.02),
+        ("rule", W * 0.05),
+        ("text", born, _font(int(W / 24)), INK, 0),
+    ]
     if fields.get("place"):
-        y = _centre(d, fields["place"], y, _font(int(W / 30)), SEA, W)
-    # Stats row.
-    y += W * 0.08
-    stats = [("weight", fields.get("weight")), ("length", fields.get("length"))]
-    stats = [(k, v) for k, v in stats if v]
+        items.append(("text", fields["place"], _font(int(W / 30)), SEA, 0))
+    stats = [(k, v) for k, v in (("weight", fields.get("weight")),
+                                 ("length", fields.get("length"))) if v]
     if stats:
-        col = W / (len(stats) + 1)
-        for i, (k, v) in enumerate(stats, start=1):
-            fv, fk = _font(int(W / 14), bold=True), _font(int(W / 34))
-            d.text((col * i - d.textlength(v, font=fv) / 2, y), v, fill=INK, font=fv)
-            d.text((col * i - d.textlength(k, font=fk) / 2, y + fv.size * 1.25), k,
-                   fill=SEA, font=fk)
-    # A small gold sun at the foot.
-    r = W * 0.035
-    d.ellipse([W / 2 - r, H * 0.86 - r, W / 2 + r, H * 0.86 + r], fill=GOLD)
+        fv, fk = _font(int(W / 14), bold=True), _font(int(W / 34))
+
+        def _stats(y, stats=stats, fv=fv, fk=fk):
+            col = W / (len(stats) + 1)
+            for i, (k, v) in enumerate(stats, start=1):
+                d.text((col * i - d.textlength(v, font=fv) / 2, y), v, fill=INK, font=fv)
+                d.text((col * i - d.textlength(k, font=fk) / 2, y + fv.size * 1.25), k,
+                       fill=SEA, font=fk)
+        items.append(("custom", fv.size * 1.25 + fk.size * 1.25, W * 0.07, _stats))
+    r = W * 0.03
+    items.append(("custom", 2 * r, 0,
+                  lambda y: d.ellipse([W / 2 - r, y, W / 2 + r, y + 2 * r], fill=GOLD)))
+    _stack(d, items, W, H, centre_frac=0.48)
     return img
 
 
@@ -278,25 +305,23 @@ def render_invite(fields: dict[str, Any], size: int = 2000):
     m2 = m + W * 0.012
     d.rectangle([m2, m2, W - m2, H - m2], outline=GOLD, width=max(1, W // 900))
     names = (fields.get("names") or "").strip()
-    y = H * 0.20
-    y = _centre(d, "together with their families", y, _font(int(W / 32)), SEA, W)
-    y += W * 0.02
     f_names = _fit_font(d, names, W * 0.78, int(W / 9), bold=True)
-    y = _centre(d, names, y, f_names, INK, W)
-    y += W * 0.01
-    y = _centre(d, fields.get("event") or "invite you to celebrate", y,
-                _font(int(W / 26)), INK, W)
-    _rule(d, W, y + W * 0.02)
-    y += W * 0.07
     when = _fmt_date(fields.get("date", ""))
     if fields.get("time"):
         when += f"  ·  {fields['time']}"
-    y = _centre(d, when, y, _font(int(W / 22), bold=True), INK, W)
+    items: list = [
+        ("text", "together with their families", _font(int(W / 32)), SEA, W * 0.02),
+        ("text", names, f_names, INK, W * 0.01),
+        ("text", fields.get("event") or "invite you to celebrate",
+         _font(int(W / 26)), INK, W * 0.03),
+        ("rule", W * 0.05),
+        ("text", when, _font(int(W / 22), bold=True), INK, 0),
+    ]
     if fields.get("venue"):
-        y = _centre(d, fields["venue"], y, _font(int(W / 28)), SEA, W)
+        items.append(("text", fields["venue"], _font(int(W / 28)), SEA, W * 0.04))
     if fields.get("message"):
-        y += W * 0.03
-        _centre(d, fields["message"], y, _font(int(W / 32)), INK, W)
+        items.append(("text", fields["message"], _font(int(W / 32)), INK, 0))
+    _stack(d, items, W, H, centre_frac=0.5)
     return img
 
 
