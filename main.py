@@ -239,6 +239,12 @@ def _parse_args() -> argparse.Namespace:
              "(404) — the phantom rows (add --apply to remove them).",
     )
     parser.add_argument(
+        "--make-printables", action="store_true",
+        help="Turn existing designs into digital printable-wall-art DRAFT listings "
+             "on Etsy (reuses print files + mockups + SEO; add --apply to create "
+             "the drafts, --limit N to cap). Drafts only — you review + publish.",
+    )
+    parser.add_argument(
         "--rewrite-seo", action="store_true",
         help="Preview rewriting live listings' Etsy title+tags (and Shopify title) "
              "around buyer-searched phrases so Etsy search shows them (add --apply "
@@ -1249,6 +1255,27 @@ def main() -> int:
                 print(f"  {old} -> {new}   {p['status']:18} {p['name']}")
         if not r["applied"]:
             print("\nRun again with --apply to push these prices to Shopify.")
+        return 0
+
+    if args.make_printables:
+        from onassis.content_engine import ContentEngine
+        from onassis.integrations import apply_integration_overrides
+
+        apply_integration_overrides(config, db)
+        r = ContentEngine(config, db).make_printables(apply=args.apply, limit=args.limit)
+        print(f"\nMAKE PRINTABLES — {'APPLIED' if r['applied'] else 'PREVIEW'} "
+              f"({r['count']} product(s), {r['created']} draft(s), "
+              f"{r['errors']} error(s)):\n")
+        for p in r["products"]:
+            lid = f" [listing {p['listing_id']}]" if p.get("listing_id") else ""
+            print(f"  [{p['status']:16}]{lid} {p.get('new_title') or p['name']}")
+            if p.get("error"):
+                print(f"      error: {p['error']}")
+        if not r["applied"]:
+            print("\nPREVIEW only — nothing created. Re-run with --apply to create "
+                  "DRAFT listings on Etsy (you then review + publish each).")
+        else:
+            print("\nDrafts created on Etsy — open each, check it, and hit Publish.")
         return 0
 
     if args.rewrite_seo:

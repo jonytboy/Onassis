@@ -865,3 +865,65 @@ def test_rewrite_seo_flags_garment_type_conflict_and_never_applies(config, db):
     assert row.get("conflict")
     assert r["changed"] == 0
     assert fake_etsy.titles == [] and fake_etsy.tags == []   # nothing pushed
+
+
+class _FakePrintEtsy:
+    """Fake EtsyAutomationEngine for printables: records draft creation + uploads."""
+
+    is_configured = True
+
+    def __init__(self):
+        self.client = self
+        self.drafts = []
+        self.files = []
+        self.images = []
+
+    def create_draft(self, listing):
+        self.drafts.append(listing)
+        return {"listing_id": 90210}
+
+    def upload_listing_file(self, listing_id, path, *, name=None, rank=1):
+        self.files.append((listing_id, path, name))
+        return {"listing_file_id": 1}
+
+    def upload_listing_image(self, listing_id, path, *, rank=1, **_):
+        self.images.append((listing_id, path, rank))
+        return {"listing_image_id": rank}
+
+
+def test_make_printables_preview_changes_nothing(config, db, tmp_path):
+    cid, key = _build_package(config, tmp_path)          # gives print/mockups on disk
+    db.insert_product({"sku": f"{cid}-{key}", "name": "Casa Med Mug", "campaign_id": cid,
+                       "product_key": key, "active": True})
+    eng = _engine(config, db)
+    eng._seo_llm = _SeoLLM()
+    fake = _FakePrintEtsy()
+    eng._seo_etsy = fake
+    r = eng.make_printables(apply=False)
+    assert r["ok"] and r["applied"] is False and r["created"] == 0
+    assert r["products"][0]["status"] == "would_create", r["products"][0]
+    assert fake.drafts == []                              # nothing created
+
+
+def test_make_printables_apply_creates_digital_draft(config, db, tmp_path):
+    cid, key = _build_package(config, tmp_path)
+    config.listing = {**(config.listing or {}), "taxonomy_id": 123,
+                      "exports_dir": str(tmp_path / "exports")}
+    db.insert_product({"sku": f"{cid}-{key}", "name": "Casa Med Mug", "campaign_id": cid,
+                       "product_key": key, "active": True})
+    eng = _engine(config, db)
+    eng._seo_llm = _SeoLLM()
+    fake = _FakePrintEtsy()
+    eng._seo_etsy = fake
+    r = eng.make_printables(apply=True)
+    assert r["created"] == 1
+    row = r["products"][0]
+    assert row["status"] == "draft_created" and row["listing_id"] == 90210
+    # A DIGITAL draft with a zip of print files + at least one mockup image.
+    assert fake.drafts[0]["type"] == "download"
+    assert fake.drafts[0]["taxonomy_id"] == 123
+    assert fake.files and fake.files[0][1].endswith(".zip")
+    assert len(fake.images) >= 1
+    # Idempotent: re-running skips the product that now has a printable listing.
+    again = eng.make_printables(apply=True)
+    assert again["created"] == 0 and again["products"][0]["status"] == "exists"

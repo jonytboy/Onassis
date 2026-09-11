@@ -1105,6 +1105,134 @@ class ContentEngine:
         return {"ok": True, "applied": apply, "changed": changed, "errors": errors,
                 "count": len(rows), "products": rows}
 
+    def _printable_source(self, cid: int, pk: str) -> str | None:
+        """The best on-disk image to sell as a printable: the print file, else the
+        master artwork, else the hero mockup."""
+        base = self._exports_base() / str(cid) / str(pk)
+        for cand in (base / "print_file.png", base / "master_artwork.png",
+                     base / "images" / "hero.jpg"):
+            if cand.exists():
+                return str(cand)
+        return None
+
+    def _mockup_images(self, cid: int, pk: str, limit: int = 5) -> list[str]:
+        """Room/lifestyle mockups to use as the listing gallery (art-on-a-wall)."""
+        imgs = self._exports_base() / str(cid) / str(pk) / "images"
+        out = []
+        for name in ("lifestyle.jpg", "room.jpg", "hero.jpg", "closeup.jpg",
+                     "scale.jpg"):
+            p = imgs / name
+            if p.exists():
+                out.append(str(p))
+            if len(out) >= limit:
+                break
+        return out
+
+    def make_printables(self, apply: bool = False, limit: int | None = None,
+                        product_key: str | None = None,
+                        price: float | None = None) -> dict[str, Any]:
+        """Turn existing designs into digital printable-wall-art listings on Etsy.
+
+        Reuses each design's ``print_file.png`` + room mockups + the SEO engine —
+        no new AI art. Creates Etsy **draft** ``download`` listings (files, images,
+        title, tags, description all attached) for you to review and publish; it
+        never takes them live. PREVIEW by default; ``apply`` creates the drafts,
+        ``limit`` caps how many (start small), ``product_key`` targets one."""
+        from onassis.etsy_automation import EtsyAutomationEngine
+        from onassis.llm import LLMClient
+        from onassis.printables import build_print_set, printable_description
+        from onassis.seo import build_seo
+
+        etsy = getattr(self, "_seo_etsy", None) or EtsyAutomationEngine(self.config, self.db)
+        llm = getattr(self, "_seo_llm", None) or LLMClient(self.config)
+        listing_cfg = getattr(self.config, "listing", None) or {}
+        taxonomy_id = (listing_cfg.get("printable_taxonomy_id")
+                       or listing_cfg.get("taxonomy_id"))
+        price = float(price if price is not None
+                      else listing_cfg.get("printable_price", 4.5))
+        out_root = self._exports_base() / "printables"
+        rows: list[dict[str, Any]] = []
+        created = errors = 0
+        for p in self.db.list_products():
+            if not p.get("active", 1):
+                continue
+            pk = p.get("product_key") or p.get("sku")
+            if product_key and pk != product_key:
+                continue
+            cid = p.get("campaign_id")
+            row: dict[str, Any] = {"name": p.get("name") or pk, "product_key": pk,
+                                   "campaign_id": cid, "status": "ok", "listing_id": None}
+            if not cid:
+                row["status"] = "no_campaign"
+                rows.append(row)
+                continue
+            # Idempotent: skip a design that already has a printable listing.
+            if self.db.get_latest_publication(cid, "etsy",
+                                              product_id=f"{cid}-{pk}-print"):
+                row["status"] = "exists"
+                rows.append(row)
+                continue
+            src = self._printable_source(cid, pk)
+            if not src:
+                row["status"] = "no_artwork"
+                rows.append(row)
+                continue
+            ctx = (self._gather(cid, pk) if cid else None) or {}
+            subject = ctx.get("theme") or ctx.get("product_name") or "wall art"
+            try:
+                seo = build_seo({"product_type": "Printable Wall Art",
+                                 "subject": subject,
+                                 "current_title": p.get("name") or pk}, llm)
+            except Exception as exc:  # LLM hiccup never aborts the batch
+                row["status"] = "seo_error"
+                row["error"] = str(exc)[:200]
+                errors += 1
+                rows.append(row)
+                if limit and len([r for r in rows if r["status"] != "exists"]) >= limit:
+                    break
+                continue
+            row["new_title"] = seo["title"]
+            row["new_tags"] = seo["tags"]
+            if not apply:
+                row["status"] = "would_create"
+            elif not etsy.is_configured:
+                row["status"] = "etsy_not_connected"
+            else:
+                try:
+                    out_dir = out_root / str(cid) / str(pk)
+                    pack = build_print_set(src, str(out_dir))
+                    draft = etsy.client.create_draft({
+                        "title": seo["title"], "description": printable_description(subject),
+                        "price": price, "tags": seo["tags"], "taxonomy_id": taxonomy_id,
+                        "type": "download", "who_made": "i_did",
+                        "when_made": "2020_2025", "quantity": 999})
+                    lid = draft.get("listing_id") or (draft.get("results") or [{}])[0].get("listing_id")
+                    etsy.client.upload_listing_file(lid, pack["zip"],
+                                                    name="Printable Art Files.zip")
+                    for i, img in enumerate(self._mockup_images(cid, pk), start=1):
+                        try:
+                            etsy.client.upload_listing_image(lid, img, rank=i)
+                        except Exception:  # a bad mockup shouldn't sink the listing
+                            log.debug("mockup upload skipped", exc_info=True)
+                    self.db.insert_publication({
+                        "platform": "etsy", "product_id": f"{cid}-{pk}-print",
+                        "campaign_id": cid, "listing_id": lid, "mode": "draft",
+                        "status": "draft"})
+                    row["status"] = "draft_created"
+                    row["listing_id"] = lid
+                    created += 1
+                except Exception as exc:  # one product must not abort the run
+                    row["status"] = "error"
+                    row["error"] = str(exc)[:200]
+                    errors += 1
+            rows.append(row)
+            if limit and len([r for r in rows if r["status"] != "exists"]) >= limit:
+                break
+        log.info("Make printables %s: %d product(s), %d draft(s), %d error(s).",
+                 "APPLY" if apply else "preview", len(rows), created, errors)
+        return {"ok": True, "applied": apply, "created": created, "errors": errors,
+                "count": len(rows), "products": rows}
+
     def _listing_alive(self, platform: str, listing_id: str, shop: Any,
                        etsy_holder: dict[str, Any]) -> bool:
         """Does this marketplace listing still exist? Only a definite 404 counts
