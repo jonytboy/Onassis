@@ -1365,16 +1365,25 @@ class ContentEngine:
         return str(fp)
 
     def publish_personaliser_listings(self, apply: bool = False,
-                                      product_key: str | None = None) -> dict[str, Any]:
+                                      product_key: str | None = None,
+                                      reset: bool = False) -> dict[str, Any]:
         """Create one digital Etsy DRAFT listing per personaliser product. The
         buyer's download is an access card linking into /make/<product>, where
         they personalise and collect the real file. Preview by default; idempotent
-        (skips a product that already has a listing)."""
+        (skips a product that already has a listing). ``reset`` forgets the
+        previous personaliser listings first so they are recreated — use it after
+        deleting the old drafts on Etsy."""
         from onassis.etsy_automation import EtsyAutomationEngine
         from onassis.llm import LLMClient
         from onassis.personaliser import PRODUCTS
         from onassis.seo import build_seo
 
+        if reset and apply:
+            for pub in self.db.list_publications():
+                pid = str(pub.get("product_id") or "")
+                if (pub.get("platform") == "etsy" and pid.startswith("personaliser-")
+                        and (not product_key or pid == f"personaliser-{product_key}")):
+                    self.db.delete_publication(pub["id"])
         etsy = getattr(self, "_seo_etsy", None) or EtsyAutomationEngine(self.config, self.db)
         llm = getattr(self, "_seo_llm", None) or LLMClient(self.config)
         listing_cfg = getattr(self.config, "listing", None) or {}

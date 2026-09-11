@@ -251,6 +251,11 @@ def _parse_args() -> argparse.Namespace:
              "by default; add --apply to create the drafts.",
     )
     parser.add_argument(
+        "--reset", action="store_true",
+        help="With --publish-personaliser --apply: forget the previous personaliser "
+             "listings and recreate them (after deleting the old drafts on Etsy).",
+    )
+    parser.add_argument(
         "--rewrite-seo", action="store_true",
         help="Preview rewriting live listings' Etsy title+tags (and Shopify title) "
              "around buyer-searched phrases so Etsy search shows them (add --apply "
@@ -1268,7 +1273,8 @@ def main() -> int:
         from onassis.integrations import apply_integration_overrides
 
         apply_integration_overrides(config, db)
-        r = ContentEngine(config, db).publish_personaliser_listings(apply=args.apply)
+        r = ContentEngine(config, db).publish_personaliser_listings(
+            apply=args.apply, reset=args.reset)
         print(f"\nPERSONALISER LISTINGS — {'APPLIED' if r['applied'] else 'PREVIEW'} "
               f"({r['count']} product(s), {r['created']} draft(s), "
               f"{r['errors']} error(s)) — app base: {r['base'] or '(not set)'}\n")

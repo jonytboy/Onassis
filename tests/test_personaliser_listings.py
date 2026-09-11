@@ -76,3 +76,14 @@ def test_publish_creates_tier1_drafts_and_skips_tier2_without_examples(eng):
     again = eng.publish_personaliser_listings(apply=True)
     assert again["created"] == 0
     assert {row["status"] for row in again["products"] if row["product"] == "invite"} == {"exists"}
+
+
+def test_reset_forgets_old_listings_and_recreates(eng):
+    first = eng.publish_personaliser_listings(apply=True)
+    assert first["created"] == 4
+    # Without reset: everything already exists, nothing new.
+    assert eng.publish_personaliser_listings(apply=True)["created"] == 0
+    # With reset (after the operator deleted the drafts on Etsy): recreated.
+    again = eng.publish_personaliser_listings(apply=True, reset=True)
+    assert again["created"] == 4
+    assert len(eng._seo_etsy.drafts) == 8
