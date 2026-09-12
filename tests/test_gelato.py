@@ -153,3 +153,79 @@ def test_missing_address_fails_cleanly(gelato_cfg, db):
     conn = GelatoConnector(gelato_cfg, db, client=FakeGelato())
     out = conn.submit_order(db.list_orders()[0])
     assert out["status"] == "failed" and "address" in out["reason"]
+
+
+def test_personaliser_print_order_waits_for_buyer_to_finish(gelato_cfg, db):
+    """Personaliser print orders wait until the buyer has finished personalizing."""
+    # Configure gelato_uid for personaliser products.
+    gelato_cfg.expansion = {"catalogue": [
+        {"key": "place-poster", "gelato_uid": "prints_premium_poster"}
+    ]}
+    # Create a personaliser product + listing.
+    db.insert_product({"sku": "personaliser-place-poster-print", "name": "Printed Place Poster",
+                       "campaign_id": 0, "product_key": "place-poster",
+                       "production_cost": 32.0})
+    db.insert_publication({"platform": "etsy", "product_id": "personaliser-place-poster-print",
+                           "campaign_id": 0, "listing_id": "888", "mode": "live",
+                           "status": "live"})
+    # A paid Etsy order for that print listing.
+    RevenueEngine(gelato_cfg, db).record_order({
+        "order_ref": "etsy-901-1", "product_id": "888", "campaign_id": 0,
+        "platform": "etsy", "sale_price": 45.0, "quantity": 1,
+        "production_cost": 32.0, "shipping_address": _ADDRESS})
+    order = db.list_orders()[0]
+
+    # Buyer has started but NOT finished personalizing (no session yet).
+    client = FakeGelato()
+    conn = GelatoConnector(gelato_cfg, db, client=client)
+    out = conn.submit_order(order)
+    assert out["status"] == "waiting" and "not finished" in out["reason"]
+    assert not db.get_fulfilment(order["order_ref"])  # no fulfilment record yet
+
+    # Buyer creates a session but hasn't finished.
+    db.insert_personaliser_session({
+        "token": "tok-123", "product": "place-poster", "order_ref": "9011",
+        "status": "unlocked"})
+    out = conn.submit_order(order)
+    assert out["status"] == "waiting"  # still waiting
+
+    # Buyer finishes personalizing.
+    db.update_personaliser_session("tok-123", status="done",
+                                    file_path="/exports/personaliser/tok-123.png")
+    out = conn.submit_order(order)
+    assert out["status"] == "created"
+    # The file URL is constructed from the order_ref.
+    payload = client.created[0]
+    assert "personaliser/etsy-901-1.png" in payload["items"][0]["files"][0]["url"]
+
+
+def test_personaliser_print_order_uses_session_file(gelato_cfg, db):
+    """Personaliser print order reads the buyer's finished file from the session."""
+    # Configure gelato_uid for personaliser products.
+    gelato_cfg.expansion = {"catalogue": [
+        {"key": "star-map", "gelato_uid": "prints_premium_poster"}
+    ]}
+    # Same setup as above but with session already done.
+    db.insert_product({"sku": "personaliser-star-map-print", "name": "Printed Star Map",
+                       "campaign_id": 0, "product_key": "star-map",
+                       "production_cost": 32.0})
+    db.insert_publication({"platform": "etsy", "product_id": "personaliser-star-map-print",
+                           "campaign_id": 0, "listing_id": "889", "mode": "live",
+                           "status": "live"})
+    RevenueEngine(gelato_cfg, db).record_order({
+        "order_ref": "etsy-902-1", "product_id": "889", "campaign_id": 0,
+        "platform": "etsy", "sale_price": 45.0, "quantity": 1,
+        "production_cost": 32.0, "shipping_address": _ADDRESS})
+    order = db.list_orders()[-1]  # get the newest
+
+    # Buyer has already finished (session exists and is done).
+    db.insert_personaliser_session({
+        "token": "tok-456", "product": "star-map", "order_ref": "9021",
+        "status": "done", "file_path": "/exports/personaliser/tok-456.png"})
+    client = FakeGelato()
+    conn = GelatoConnector(gelato_cfg, db, client=client)
+    out = conn.submit_order(order)
+    assert out["status"] == "created"
+    # Gelato order was recorded.
+    f = db.get_fulfilment(order["order_ref"])
+    assert f["product_key"] == "star-map"

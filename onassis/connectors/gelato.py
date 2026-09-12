@@ -159,6 +159,31 @@ class GelatoConnector:
             return None
         return f"{self.file_base_url}/{campaign_id}/{product_key}/print_file.png"
 
+    def _is_personaliser_product(self, sku: str | None) -> tuple[bool, str | None]:
+        """Check if a product SKU is a personaliser print product.
+        Returns (is_personaliser, personaliser_product_key) or (False, None)."""
+        if not sku:
+            return False, None
+        if sku.startswith("personaliser-") and sku.endswith("-print"):
+            # Extract the product key: "personaliser-<key>-print"
+            key = sku[len("personaliser-"):-len("-print")]
+            return True, key
+        return False, None
+
+    def _personaliser_print_file(self, order: dict[str, Any]) -> str | None:
+        """Get the print file for a personaliser order from the buyer's session.
+        Returns the file path if ready, None if still waiting."""
+        ref = order.get("order_ref")
+        if not ref:
+            return None
+        session = self.db.find_personaliser_session_for_order(ref)
+        if not session:
+            return None
+        # Only submit if the buyer has finished personalizing.
+        if session.get("status") != "done":
+            return None
+        return session.get("file_path")
+
     # --- Submit -----------------------------------------------------
 
     def submit_order(self, order: dict[str, Any]) -> dict[str, Any]:
@@ -171,14 +196,35 @@ class GelatoConnector:
         if not product:
             return self._fail(order, "no matching product for the order (can't map to Gelato)")
         product_key = product.get("product_key")
+        sku = product.get("sku")
+
+        # Check if this is a personaliser print order.
+        is_personaliser, personaliser_key = self._is_personaliser_product(sku)
+        if is_personaliser:
+            # For personaliser orders, the buyer must have finished personalizing.
+            file_path = self._personaliser_print_file(order)
+            if not file_path:
+                # Not ready yet — will retry next cycle.
+                return {"status": "waiting", "reason": "personaliser not finished",
+                        "order_ref": ref}
+            product_key = personaliser_key
+            # Use a public export URL if available, else treat as file path.
+            if self.file_base_url:
+                file_url = f"{self.file_base_url.rstrip('/')}/personaliser/{ref}.png"
+            else:
+                file_url = file_path
+
         gelato_uid = self._gelato_uid(product_key)
         if not gelato_uid:
             return self._fail(order, f"no gelato_uid for product '{product_key}'",
                               product=product)
-        file_url = self._print_file_url(product.get("campaign_id"), product_key)
-        if not file_url:
-            return self._fail(order, "no public print-file URL (set gelato.file_base_url)",
-                              product=product, gelato_uid=gelato_uid)
+
+        if not is_personaliser:
+            file_url = self._print_file_url(product.get("campaign_id"), product_key)
+            if not file_url:
+                return self._fail(order, "no public print-file URL (set gelato.file_base_url)",
+                                  product=product, gelato_uid=gelato_uid)
+
         recipient = self._recipient(order)
         if not recipient:
             return self._fail(order, "no shipping address on the order",
@@ -197,7 +243,7 @@ class GelatoConnector:
                     str(resp.get("fulfillmentStatus", "created")).lower(), "created")
                 fid = self.db.insert_fulfilment({
                     "order_ref": ref, "order_id": order.get("id"),
-                    "product_id": product.get("sku"), "product_key": product_key,
+                    "product_id": sku, "product_key": product_key,
                     "gelato_uid": gelato_uid, "gelato_order_id": gelato_order_id,
                     "status": status, "estimated_cost": estimated,
                     "currency": order.get("currency", self.currency), "attempts": attempt,

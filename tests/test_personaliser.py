@@ -236,7 +236,40 @@ def test_image_backend_edit_posts_multipart_and_decodes(monkeypatch):
     import httpx                       # image_backend imports httpx inside edit()
     monkeypatch.setattr(httpx, "post", _post)
     b = ib.OpenAIImageBackend("key")
-    out = b.edit(b"photo", "make it a painting", n=2)
+    out = b.edit(_png_bytes(), "make it a painting", n=2)
     assert out == [b"img1", b"img2"]
     assert captured["url"].endswith("/images/edits") and captured["has_image"]
     assert captured["data"]["n"] == 2
+
+
+def test_image_edit_normalises_any_photo_to_png(monkeypatch):
+    """A phone JPEG (or RGBA PNG) must be sent as a real PNG — the bytes have to
+    match the declared image/png or the provider rejects the edit."""
+    from onassis.connectors import image_backend as ib
+    captured = {}
+
+    class _Resp:
+        status_code = 200
+        def json(self):
+            return {"data": [{"b64_json": base64.b64encode(b"ok").decode()}]}
+
+    def _post(url, headers=None, data=None, files=None, timeout=None, **_):
+        captured["bytes"] = files["image"][1]
+        return _Resp()
+
+    import httpx
+    monkeypatch.setattr(httpx, "post", _post)
+    jpeg = io.BytesIO()
+    Image.new("RGB", (2000, 3000), (90, 60, 40)).save(jpeg, "JPEG")
+    ib.OpenAIImageBackend("key").edit(jpeg.getvalue(), "paint it", n=1)
+    sent = Image.open(io.BytesIO(captured["bytes"]))
+    assert sent.format == "PNG" and max(sent.size) <= 1536
+
+
+def test_themed_catalogue_is_well_formed():
+    tier2 = [p for p in PRODUCTS.values() if p.tier == 2]
+    assert len(tier2) >= 10                                   # themed listings
+    for p in tier2:
+        assert len(p.styles) == 3 and p.sample_subject
+        assert all(s["prompt"] and s["label"] for s in p.styles)
+    assert PRODUCTS["boyband-90s"].sample_subject != PRODUCTS["royal-pet"].sample_subject

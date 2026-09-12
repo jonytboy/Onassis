@@ -2851,6 +2851,23 @@ class Database:
         d["fields"] = json.loads(d.get("fields") or "{}")
         return d
 
+    def find_personaliser_session_for_order(self, order_ref: str) -> dict[str, Any] | None:
+        """The latest FINISHED personaliser session unlocked with this Etsy
+        receipt id (digits) — the file a print order should be produced from."""
+        digits = "".join(ch for ch in str(order_ref or "") if ch.isdigit())
+        if not digits:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM personaliser_sessions WHERE order_ref = ? AND status = 'done' "
+                "AND file_path IS NOT NULL ORDER BY created_at DESC LIMIT 1",
+                (digits,)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["fields"] = json.loads(d.get("fields") or "{}")
+        return d
+
     def update_personaliser_session(self, token: str, **fields: Any) -> None:
         if "fields" in fields:
             fields["fields"] = json.dumps(fields["fields"] or {})

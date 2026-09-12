@@ -1300,12 +1300,9 @@ class ContentEngine:
         if not hasattr(backend, "edit"):
             raise self._NoSample("AI image provider not configured — cannot make a "
                                  "real example for a photo product.")
-        subject_prompt = {
-            "pet-portrait": "A candid, natural photograph of a happy golden retriever "
-                            "sitting in soft window light, looking at the camera, "
-                            "shallow depth of field, no text.",
-        }.get(product.key, "A natural candid photograph of a smiling person in a "
-                           "linen shirt, soft daylight, neutral background, no text.")
+        subject_prompt = product.sample_subject
+        log.info("Personaliser: generating a real example for %s (two image-model "
+                 "calls, ~1-2 min) …", product.key)
         try:
             if not subj.exists():
                 subj.write_bytes(backend.generate(ImageSpec(
@@ -1381,13 +1378,17 @@ class ContentEngine:
 
     def publish_personaliser_listings(self, apply: bool = False,
                                       product_key: str | None = None,
-                                      reset: bool = False) -> dict[str, Any]:
-        """Create one digital Etsy DRAFT listing per personaliser product. The
-        buyer's download is an access card linking into /make/<product>, where
-        they personalise and collect the real file. Preview by default; idempotent
-        (skips a product that already has a listing). ``reset`` forgets the
-        previous personaliser listings first so they are recreated — use it after
-        deleting the old drafts on Etsy."""
+                                      reset: bool = False, prints: bool = False) -> dict[str, Any]:
+        """Create one digital (or if prints=True, physical print) Etsy DRAFT listing per
+        personaliser product.
+
+        DIGITAL: buyer's download is an access card linking into /make/<product>, where
+        they personalise and collect the real file.
+
+        PRINTS: physical listings fulfilled via Gelato when the buyer's personaliser
+        session is done. Preview by default; idempotent (skips a product that already
+        has a listing). ``reset`` forgets the previous personaliser listings first so
+        they are recreated — use it after deleting the old drafts on Etsy."""
         from onassis.etsy_automation import EtsyAutomationEngine
         from onassis.llm import LLMClient
         from onassis.personaliser import PRODUCTS
@@ -1396,8 +1397,10 @@ class ContentEngine:
         if reset and apply:
             for pub in self.db.list_publications():
                 pid = str(pub.get("product_id") or "")
+                suffix = "-print" if prints else ""
                 if (pub.get("platform") == "etsy" and pid.startswith("personaliser-")
-                        and (not product_key or pid == f"personaliser-{product_key}")):
+                        and pid.endswith(suffix)
+                        and (not product_key or pid == f"personaliser-{product_key}{suffix}")):
                     self.db.delete_publication(pub["id"])
         etsy = getattr(self, "_seo_etsy", None) or EtsyAutomationEngine(self.config, self.db)
         llm = getattr(self, "_seo_llm", None) or LLMClient(self.config)
@@ -1411,20 +1414,22 @@ class ContentEngine:
         for p in PRODUCTS.values():
             if product_key and p.key != product_key:
                 continue
-            pid = f"personaliser-{p.key}"
+            suffix = "-print" if prints else ""
+            pid = f"personaliser-{p.key}{suffix}"
             row: dict[str, Any] = {"product": p.key, "name": p.name, "tier": p.tier,
                                    "status": "ok", "listing_id": None}
             if self.db.get_latest_publication(0, "etsy", product_id=pid):
                 row["status"] = "exists"
                 rows.append(row)
                 continue
-            if not base:
+            if not base and not prints:
                 row["status"] = "no_public_base"
                 rows.append(row)
                 continue
-            link = f"{base}/make/{p.key}"
+            link = f"{base}/make/{p.key}" if not prints else None
             try:
-                seo = build_seo({"product_type": p.name, "subject": p.blurb,
+                title_prefix = "Printed " if prints else ""
+                seo = build_seo({"product_type": f"{title_prefix}{p.name}", "subject": p.blurb,
                                  "current_title": p.name}, llm)
             except Exception as exc:
                 row.update(status="seo_error", error=str(exc)[:200])
@@ -1441,21 +1446,34 @@ class ContentEngine:
                     # Real gallery images first — a photo product with no genuine
                     # example is skipped, never listed on a text card.
                     images = self._personaliser_listing_images(p, out_dir)
-                    desc = (f"{p.blurb}\n\nHOW IT WORKS\n1. Buy this listing.\n"
-                            f"2. Your download is a card with your personal link.\n"
-                            f"3. Open it, enter your Etsy order number, and "
-                            f"{'upload your photo, choose a style and pick your favourite of three' if p.tier == 2 else 'add your details and see a live preview'}.\n"
-                            "4. Download your high-resolution (300 DPI) print-ready file instantly.\n\n"
-                            "DIGITAL PRODUCT — nothing is posted. Personal use only.")
+                    if prints:
+                        desc = (f"{p.blurb}\n\nPRINTED EDITION — professionally printed and "
+                                f"shipped to your door.\n\nHOW IT WORKS\n1. Buy this listing.\n"
+                                f"2. Your download is a card with your personal link.\n"
+                                f"3. Open it, enter your Etsy order number, and "
+                                f"{'upload your photo, choose a style and pick your favourite of three' if p.tier == 2 else 'add your details and see a live preview'}.\n"
+                                f"4. Finish and your order ships automatically.\n\nWe print high-quality "
+                                f"300 DPI on premium matte paper and ship within 5 business days.")
+                        price = p.print_price
+                    else:
+                        desc = (f"{p.blurb}\n\nHOW IT WORKS\n1. Buy this listing.\n"
+                                f"2. Your download is a card with your personal link.\n"
+                                f"3. Open it, enter your Etsy order number, and "
+                                f"{'upload your photo, choose a style and pick your favourite of three' if p.tier == 2 else 'add your details and see a live preview'}.\n"
+                                f"4. Download your high-resolution (300 DPI) print-ready file instantly.\n\n"
+                                f"DIGITAL PRODUCT — nothing is posted. Personal use only.")
+                        price = p.price
                     draft = etsy.client.create_draft({
-                        "title": seo["title"], "description": desc, "price": p.price,
+                        "title": seo["title"], "description": desc, "price": price,
                         "tags": seo["tags"], "taxonomy_id": taxonomy_id,
-                        "type": "download", "who_made": "i_did",
+                        "type": "physical" if prints else "download",
+                        "who_made": "i_did",
                         "when_made": "2020_2025", "quantity": 999})
                     lid = draft.get("listing_id") or (draft.get("results") or [{}])[0].get("listing_id")
-                    etsy.client.upload_listing_file(
-                        lid, self._personaliser_access_pdf(p, link, out_dir),
-                        name="Your personaliser link.pdf")
+                    if not prints:
+                        etsy.client.upload_listing_file(
+                            lid, self._personaliser_access_pdf(p, link, out_dir),
+                            name="Your personaliser link.pdf")
                     for rank, img in enumerate(images, start=1):
                         etsy.client.upload_listing_image(lid, img, rank=rank)
                     self.db.insert_publication({
@@ -1469,8 +1487,9 @@ class ContentEngine:
                     row.update(status="error", error=str(exc)[:200])
                     errors += 1
             rows.append(row)
-        log.info("Personaliser listings %s: %d product(s), %d draft(s), %d error(s).",
-                 "APPLY" if apply else "preview", len(rows), created, errors)
+        listing_type = "print" if prints else "digital"
+        log.info("Personaliser %s listings %s: %d product(s), %d draft(s), %d error(s).",
+                 listing_type, "APPLY" if apply else "preview", len(rows), created, errors)
         return {"ok": True, "applied": apply, "created": created, "errors": errors,
                 "count": len(rows), "products": rows, "base": base}
 

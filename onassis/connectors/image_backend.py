@@ -428,7 +428,22 @@ class OpenAIImageBackend(ImageBackend):
         POST multipart to ``/images/edits`` (GPT Image supports edits). Raises
         RuntimeError with the provider's detail on any HTTP error — callers
         classify it and must hard-fail on billing/quota, never substitute junk."""
+        import io
+
         import httpx
+
+        # Normalise whatever we were given (JPEG from a phone, WEBP, RGBA PNG…)
+        # to a real RGB PNG — the bytes must match the declared image/png, and
+        # the model wants a sane size (long edge ≤ 1536).
+        try:
+            from PIL import Image
+            im = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            im.thumbnail((1536, 1536))
+            buf = io.BytesIO()
+            im.save(buf, "PNG")
+            image_bytes = buf.getvalue()
+        except Exception as exc:
+            raise RuntimeError(f"Could not read the photo: {exc}") from exc
 
         data: dict[str, Any] = {"model": self.model, "prompt": prompt[:32000],
                                 "n": int(n), "size": size, "quality": self.quality}

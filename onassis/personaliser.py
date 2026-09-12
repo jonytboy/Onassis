@@ -50,8 +50,22 @@ class Product:
     fields: list[dict[str, Any]] = field(default_factory=list)
     styles: list[dict[str, str]] = field(default_factory=list)   # tier 2
     price: float = 9.0
+    print_price: float = 32.0     # the 'Printed' (Gelato-fulfilled) physical listing
     mockup: str = "wall"          # "wall" (framed print in a room) | "stationery" (flat lay)
     scene: str = "living"         # room scene for wall mockups: living | nursery
+    # Tier 2 only: how to generate the listing's real example subject.
+    sample_subject: str = ("A natural candid photograph of a smiling person in a linen "
+                           "shirt, soft daylight, neutral background, no text.")
+
+
+_SUBJECT_PET = ("A candid, natural photograph of a happy golden retriever sitting in "
+                "soft window light, looking at the camera, shallow depth of field, no text.")
+_SUBJECT_PERSON = ("A natural candid photograph of a smiling person in a linen shirt, "
+                   "soft daylight, neutral background, no text.")
+_SUBJECT_GROUP = ("A natural candid photograph of four friends standing together "
+                  "outdoors, smiling at the camera, soft daylight, no text.")
+_KEEP = ("Preserve the subject's precise facial likeness, features, colouring and "
+         "expression so they are unmistakably recognisable.")
 
 
 PRODUCTS: dict[str, Product] = {
@@ -99,6 +113,103 @@ PRODUCTS: dict[str, Product] = {
             {"key": "venue", "label": "Venue", "type": "text", "placeholder": "Villa Cimbrone, Ravello"},
             {"key": "message", "label": "A line (optional)", "type": "text", "placeholder": "dinner, dancing & the sea"},
         ], price=9.0, mockup="stationery"),
+    # --- Themed photo products: one engine, many searchable listings ------
+    "royal-pet": Product(
+        "royal-pet", "Royal Pet Portrait", 2,
+        "Your pet as royalty — crown, ermine and all, painted like an old master. "
+        "Upload a photo, pick your favourite of three.",
+        styles=[
+            {"key": "king", "label": "The King",
+             "prompt": f"Transform this exact animal into a majestic royal portrait as a KING: a jewelled gold crown, an ermine-trimmed red velvet robe, seated on a throne, classical oil painting with a dark regal background. {_KEEP} Preserve the animal's markings. No text."},
+            {"key": "queen", "label": "The Queen",
+             "prompt": f"Transform this exact animal into a majestic royal portrait as a QUEEN: a delicate tiara, pearls, a blue silk gown with lace, classical oil painting. {_KEEP} Preserve the animal's markings. No text."},
+            {"key": "emperor", "label": "The Emperor",
+             "prompt": f"Transform this exact animal into a grand Napoleonic EMPEROR portrait: a dark military coat with gold epaulettes and medals, a red sash, heroic classical oil painting. {_KEEP} Preserve the animal's markings. No text."},
+        ], price=18.0, sample_subject=_SUBJECT_PET),
+    "general-pet": Product(
+        "general-pet", "Pet as a General", 2,
+        "Your pet in full military dress — a general, an admiral, a decorated "
+        "officer. Upload a photo, pick your favourite of three.",
+        styles=[
+            {"key": "general", "label": "The General",
+             "prompt": f"Transform this exact animal into a stately 19th-century GENERAL's portrait: a dark dress uniform with gold braid, medals and a high collar, formal oil painting. {_KEEP} Preserve the animal's markings. No text."},
+            {"key": "admiral", "label": "The Admiral",
+             "prompt": f"Transform this exact animal into a distinguished ADMIRAL's portrait: a navy-blue naval uniform with gold trim and a bicorne hat, a stormy sea behind, classical oil painting. {_KEEP} Preserve the animal's markings. No text."},
+            {"key": "aviator", "label": "The Aviator",
+             "prompt": f"Transform this exact animal into a dashing 1940s AVIATOR portrait: a leather flight jacket, goggles pushed up, a vintage painted-poster style. {_KEEP} Preserve the animal's markings. No text."},
+        ], price=18.0, sample_subject=_SUBJECT_PET),
+    "royal-portrait": Product(
+        "royal-portrait", "You as Royalty", 2,
+        "You, painted as a king, queen or emperor — a proper old-master royal "
+        "portrait. Upload a photo, pick your favourite of three.",
+        styles=[
+            {"key": "king", "label": "The King",
+             "prompt": f"Transform this exact person into a majestic royal portrait as a KING: a jewelled gold crown, an ermine-trimmed red velvet robe, a throne, classical oil painting with a dark regal background. {_KEEP} No text."},
+            {"key": "queen", "label": "The Queen",
+             "prompt": f"Transform this exact person into a majestic royal portrait as a QUEEN: a diamond tiara, pearls, a silk gown with lace, classical oil painting. {_KEEP} No text."},
+            {"key": "emperor", "label": "The Emperor",
+             "prompt": f"Transform this exact person into a grand Napoleonic EMPEROR portrait: a dark military coat with gold epaulettes and medals, a red sash, heroic classical oil painting. {_KEEP} No text."},
+        ], price=18.0, sample_subject=_SUBJECT_PERSON),
+    "victorian-portrait": Product(
+        "victorian-portrait", "Victorian Portrait", 2,
+        "You as a Victorian — a stern lady in lace, a whiskered gentleman, a "
+        "sepia daguerreotype. Upload a photo, pick your favourite of three.",
+        styles=[
+            {"key": "lady", "label": "Victorian lady",
+             "prompt": f"Transform this exact person into a formal Victorian-era portrait as a LADY: a high-necked dark dress with lace collar, a cameo brooch, hair pinned up, painted in a stern 1880s studio style. {_KEEP} No text."},
+            {"key": "gentleman", "label": "Victorian gentleman",
+             "prompt": f"Transform this exact person into a formal Victorian-era portrait as a GENTLEMAN: a dark frock coat, waistcoat and cravat, painted in a stern 1880s studio style. {_KEEP} No text."},
+            {"key": "daguerreotype", "label": "Daguerreotype",
+             "prompt": f"Transform this exact photo into an authentic 1850s DAGUERREOTYPE: silvery monochrome, soft focus, period clothing, an ornate oval mat, aged and slightly tarnished. {_KEEP} No text."},
+        ], price=15.0, sample_subject=_SUBJECT_PERSON),
+    "popstar-80s": Product(
+        "popstar-80s", "You as an 80s Pop Star", 2,
+        "Big hair, neon and a synth-pop album cover with your face on it. Upload a "
+        "photo, pick your favourite of three.",
+        styles=[
+            {"key": "synth", "label": "Synth-pop album cover",
+             "prompt": f"Transform this exact person into a 1980s SYNTH-POP album cover portrait: big styled hair, a shoulder-padded jacket, neon pink and blue studio lighting, airbrushed glamour photography of the era. {_KEEP} No text."},
+            {"key": "glam", "label": "Glam rock",
+             "prompt": f"Transform this exact person into a 1980s GLAM ROCK star portrait: teased hair, leather and studs, dramatic stage lighting, a magazine-cover photograph of the era. {_KEEP} No text."},
+            {"key": "newwave", "label": "New wave",
+             "prompt": f"Transform this exact person into a 1980s NEW WAVE portrait: an angular haircut, a sharp monochrome suit, bold geometric backdrop, cool art-school photography of the era. {_KEEP} No text."},
+        ], price=16.0, sample_subject=_SUBJECT_PERSON),
+    "gatsby-1920s": Product(
+        "gatsby-1920s", "1920s Gatsby Portrait", 2,
+        "You in the Jazz Age — flapper pearls or a sharp tuxedo, champagne and "
+        "chandeliers. Upload a photo, pick your favourite of three.",
+        styles=[
+            {"key": "flapper", "label": "Flapper",
+             "prompt": f"Transform this exact person into a 1920s FLAPPER portrait: a beaded dress, a feathered headband, long pearls, an Art Deco ballroom behind, glamorous period photography. {_KEEP} No text."},
+            {"key": "tuxedo", "label": "Black tie",
+             "prompt": f"Transform this exact person into a 1920s BLACK-TIE portrait: a sharp tuxedo, slicked hair, a champagne coupe, an Art Deco ballroom behind, glamorous period photography. {_KEEP} No text."},
+            {"key": "jazz", "label": "Jazz club",
+             "prompt": f"Transform this exact person into a moody 1920s JAZZ CLUB portrait: smoky light, a brass band in the background, sepia-toned period photography. {_KEEP} No text."},
+        ], price=15.0, sample_subject=_SUBJECT_PERSON),
+    "boyband-90s": Product(
+        "boyband-90s", "Your Family as a 90s Boy Band", 2,
+        "Frosted tips, matching white outfits and a smouldering group pose — your "
+        "family or friends as a 90s band. Upload a group photo, pick your favourite of three.",
+        styles=[
+            {"key": "boyband", "label": "Boy band album cover",
+             "prompt": f"Transform this exact group of people into a 1990s BOY BAND album cover: coordinated white outfits, frosted-tip hair, a moody group pose against a plain backdrop, glossy 90s photography. Keep every person's precise facial likeness so each is recognisable. No text."},
+            {"key": "girlgroup", "label": "Girl group",
+             "prompt": f"Transform this exact group of people into a 1990s GIRL GROUP album cover: glossy coordinated outfits, big confident poses, a bold colour backdrop, glossy 90s photography. Keep every person's precise facial likeness so each is recognisable. No text."},
+            {"key": "grunge", "label": "Grunge band",
+             "prompt": f"Transform this exact group of people into a 1990s GRUNGE BAND press photo: flannel shirts, ripped denim, moody black-and-white photography in an alley. Keep every person's precise facial likeness so each is recognisable. No text."},
+        ], price=18.0, sample_subject=_SUBJECT_GROUP),
+    "royal-family": Product(
+        "royal-family", "Your Family as Royalty", 2,
+        "The whole family in crowns and robes — an old-master royal family "
+        "portrait. Upload a group photo, pick your favourite of three.",
+        styles=[
+            {"key": "family", "label": "Royal family portrait",
+             "prompt": f"Transform this exact group of people into a grand ROYAL FAMILY portrait: crowns, ermine-trimmed robes and jewels, posed in a palace hall, classical oil painting. Keep every person's precise facial likeness so each is recognisable. No text."},
+            {"key": "tudor", "label": "Tudor court",
+             "prompt": f"Transform this exact group of people into a TUDOR COURT family portrait: rich brocade, ruffs and gold chains, a dark panelled hall, 16th-century oil painting style. Keep every person's precise facial likeness so each is recognisable. No text."},
+            {"key": "imperial", "label": "Imperial court",
+             "prompt": f"Transform this exact group of people into an IMPERIAL COURT family portrait: military dress uniforms and silk gowns with sashes and medals, a gilded palace, 19th-century oil painting style. Keep every person's precise facial likeness so each is recognisable. No text."},
+        ], price=20.0, sample_subject=_SUBJECT_GROUP),
     "pet-portrait": Product(
         "pet-portrait", "Custom Pet Portrait", 2,
         "Upload a photo of your pet and get a painterly portrait of *them* — likeness, "
@@ -110,7 +221,7 @@ PRODUCTS: dict[str, Product] = {
              "prompt": "Transform this exact animal into a loose, luminous watercolour portrait. Preserve its precise likeness, markings, colouring and expression. Soft washes, white paper edge, no text."},
             {"key": "royal", "label": "Royal portrait",
              "prompt": "Transform this exact animal into a regal 18th-century aristocratic portrait, wearing period finery. Preserve its precise facial likeness, markings and colouring. Rich oil painting, ornate but tasteful, no text."},
-        ], price=18.0),
+        ], price=18.0, sample_subject=_SUBJECT_PET),
     "renaissance-portrait": Product(
         "renaissance-portrait", "Renaissance Portrait", 2,
         "You, painted like an old master. Upload a photo and choose your favourite "

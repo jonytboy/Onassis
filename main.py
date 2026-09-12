@@ -251,6 +251,11 @@ def _parse_args() -> argparse.Namespace:
              "by default; add --apply to create the drafts.",
     )
     parser.add_argument(
+        "--prints", action="store_true",
+        help="With --publish-personaliser: also create the 'Printed' physical "
+             "listings (fulfilled automatically via Gelato from the buyer's file).",
+    )
+    parser.add_argument(
         "--reset", action="store_true",
         help="With --publish-personaliser --apply: forget the previous personaliser "
              "listings and recreate them (after deleting the old drafts on Etsy).",
@@ -1274,7 +1279,7 @@ def main() -> int:
 
         apply_integration_overrides(config, db)
         r = ContentEngine(config, db).publish_personaliser_listings(
-            apply=args.apply, reset=args.reset)
+            apply=args.apply, reset=args.reset, prints=args.prints)
         print(f"\nPERSONALISER LISTINGS — {'APPLIED' if r['applied'] else 'PREVIEW'} "
               f"({r['count']} product(s), {r['created']} draft(s), "
               f"{r['errors']} error(s)) — app base: {r['base'] or '(not set)'}\n")

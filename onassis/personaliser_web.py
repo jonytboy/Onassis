@@ -71,9 +71,12 @@ def build_personaliser_router(config: Any, db: Any) -> APIRouter:
         if not ok:
             return _err(why, 403)
         token = secrets.token_urlsafe(18)
+        raw = str(body.get("order_ref") or "")
+        # Etsy receipt ids are stored as bare digits so a print order can be
+        # matched back to this session by its receipt id; demo codes as typed.
+        order_ref = "".join(ch for ch in raw if ch.isdigit()) if why == "etsy" else raw.strip()
         db.insert_personaliser_session({"token": token, "product": key,
-                                        "order_ref": body.get("order_ref"),
-                                        "status": "unlocked"})
+                                        "order_ref": order_ref, "status": "unlocked"})
         return JSONResponse({"token": token})
 
     @router.post("/{key}/preview")
