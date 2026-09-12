@@ -143,9 +143,56 @@ class GelatoConnector:
 
     def _resolve_product(self, order: dict[str, Any]) -> dict[str, Any] | None:
         """From an order, resolve its product (sku, product_key, campaign, cost)."""
-        listing_id = order.get("product_id")
-        pub = self.db.get_publication_by_listing_id(str(listing_id)) if listing_id else None
-        sku = (pub or {}).get("product_id") or listing_id
+        import json
+        listing_id_or_pub_id = order.get("product_id")
+
+        # Try two approaches to find the publication:
+        # 1. By listing_id (real Etsy orders)
+        # 2. By publication ID (personaliser/test orders)
+        pub = None
+        if listing_id_or_pub_id:
+            pub = self.db.get_publication_by_listing_id(str(listing_id_or_pub_id))
+            if not pub:
+                # Try direct publication ID lookup
+                try:
+                    pub_id = int(listing_id_or_pub_id)
+                    pub = self.db.get_publication_by_id(pub_id)
+                except (ValueError, AttributeError, TypeError):
+                    pass
+
+        # Try to resolve from publication metadata first (for personaliser products)
+        if pub:
+            metadata = pub.get("metadata")
+            if metadata:
+                try:
+                    if isinstance(metadata, str):
+                        metadata = json.loads(metadata)
+                    product_key = metadata.get("product_key")
+                    variant = metadata.get("variant")
+
+                    # Map variant to gelato product_key
+                    if product_key and variant:
+                        # Digital products return a special marker
+                        if variant == "digital":
+                            return {"product_key": "digital", "sku": "digital"}
+
+                        # Non-digital variants map to gelato catalogue keys
+                        if variant == "canvas":
+                            search_key = "canvas"
+                        elif variant == "print":
+                            search_key = "posters"
+                        else:
+                            search_key = variant
+
+                        # Search for product with this product_key
+                        for p in self.db.list_products():
+                            if p.get("product_key") == search_key:
+                                return p
+                except (ValueError, TypeError, AttributeError):
+                    pass
+
+        # Fallback to original logic: SKU lookup
+        sku = (pub or {}).get("product_id") or listing_id_or_pub_id
         product = self.db.get_product_by_sku(str(sku)) if sku else None
         if not product:
             return None

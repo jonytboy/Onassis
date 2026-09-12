@@ -3182,6 +3182,15 @@ class Database:
             ).fetchone()
         return dict(row) if row else None
 
+    def get_publication_by_id(self, pub_id: int) -> dict[str, Any] | None:
+        """Get a publication by its ID (for personaliser product lookups)."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM publications WHERE id = ?",
+                (pub_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
     # --- Portfolio lifecycle reviews --------------------------------
 
     def insert_portfolio_review(self, review: dict[str, Any]) -> int:
