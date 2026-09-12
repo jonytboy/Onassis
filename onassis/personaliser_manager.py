@@ -223,33 +223,88 @@ class PersonaliserManager:
             return {"ok": False, "error": str(exc)}
 
     def publish_to_shopify(self, product_key: str, variant: str) -> dict[str, Any]:
-        """Publish a personaliser listing variant to Shopify as a product."""
+        """Publish a personaliser listing variant to Shopify as a draft product."""
         try:
             from onassis.connectors.shopify import ShopifyConnector
+            from onassis.llm import LLMClient
+            from onassis.seo import build_seo
 
             if product_key not in PRODUCTS:
                 return {"ok": False, "error": "Product not found"}
 
             product = PRODUCTS[product_key]
             shopify = ShopifyConnector(self.config, self.db)
+            llm = LLMClient(self.config)
 
             if not shopify.can_publish:
                 return {"ok": False, "error": "Shopify not configured"}
 
+            # Build SEO title/tags (same as Etsy)
+            title_prefix = "Printed " if variant == "print" else ("Canvas " if variant == "canvas" else "")
+            seo = build_seo({
+                "product_type": f"{title_prefix}{product.name}",
+                "subject": product.blurb,
+                "current_title": product.name,
+            }, llm)
+
             # Get pricing
             price = VARIANT_PRICING.get(variant, {}).get(product_key, 0)
 
-            # Build product title with variant
-            title = f"{product.name} — {variant.capitalize()}"
+            # Build description based on variant (same as Etsy)
+            if variant == "print":
+                desc = f"{product.blurb}\n\nPRINTED EDITION — professionally printed and shipped.\n\nWe print 300 DPI on premium matte paper and ship within 5 business days."
+            elif variant == "canvas":
+                desc = f"{product.blurb}\n\nCANVAS EDITION — gallery-wrapped, ready to hang.\n\nHigh-quality canvas print, 1.5\" depth stretchers, arrives ready to display."
+            else:  # digital
+                desc = f"{product.blurb}\n\nDIGITAL PRODUCT — instant download, personal use only."
 
-            # TODO: Implement actual Shopify product creation
-            # For now, return ready to integrate
+            # Create Shopify listing package
+            listing = {
+                "title": seo["title"],
+                "description": desc,
+                "price": price,
+                "tags": seo["tags"],
+                "product_id": f"{product_key}-{variant}",
+                "product_key": product_key,
+            }
+
+            # Create draft product on Shopify (active=False for draft)
+            result = shopify.publish_product(listing, active=False)
+
+            if not result.get("ok"):
+                return {"ok": False, "error": result.get("error", "Shopify product creation failed")}
+
+            product_id = result.get("product_id")
+
+            # Update publication record with Shopify product ID and status
+            pub_id = next((p["id"] for p in self.db.list_publications()
+                          if p.get("product_id") == f"{product_key}-{variant}"), None)
+            if pub_id:
+                # Update metadata with Shopify info
+                pub = next((p for p in self.db.list_publications() if p["id"] == pub_id), None)
+                if pub:
+                    meta = {}
+                    try:
+                        meta = json.loads(pub.get("metadata") or "{}")
+                    except Exception:
+                        pass
+                    meta["shopify_status"] = "draft_created"
+                    meta["shopify_product_id"] = product_id
+                    # Update the publication with new metadata
+                    with self.db._connect() as conn:
+                        conn.execute(
+                            "UPDATE publications SET status = ?, metadata = ? WHERE id = ?",
+                            ("draft", json.dumps(meta), pub_id)
+                        )
 
             return {
                 "ok": True,
                 "platform": "shopify",
-                "status": "product_created",
-                "title": title,
+                "status": "draft_created",
+                "product_id": product_id,
+                "handle": result.get("handle"),
+                "url": result.get("url"),
+                "title": seo["title"],
                 "price": price,
             }
         except Exception as exc:
