@@ -486,6 +486,15 @@ expansion:
       base_conversion: 0.020
       base_commercial: 82
       available: true
+    - key: posters
+      name: "Fine Art Poster"
+      gelato_uid: "fine_arts_poster_geo_simplified_product_12-0_hor_1000x1000-mm-40x40-inch_200-gsm-80lb-enhanced-uncoated"
+      production_cost: 8.0
+      retail_price: 32.0
+      base_brand_fit: 90
+      base_conversion: 0.035
+      base_commercial: 88
+      available: true
     - key: canvas
       name: "Canvas"
       gelato_uid: "wall-art_product_pf_canvas"

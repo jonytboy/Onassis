@@ -214,6 +214,18 @@ class GelatoConnector:
             else:
                 file_url = file_path
 
+        # Skip digital products — no Gelato fulfillment needed, customer gets download.
+        if product_key == "digital":
+            fid = self.db.insert_fulfilment({
+                "order_ref": ref, "order_id": order.get("id"),
+                "product_id": sku, "product_key": product_key,
+                "status": "fulfilled", "estimated_cost": 0,
+                "currency": order.get("currency", self.currency), "attempts": 1,
+            })
+            log.info("Digital order fulfilled (no Gelato needed) for %s.", ref)
+            return {"status": "fulfilled", "order_ref": ref, "reason": "digital download",
+                    "fulfilment_id": fid}
+
         gelato_uid = self._gelato_uid(product_key)
         if not gelato_uid:
             return self._fail(order, f"no gelato_uid for product '{product_key}'",
