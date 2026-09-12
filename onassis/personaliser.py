@@ -249,6 +249,32 @@ PRODUCTS: dict[str, Product] = {
 }
 
 
+def sync_personaliser_products_to_db(db: Any) -> None:
+    """Initialize personaliser_products table from PRODUCTS dataclass (one-time sync).
+
+    Call this at app startup to ensure all personaliser products have pricing
+    in the database. After this, pricing is managed via database/dashboard, not code.
+    """
+    for key, product in PRODUCTS.items():
+        db.upsert_personaliser_product(
+            key=key,
+            name=product.name,
+            price=product.price,
+            print_price=product.print_price,
+            tier=product.tier,
+            updated_by="system-init"
+        )
+
+
+def get_personaliser_price(db: Any, product_key: str) -> float:
+    """Get the current price for a personaliser product from the database."""
+    prod = db.get_personaliser_product(product_key)
+    if prod:
+        return float(prod.get("price", 12.0))
+    # Fallback to hardcoded if not in DB (shouldn't happen after sync)
+    return float(PRODUCTS.get(product_key, Product("fallback", "fallback", 1, "")).price)
+
+
 # --- Shared drawing helpers -------------------------------------------
 
 def _font(px: int, bold: bool = False):

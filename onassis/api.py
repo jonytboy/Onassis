@@ -119,6 +119,13 @@ def create_app(config: Config | None = None) -> FastAPI:
     protection = daily.protection
     experiments = ExperimentEngine(config, db)
     operations = OperationsManager(config, db, cycle=daily)
+
+    # Initialize personaliser product pricing table on startup (one-time sync).
+    try:
+        from onassis.personaliser import sync_personaliser_products_to_db
+        sync_personaliser_products_to_db(db)
+    except Exception:  # noqa: BLE001
+        log.warning("Could not sync personaliser pricing", exc_info=True)
     readiness = ProductionReadiness(config, db)
 
     app = FastAPI(
@@ -739,6 +746,40 @@ def create_app(config: Config | None = None) -> FastAPI:
     def personaliser_publish(product_key: str, variant: str) -> dict[str, Any]:
         """Publish personaliser listing to Etsy + Shopify."""
         return personaliser_mgr.publish(product_key, variant)
+
+    @app.get("/personaliser/pricing", tags=["personaliser"])
+    def personaliser_pricing() -> list[dict[str, Any]]:
+        """List all personaliser products with their current pricing."""
+        return db.list_personaliser_products()
+
+    @app.post("/personaliser/pricing/{product_key}", tags=["personaliser"])
+    def update_personaliser_price(
+        product_key: str, price: float, print_price: float | None = None
+    ) -> dict[str, Any]:
+        """Update price for a personaliser product."""
+        from onassis.personaliser import PRODUCTS
+
+        if product_key not in PRODUCTS:
+            raise HTTPException(status_code=404, detail=f"Unknown product: {product_key}")
+
+        prod = PRODUCTS[product_key]
+        final_print_price = print_price or prod.print_price
+
+        db.upsert_personaliser_product(
+            key=product_key,
+            name=prod.name,
+            price=price,
+            print_price=final_print_price,
+            tier=prod.tier,
+            updated_by="dashboard"
+        )
+
+        return {
+            "product_key": product_key,
+            "price": price,
+            "print_price": final_print_price,
+            "updated_at": db.get_personaliser_product(product_key)["updated_at"]
+        }
 
     return app
 

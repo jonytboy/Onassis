@@ -31,7 +31,7 @@ log = get_logger(__name__)
 # Bump whenever the schema changes (new table / column). Surfaced in the
 # Operations Centre "Environment" panel so an operator can see at a glance
 # whether the running database matches the code they expect.
-SCHEMA_VERSION = 50
+SCHEMA_VERSION = 51
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS briefs (
@@ -274,6 +274,19 @@ CREATE TABLE IF NOT EXISTS personaliser_sessions (
     fields      TEXT,                          -- JSON of the buyer's inputs
     file_path   TEXT,                          -- finished deliverable
     created_at  TEXT    NOT NULL
+);
+
+-- Personaliser product pricing (Sprint 44.5): allows dynamic price management
+-- from the dashboard without code changes. Stores the live price for each
+-- personaliser product (photo-to-art products like royal-pet, pet-portrait).
+CREATE TABLE IF NOT EXISTS personaliser_products (
+    key             TEXT    PRIMARY KEY,       -- product key (royal-pet, vintage-photo, etc)
+    name            TEXT    NOT NULL,
+    tier            INTEGER NOT NULL DEFAULT 2,    -- 1=computed, 2=AI-from-photo
+    price           REAL    NOT NULL DEFAULT 12.0,
+    print_price     REAL    NOT NULL DEFAULT 32.0,
+    updated_at      TEXT    NOT NULL,
+    updated_by      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS products (
@@ -2088,6 +2101,46 @@ class Database:
             except (ValueError, TypeError):
                 out[r["key"]] = r["value"]
         return out
+
+    # --- Personaliser product pricing (Sprint 44.5) ------------------
+
+    def get_personaliser_product(self, key: str) -> dict[str, Any] | None:
+        """Get pricing and metadata for a personaliser product by key."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM personaliser_products WHERE key = ?", (key,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_personaliser_products(self) -> list[dict[str, Any]]:
+        """List all personaliser products with their current pricing."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM personaliser_products ORDER BY name"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def upsert_personaliser_product(
+        self, key: str, name: str, price: float, print_price: float,
+        tier: int = 2, updated_by: str | None = None
+    ) -> None:
+        """Insert or update personaliser product pricing."""
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO personaliser_products
+                    (key, name, tier, price, print_price, updated_at, updated_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    name = excluded.name,
+                    tier = excluded.tier,
+                    price = excluded.price,
+                    print_price = excluded.print_price,
+                    updated_at = excluded.updated_at,
+                    updated_by = excluded.updated_by
+                """,
+                (key, name, tier, price, print_price, _utcnow(), updated_by),
+            )
 
     # --- Deployments (Sprint 40.1 audit trail) ----------------------
 
