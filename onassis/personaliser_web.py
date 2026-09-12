@@ -150,7 +150,35 @@ def build_personaliser_router(config: Any, db: Any) -> APIRouter:
                 return _err("Pick one of your variations first.")
             fp.write_bytes(upscale_for_print(src.read_bytes()))
         db.update_personaliser_session(s["token"], status="done", file_path=str(fp))
-        return JSONResponse({"download": f"/make/download/{s['token']}"})
+
+        # Check if the buyer's order is for a print listing.
+        # Look up the Etsy order to see if it's a print product.
+        order_ref_normalized = s.get("order_ref", "")
+        order = None
+        for o in db.get_orders_by_platform("etsy"):
+            # Match by normalized order_ref (digits only).
+            o_digits = "".join(ch for ch in str(o.get("order_ref") or "") if ch.isdigit())
+            if o_digits == order_ref_normalized:
+                order = o
+                break
+
+        is_print_order = False
+        if order:
+            # Check if the order's listing/product is for a print variant.
+            listing_id = str(order.get("product_id") or "")
+            pub = db.get_publication_by_listing_id(listing_id)
+            if pub:
+                product_id = str(pub.get("product_id") or "")
+                is_print_order = product_id.startswith("personaliser-") and product_id.endswith("-print")
+
+        if is_print_order:
+            return JSONResponse({
+                "print_order": True,
+                "message": "Your order is being prepared for printing and will ship within 5 business days.",
+                "download": f"/make/download/{s['token']}"
+            })
+        else:
+            return JSONResponse({"download": f"/make/download/{s['token']}"})
 
     @router.get("/download/{token}")
     def download(token: str):
@@ -276,5 +304,11 @@ $('finish').onclick=async()=>{$('finish').disabled=true;$('finish').textContent=
   const body={token};if(S.tier===1)body.fields=fields();else body.choice=choice;
   const r=await fetch('/make/'+S.key+'/finalize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const d=await r.json();if(!r.ok){$('err2').textContent=d.error||'error';$('finish').disabled=false;$('finish').textContent='Finish & download';return;}
-  location.href=d.download;};
+  if(d.print_order){
+    $('finish').textContent='Order submitted ✓';
+    $('phint').textContent=d.message;
+    setTimeout(()=>{location.href=d.download;},2000);
+  }else{
+    location.href=d.download;
+  }};
 </script></body></html>"""
