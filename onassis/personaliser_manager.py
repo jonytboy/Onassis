@@ -19,18 +19,8 @@ log = get_logger(__name__)
 # Products that support canvas variant
 CANVAS_PRODUCTS = {"pet-portrait", "vintage-photo"}
 
-# Variant pricing tiers
-VARIANT_PRICING = {
-    "digital": {
-        "pet-portrait": 18.0, "vintage-photo": 15.0, "renaissance-portrait": 18.0,
-        "royal-pet": 18.0, "general-pet": 18.0, "royal-portrait": 18.0,
-        "victorian-portrait": 15.0, "popstar-80s": 16.0, "gatsby-1920s": 15.0,
-        "boyband-90s": 18.0, "royal-family": 20.0,
-        "place-poster": 9.0, "star-map": 12.0, "birth-stats": 9.0, "invite": 9.0,
-    },
-    "canvas": {"pet-portrait": 45.0, "vintage-photo": 42.0},  # Canvas for photo products
-    "print": {k: 32.0 for k in PRODUCTS.keys()},  # Print for all
-}
+# NOTE: Pricing is now dynamically managed in personaliser_products table.
+# See get_variant_price() below for how pricing is resolved.
 
 
 class PersonaliserManager:
@@ -39,6 +29,25 @@ class PersonaliserManager:
     def __init__(self, config: Config, db: Database) -> None:
         self.config = config
         self.db = db
+
+    def get_variant_price(self, product_key: str, variant: str) -> float:
+        """Get price for a product variant from the database.
+
+        Variants: 'digital' (product.price), 'canvas' (product.print_price), 'print' (product.print_price)
+        """
+        prod = self.db.get_personaliser_product(product_key)
+        if not prod:
+            # Fallback to hardcoded product if not in DB
+            if product_key in PRODUCTS:
+                p = PRODUCTS[product_key]
+                return p.print_price if variant in ("canvas", "print") else p.price
+            return 0.0
+
+        # Return appropriate price based on variant
+        if variant == "digital":
+            return float(prod.get("price", 9.0))
+        else:  # canvas or print
+            return float(prod.get("print_price", 48.0))
 
     def get_products(self) -> list[dict[str, Any]]:
         """Return all 15 personaliser products with variant options."""
@@ -58,7 +67,7 @@ class PersonaliserManager:
                 "print_price": product.print_price,
                 "available_variants": variants,
                 "pricing": {
-                    v: VARIANT_PRICING.get(v, {}).get(key, 32.0)
+                    v: self.get_variant_price(key, v)
                     for v in variants
                 },
             })
@@ -84,10 +93,10 @@ class PersonaliserManager:
                     errors.append(f"Canvas not available for {product_key}")
                     continue
 
-                # Get pricing
-                price = VARIANT_PRICING.get(variant, {}).get(product_key)
-                if not price:
-                    errors.append(f"No pricing for {variant} variant of {product_key}")
+                # Get pricing from database
+                price = self.get_variant_price(product_key, variant)
+                if not price or price <= 0:
+                    errors.append(f"No valid pricing for {variant} variant of {product_key}")
                     continue
 
                 # Create database record
@@ -177,8 +186,8 @@ class PersonaliserManager:
                 "current_title": product.name,
             }, llm)
 
-            # Get pricing
-            price = VARIANT_PRICING.get(variant, {}).get(product_key, 0)
+            # Get pricing from database
+            price = self.get_variant_price(product_key, variant)
 
             # Build description based on variant
             if variant == "print":
@@ -247,8 +256,8 @@ class PersonaliserManager:
                 "current_title": product.name,
             }, llm)
 
-            # Get pricing
-            price = VARIANT_PRICING.get(variant, {}).get(product_key, 0)
+            # Get pricing from database
+            price = self.get_variant_price(product_key, variant)
 
             # Build description based on variant (same as Etsy)
             if variant == "print":
