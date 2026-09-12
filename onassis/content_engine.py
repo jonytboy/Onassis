@@ -1440,7 +1440,13 @@ class ContentEngine:
             if not apply:
                 row["status"] = "would_create"
             elif not etsy.is_configured:
-                row["status"] = "etsy_not_connected"
+                row["status"] = "pending_oauth"
+                # Store the listing metadata even though Etsy isn't authorized yet.
+                # Once OAuth is set up, re-run this with apply=True to publish the drafts.
+                self.db.insert_publication({
+                    "platform": "etsy", "product_id": pid, "campaign_id": 0,
+                    "listing_id": None, "mode": "draft", "status": "pending_oauth"})
+                created += 1
             else:
                 try:
                     # Real gallery images first — a photo product with no genuine
