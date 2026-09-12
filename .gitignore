@@ -76,3 +76,4 @@ gunicorn.conf.py
 # Deployment state markers
 .onassis_deploy_state
 .onassis_restart_required
+onassis.db
