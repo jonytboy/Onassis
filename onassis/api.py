@@ -712,6 +712,34 @@ def create_app(config: Config | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"No campaign with id {campaign_id}.")
         return full
 
+    # --- PERSONALISER PRODUCTS (new tab) ---
+    from onassis.personaliser_manager import PersonaliserManager
+
+    personaliser_mgr = PersonaliserManager(config, db)
+
+    @app.get("/personaliser/products", tags=["personaliser"])
+    def personaliser_products() -> list[dict[str, Any]]:
+        """List all 15 personaliser products with available variants."""
+        return personaliser_mgr.get_products()
+
+    @app.post("/personaliser/create", tags=["personaliser"])
+    def personaliser_create(product_key: str, variants: list[str]) -> dict[str, Any]:
+        """Create personaliser listing(s) with selected variants.
+
+        Variants: 'digital', 'canvas' (pet/vintage only), 'print'
+        """
+        return personaliser_mgr.create_listing(product_key, variants)
+
+    @app.get("/personaliser/listings", tags=["personaliser"])
+    def personaliser_listings() -> list[dict[str, Any]]:
+        """List all created personaliser listings with their publish status."""
+        return personaliser_mgr.get_listings()
+
+    @app.post("/personaliser/publish", tags=["personaliser"])
+    def personaliser_publish(product_key: str, variant: str) -> dict[str, Any]:
+        """Publish personaliser listing to Etsy + Shopify."""
+        return personaliser_mgr.publish(product_key, variant)
+
     return app
 
 
