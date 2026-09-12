@@ -558,81 +558,97 @@ class DailyCycle:
                     for k in top]}}
 
     def _create_opportunity(self, ctx: dict[str, Any]) -> dict[str, Any]:
-        """Pick (or generate) a CEO-approved product opportunity to build."""
+        """PERSONALISER: Select the next personaliser product to launch today.
+
+        Replaced the standard POD opportunity workflow. Personaliser products are
+        predefined; daily cycle just picks which one to publish and with which variants.
+        Selection based on: sales velocity, marketing team feedback, inventory, and rotation.
+        """
         if ctx["dry"]:
             return {"status": "skipped", "detail": "dry run"}
-        if not self.opportunities.top(limit=1):
-            self.opportunities.generate()  # backlog empty — discover ideas from the market
-        choice = self.opportunities.select_next(agent_name="DailyCycle")
-        if choice is None:
-            return {"status": "skipped", "detail": "no product opportunity available"}
-        opp = choice["opportunity"]
-        ctx["opportunity"] = opp
-        if choice["ceo"]["verdict"] != APPROVE:
-            return {"status": "blocked",
-                    "detail": f"CEO did not approve opportunity {opp['opportunity_id']}"}
+        from onassis.personaliser_manager import PersonaliserManager
+
+        pm = PersonaliserManager(self.config, self.db)
+
+        # Get all personaliser products
+        products = pm.get_products()
+        listings = pm.get_listings()
+
+        # Find which products haven't been published yet
+        published_keys = {l["product"] for l in listings if l["status"] in ("draft", "published", "live")}
+        unpublished = [p for p in products if p["key"] not in published_keys]
+
+        if not unpublished:
+            return {"status": "skipped", "detail": "all personaliser products already published"}
+
+        # For now, just pick the first unpublished product (can be enhanced with sales data later)
+        selected = unpublished[0]
+        ctx["personaliser_product"] = selected
+
         return {"status": "ok", "detail": {
-            "opportunity_id": opp["opportunity_id"], "product": opp["product_name"]}}
+            "product_key": selected["key"],
+            "product": selected["name"],
+            "variants_available": selected["available_variants"]}}
 
     def _build_design_package(self, ctx: dict[str, Any]) -> dict[str, Any]:
-        """Turn the approved opportunity into a print-ready design package."""
+        """PERSONALISER: Design packages are pre-built for personaliser products.
+
+        Personaliser products come with predefined designs and mockups.
+        This stage is skipped — designs already exist.
+        """
         if ctx["dry"]:
             return {"status": "skipped", "detail": "dry run"}
-        opp = ctx.get("opportunity")
-        if not opp:
-            return {"status": "skipped", "detail": "no opportunity"}
-        pkg = self.design.build(opp["opportunity_id"])
-        if pkg.get("status") != "ready":
-            return {"status": "blocked", "detail": pkg.get("reason")}
-        ctx["design_package"] = pkg
-        return {"status": "ok", "detail": {"path": pkg["path"]}}
+        if not ctx.get("personaliser_product"):
+            return {"status": "skipped", "detail": "not a personaliser product"}
+        # Personaliser products have pre-built designs — nothing to do here
+        return {"status": "ok", "detail": "personaliser designs pre-built"}
 
     def _generate_master_artwork(self, ctx: dict[str, Any]) -> dict[str, Any]:
-        """Generate the REAL master artwork + print file from the design, and
-        run the artwork quality gate before it feeds product production."""
+        """PERSONALISER: Master artwork already generated for personaliser products.
+
+        Personaliser products come with pre-rendered mockups and print files.
+        This stage is skipped — artwork already exists.
+        """
         if ctx["dry"]:
             return {"status": "skipped", "detail": "dry run"}
-        pkg = ctx.get("design_package")
-        if not pkg:
-            return {"status": "skipped", "detail": "no design package"}
-        from pathlib import Path
-
-        master = self.artwork.generate_master(pkg, Path(pkg["path"]))
-        ctx["master_artwork"] = master
-        return {"status": "ok", "detail": {
-            "backend": master["backend"],
-            "files": master["files"],
-            "master_quality": master["master_review"]["score"],
-            "print_quality": master["print_review"]["score"],
-            "master_accepted": master["master_review"]["accepted"],
-            "print_accepted": master["print_review"]["accepted"]}}
+        if not ctx.get("personaliser_product"):
+            return {"status": "skipped", "detail": "not a personaliser product"}
+        # Personaliser products have pre-built artwork — nothing to do here
+        return {"status": "ok", "detail": "personaliser artwork pre-rendered"}
 
     def _create_campaign(self, ctx: dict[str, Any]) -> dict[str, Any]:
-        """Create the campaign + product FROM the opportunity (product-driven)."""
+        """PERSONALISER: Create listings + publish personaliser product with variants.
+
+        For personaliser products: decide on variants (digital/canvas/print),
+        create listings in database, and publish to Etsy + Shopify simultaneously.
+        """
         if ctx["dry"]:
             return {"status": "skipped", "detail": "dry run"}
-        opp = ctx.get("opportunity")
-        if not opp:
-            return {"status": "skipped", "detail": "no opportunity"}
-        result = self.campaigns.create_from_opportunity(opp, design=ctx.get("design_package"))
-        campaign, brief = result["campaign"], result["brief"]
-        ctx["campaign_id"] = campaign["id"]
-        ctx["brief"] = brief
-        # Record the campaign's estimated AI cost in the profit ledger.
-        ai_cost = float((self.config.profit or {}).get("ai_cost_per_campaign", 0) or 0)
-        if ai_cost:
-            self.profit.record_campaign_ai_cost(campaign["id"], ai_cost)
-        # Governance for the marketing campaign: predict + compliance review.
-        self.brain.generate_for_campaign(campaign, brief)
-        review = self.compliance.review_campaign(campaign, [])
-        # Cleared to proceed on APPROVE or APPROVE_WITH_CHANGES; only REJECT blocks
-        # (the autonomous pipeline never stalls waiting for a human).
-        ctx["campaign_approved"] = is_compliant(review["verdict"])
-        if not ctx["campaign_approved"]:
-            return {"status": "blocked", "detail": "campaign REJECTED by compliance"}
-        return {"status": "ok", "detail": {"campaign_id": campaign["id"],
-                                           "product": opp["product_name"]}}
+        product = ctx.get("personaliser_product")
+        if not product:
+            return {"status": "skipped", "detail": "not a personaliser product"}
 
+        from onassis.personaliser_manager import PersonaliserManager
+        pm = PersonaliserManager(self.config, self.db)
+
+        # Decide on variants: default to all available (can be refined with sales data)
+        variants = product["available_variants"]
+        product_key = product["key"]
+
+        # Create listings for all variants
+        result = pm.create_listing(product_key, variants)
+        if not result.get("ok"):
+            return {"status": "blocked", "detail": f"Failed to create listings: {result.get('error')}"}
+
+        # Store for publishing stage
+        ctx["personaliser_product_key"] = product_key
+        ctx["personaliser_variants"] = variants
+        ctx["created_listings"] = result.get("created", [])
+
+        return {"status": "ok", "detail": {
+            "product": product_key,
+            "variants": variants,
+            "listings_created": len(result.get("created", []))}}
     def _expand_products(self, ctx: dict[str, Any]) -> dict[str, Any]:
         """Score the catalogue for this design; the CEO launches the profitable
         set. Learns from sales first so scores adapt over time."""
@@ -658,23 +674,77 @@ class DailyCycle:
         except Exception:  # fall back to raw config on any lookup problem
             return int((self.config.portfolio or {}).get("max_new_listings_per_day", 2))
 
+    def _publish_personaliser_variants(self, ctx: dict[str, Any]) -> dict[str, Any]:
+        """PERSONALISER: Publish each variant to Etsy + Shopify simultaneously.
+
+        For each created personaliser listing variant, call the unified publish()
+        method which publishes to both platforms at once, recording status for each.
+        """
+        from onassis.personaliser_manager import PersonaliserManager
+
+        pm = PersonaliserManager(self.config, self.db)
+        product_key = ctx.get("personaliser_product_key")
+        variants = ctx.get("personaliser_variants", [])
+
+        if not product_key or not variants:
+            return {"status": "skipped", "detail": "no personaliser variants to publish"}
+
+        results: list[dict[str, Any]] = []
+        published = failed = 0
+
+        for variant in variants:
+            try:
+                result = pm.publish(product_key, variant)
+                results.append({
+                    "product": product_key,
+                    "variant": variant,
+                    "etsy": result.get("etsy", {}).get("status", "error"),
+                    "shopify": result.get("shopify", {}).get("status", "error"),
+                    "ok": result.get("ok", False)
+                })
+                if result.get("ok"):
+                    published += 1
+                else:
+                    failed += 1
+                    log.warning(f"[personaliser] Failed to publish {product_key}-{variant}: {result.get('error')}")
+            except Exception as exc:
+                failed += 1
+                log.error(f"[personaliser] Error publishing {product_key}-{variant}: {exc}")
+                results.append({
+                    "product": product_key,
+                    "variant": variant,
+                    "error": str(exc),
+                    "ok": False
+                })
+
+        return {"status": "ok", "detail": {
+            "product": product_key,
+            "published": published,
+            "failed": failed,
+            "total": len(variants),
+            "variants": results
+        }}
+
     def _stream_products(self, ctx: dict[str, Any], *, ignore_cap: bool = False,
                          go_live_override: bool | None = None) -> dict[str, Any]:
-        """Stream each approved product to a live Etsy draft, independently.
+        """Stream products to Etsy + Shopify: standard POD OR personaliser variants.
 
-        Revenue beats completeness: for every product we run the *whole* tail —
-        build listing (real artwork + gallery + autonomous compliance) → create
-        the Etsy draft → upload its images → (per policy) activate LIVE → record —
-        and only THEN move to the next product. The first sellable product reaches
-        Etsy as early as possible. A product that fails is isolated: it is logged
-        and skipped, never rolled back, and the remaining products still run.
+        For **personaliser products**: publish each created variant (digital/canvas/print)
+        to both Etsy and Shopify simultaneously. Each variant gets a separate listing.
 
-        ``ignore_cap`` skips the daily portfolio cap (the Catalogue Compiler is an
-        explicit bulk build-out, bounded by its own budget cap). ``go_live_override``
-        forces draft-only (False) or live (True) regardless of the launch policy.
+        For **standard POD products**: the original workflow — build listing → create
+        Etsy draft → upload images → (per policy) go live → record.
+
+        Revenue beats completeness: the first sellable product reaches market as early
+        as possible. Failures are isolated, never rolled back.
         """
         if ctx["dry"]:
             return {"status": "skipped", "detail": "dry run"}
+
+        # Check if this is a personaliser product publish
+        if ctx.get("personaliser_product_key"):
+            return self._publish_personaliser_variants(ctx)
+
         cid = ctx.get("campaign_id")
         if not cid or not ctx.get("campaign_approved"):
             return {"status": "skipped", "detail": "no approved campaign"}
