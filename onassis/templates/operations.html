@@ -667,6 +667,85 @@
     </div>
   </div>
 
+  <!-- PERSONALISER -->
+  <div x-show="tab==='personaliser'">
+    <!-- Products Grid -->
+    <div class="panel" x-show="personaliserProducts && personaliserProducts.length">
+      <h2>Products Catalogue</h2>
+      <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(240px,1fr))">
+        <template x-for="p in personaliserProducts" :key="p.key">
+          <div style="background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:14px;cursor:pointer"
+               @click="selectProduct(p)" :class="{active:selectedProduct?.key===p.key}"
+               style="border-color:var(--accent)" x-show="selectedProduct?.key===p.key">
+            <div style="font-weight:700;margin-bottom:6px" x-text="p.name"></div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:8px" x-text="p.tier"></div>
+            <div style="font-size:11px;color:var(--faint);line-height:1.5" x-text="p.blurb"></div>
+            <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
+              <template x-for="v in p.available_variants" :key="v">
+                <div style="font-size:10px;background:var(--line);color:var(--muted);padding:3px 7px;border-radius:6px"
+                     :class="{selected:selectedVariants?.includes(v)}" x-text="v.toUpperCase()"></div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Variant Selector & Create -->
+    <div class="panel" x-show="selectedProduct">
+      <h2>Configure Variants</h2>
+      <div style="margin-bottom:16px">
+        <div style="font-weight:600;margin-bottom:10px" x-text="'Create listings for: '+selectedProduct.name"></div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+          <template x-for="v in selectedProduct.available_variants" :key="v">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" :value="v" x-model="selectedVariants" style="cursor:pointer;width:16px;height:16px">
+              <span x-text="v.charAt(0).toUpperCase()+v.slice(1)"></span>
+              <span style="color:var(--muted);font-size:12px" x-text="'£'+selectedProduct.pricing[v].toFixed(2)"></span>
+            </label>
+          </template>
+        </div>
+        <button class="btn primary" @click="createListings()" :disabled="!selectedVariants.length">
+          Create <span x-text="selectedVariants.length"></span> Listing(s)
+        </button>
+      </div>
+    </div>
+
+    <!-- Created Listings -->
+    <div class="panel" x-show="personaliserListings && personaliserListings.length">
+      <h2>Created Listings</h2>
+      <table>
+        <thead><tr><th>Product</th><th>Variant</th><th>Price</th><th>Status</th><th>Etsy</th><th>Shopify</th><th>Action</th></tr></thead>
+        <tbody>
+          <template x-for="l in personaliserListings" :key="l.id">
+            <tr>
+              <td x-text="l.product"></td>
+              <td style="text-transform:capitalize" x-text="l.variant"></td>
+              <td>£<span x-text="l.price?.toFixed(2)||'—'"></span></td>
+              <td><span class="pill" :class="l.status" x-text="l.status"></span></td>
+              <td><span class="pill" :class="l.etsy_status?.replace('_','-')" x-text="l.etsy_status||'pending'"></span></td>
+              <td><span class="pill" :class="l.shopify_status?.replace('_','-')" x-text="l.shopify_status||'pending'"></span></td>
+              <td><button class="btn small" @click="publishVariant(l.product,l.variant)" :disabled="l.status==='published'">Publish</button></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Empty State -->
+    <div class="panel" x-show="!personaliserListings || !personaliserListings.length">
+      <h2>Getting Started</h2>
+      <div style="color:var(--muted);line-height:1.6">
+        <p>1. Browse the products catalogue above</p>
+        <p>2. Select a product and choose variants (digital, canvas*, print)</p>
+        <p>3. Create listings for your selected variants</p>
+        <p>4. Publish to Etsy + Shopify simultaneously</p>
+        <p style="font-size:12px;color:var(--faint)">* Canvas available for pet-portrait and vintage-photo only</p>
+      </div>
+      <button class="btn" @click="loadPersonaliserData()">Load Products</button>
+    </div>
+  </div>
+
   <!-- MARKETING -->
   <div x-show="tab==='marketing'">
     <!-- Content Library — every product's videos, blogs and FB posts in one place -->
@@ -1218,7 +1297,8 @@ function ops(){
     tab:'overview',
     tabs:[{id:'overview',label:'Overview'},{id:'business',label:'Business'},{id:'commercial',label:'Commercial'},
           {id:'catalogue',label:'Catalogue'},{id:'content',label:'Content'},{id:'aicost',label:'AI Cost'},
-          {id:'products',label:'Products'},{id:'marketing',label:'Marketing'},
+          {id:'products',label:'Products'},{id:'personaliser',label:'Personaliser'},
+          {id:'marketing',label:'Marketing'},
           {id:'approvals',label:'Approvals'},{id:'integrations',label:'Integrations'},
           {id:'system',label:'System'}],
     status:null, run:null, logs:[], logSeq:0, logUid:0, _polling:false,
@@ -1232,6 +1312,7 @@ function ops(){
     catalogue:null, collections:null, content:null, blog:null, blogDx:null, blogMaint:false, publishingAll:false, publishAllTotal:0, publishAllDone:0,
     productSearch:'', productFilter:'all', productHealth:null, toast:'',
     productFilters:[['all','All'],['awaiting_approval','Awaiting Approval'],['ready_to_publish','Ready to Publish'],['draft_created','Draft Created'],['live','Live'],['failed','Failed'],['etsy','On Etsy'],['shopify','On Shopify'],['both','Etsy + Shopify'],['archived','Archived']],
+    personaliserProducts:[], personaliserListings:[], selectedProduct:null, selectedVariants:[],
     get running(){ return this.run?.status==='running'; },
     get mode(){ return this.status?.business_mode || 'running'; },
     headers(){ return this.key ? {'X-API-Key':this.key} : {}; },
@@ -1299,6 +1380,8 @@ function ops(){
       else if(t==='products'){ const d=await this.get('/operations/api/products?filter='+this.productFilter);
         this.products=d.products; this.productSummary=d.summary;
         this.productHealth=await this.get('/operations/api/production-health'); }
+      else if(t==='personaliser'){ this.personaliserProducts=await this.get('/personaliser/products');
+        this.personaliserListings=await this.get('/personaliser/listings'); }
       else if(t==='marketing'){ this.marketing=await this.get('/operations/api/marketing');
         this.distribution=await this.get('/operations/api/distribution');
         this.overview=await this.get('/operations/api/marketing/overview');
@@ -1515,6 +1598,25 @@ function ops(){
       const r=await this.post('/operations/api/business-settings',{changes});
       if(r&&r.settings) this.settings=r.settings; else alert('Save failed — check values.');
       this.savingSettings=false; },
+    // Personaliser methods
+    selectProduct(product){ this.selectedProduct=product; this.selectedVariants=[]; },
+    async loadPersonaliserData(){
+      this.personaliserProducts=await this.get('/personaliser/products');
+      this.personaliserListings=await this.get('/personaliser/listings'); },
+    async createListings(){
+      if(!this.selectedProduct||!this.selectedVariants.length){ alert('Select a product and at least one variant.'); return; }
+      const r=await this.post('/personaliser/create',{product_key:this.selectedProduct.key,variants:this.selectedVariants});
+      if(r&&r.ok){
+        this.showToast('Created '+r.created.length+' listing(s) for '+this.selectedProduct.name);
+        this.selectedProduct=null; this.selectedVariants=[];
+        this.personaliserListings=await this.get('/personaliser/listings');
+      } else alert('Failed to create listings: '+(r?.error||'unknown error')); },
+    async publishVariant(product_key,variant){
+      const r=await this.post('/personaliser/publish',{product_key,variant});
+      if(r&&r.ok){
+        this.showToast('Published '+variant+' variant to Etsy + Shopify');
+        this.personaliserListings=await this.get('/personaliser/listings');
+      } else alert('Failed to publish: '+(r?.error||'unknown error')); },
     go(t){ this.tab=t; this.loadTab(t); },
     refreshAll(){ this.refreshStatus(); this.refreshEnvironment(); this.refreshRun(); this.pollLogs(); this.loadTab(this.tab); },
     init(){ this.refreshAll();
