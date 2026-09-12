@@ -151,9 +151,10 @@ def build_personaliser_router(config: Any, db: Any) -> APIRouter:
             fp.write_bytes(upscale_for_print(src.read_bytes()))
         db.update_personaliser_session(s["token"], status="done", file_path=str(fp))
 
-        # Check if the buyer's order is for a print listing.
-        # Look up the Etsy order to see if it's a print product.
+        # Check if the buyer's order is for a physical (canvas/print) or digital listing.
+        # Look up the Etsy order to determine the variant.
         order_ref_normalized = s.get("order_ref", "")
+        variant = None  # digital | canvas | print
         order = None
         for o in db.get_orders_by_platform("etsy"):
             # Match by normalized order_ref (digits only).
@@ -162,21 +163,36 @@ def build_personaliser_router(config: Any, db: Any) -> APIRouter:
                 order = o
                 break
 
-        is_print_order = False
+        # Determine variant from publication metadata if available
         if order:
-            # Check if the order's listing/product is for a print variant.
             listing_id = str(order.get("product_id") or "")
             pub = db.get_publication_by_listing_id(listing_id)
             if pub:
-                product_id = str(pub.get("product_id") or "")
-                is_print_order = product_id.startswith("personaliser-") and product_id.endswith("-print")
+                import json
+                metadata = pub.get("metadata")
+                if metadata:
+                    try:
+                        if isinstance(metadata, str):
+                            metadata = json.loads(metadata)
+                        variant = metadata.get("variant")
+                    except (ValueError, TypeError, json.JSONDecodeError):
+                        pass
 
-        if is_print_order:
+        # Canvas orders go to print production
+        if variant == "canvas":
             return JSONResponse({
-                "print_order": True,
-                "message": "Your order is being prepared for printing and will ship within 5 business days.",
+                "canvas_order": True,
+                "message": "Your canvas is being prepared and will ship within 7-10 business days.",
                 "download": f"/make/download/{s['token']}"
             })
+        # Print orders go to print production
+        elif variant == "print":
+            return JSONResponse({
+                "print_order": True,
+                "message": "Your print order is being prepared and will ship within 5-7 business days.",
+                "download": f"/make/download/{s['token']}"
+            })
+        # Digital orders (variant == "digital" or unknown) are instant downloads
         else:
             return JSONResponse({"download": f"/make/download/{s['token']}"})
 
@@ -283,10 +299,11 @@ async function preview(){ if(!token)return; $('err2').textContent='';
    $('finish').disabled=false;
   }else{ if(!photo){$('err2').textContent='Upload a photo first.';return;}
    $('gen').disabled=true;$('gen').textContent='Painting… (about a minute)';$('phint').textContent='Creating your 3 variations…';
+   if($('f_style')){$('f_style').disabled=true;}
    const r=await fetch('/make/'+S.key+'/preview',{method:'POST',headers:{'Content-Type':'application/json'},
      body:JSON.stringify({token,fields:fields(),photo})});
    const d=await r.json();$('gen').disabled=false;$('gen').textContent='Create my 3 variations';
-   if(!r.ok){$('err2').textContent=d.error||'error';return;}
+   if(!r.ok){$('err2').textContent=d.error||'error';if($('f_style')){$('f_style').disabled=false;}return;}
    const V=$('vars');V.innerHTML='';$('img').src='';
    d.variations.forEach((src,i)=>{const im=document.createElement('img');im.src=src;
      im.onclick=()=>{choice=i;[...V.children].forEach(c=>c.classList.remove('on'));im.classList.add('on');$('finish').disabled=false;};
