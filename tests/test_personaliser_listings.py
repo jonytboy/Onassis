@@ -87,3 +87,44 @@ def test_reset_forgets_old_listings_and_recreates(eng):
     again = eng.publish_personaliser_listings(apply=True, reset=True)
     assert again["created"] == 4
     assert len(eng._seo_etsy.drafts) == 8
+
+
+def test_publish_print_listings_creates_physical_variants(eng):
+    """Print listings are physical type and use higher price."""
+    r = eng.publish_personaliser_listings(apply=True, prints=True)
+    by = {row["product"]: row for row in r["products"]}
+    # Every computed product gets a print variant.
+    for key in ("place-poster", "star-map", "birth-stats", "invite"):
+        assert by[key]["status"] == "draft_created", by[key]
+        lid = by[key]["listing_id"]
+        # Find the draft for this listing.
+        draft = next((d for d in eng._seo_etsy.drafts if d.get("listing_id") or 0 == lid), None)
+        # Print listings are physical type.
+        assert any(d.get("type") == "physical" for d in eng._seo_etsy.drafts[-4:])
+        # Price is higher for prints.
+        from onassis.personaliser import PRODUCTS
+        product = PRODUCTS[key]
+        assert product.print_price > product.price
+    assert r["created"] == 4
+    # Re-run is idempotent.
+    again = eng.publish_personaliser_listings(apply=True, prints=True)
+    assert again["created"] == 0
+
+
+def test_print_listings_reset_separately_from_digital(eng):
+    """Reset only affects listings matching the prints flag."""
+    # Create digital listings.
+    digital = eng.publish_personaliser_listings(apply=True, prints=False)
+    assert digital["created"] == 4
+    # Create print listings.
+    prints = eng.publish_personaliser_listings(apply=True, prints=True)
+    assert prints["created"] == 4
+    # Now we have 8 listings total.
+    assert len(eng._seo_etsy.drafts) == 8
+    # Reset with prints=True only deletes the print listings.
+    again_prints = eng.publish_personaliser_listings(apply=True, reset=True, prints=True)
+    assert again_prints["created"] == 4
+    # Digital listings should still be there (just marked as exists).
+    again_digital = eng.publish_personaliser_listings(apply=True, prints=False)
+    assert all(row["status"] == "exists" for row in again_digital["products"]
+               if row["product"] in ("place-poster", "star-map", "birth-stats", "invite"))
