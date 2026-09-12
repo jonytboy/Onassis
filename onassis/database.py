@@ -31,7 +31,7 @@ log = get_logger(__name__)
 # Bump whenever the schema changes (new table / column). Surfaced in the
 # Operations Centre "Environment" panel so an operator can see at a glance
 # whether the running database matches the code they expect.
-SCHEMA_VERSION = 49
+SCHEMA_VERSION = 50
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS briefs (
@@ -859,7 +859,9 @@ class Database:
                                         ("marketing_assets", "delivery_ref", "TEXT"),
                                         ("marketing_assets", "delivery_error", "TEXT"),
                                         # Sprint 42 Phase 3: campaign calendar.
-                                        ("marketing_assets", "scheduled_date", "TEXT")):
+                                        ("marketing_assets", "scheduled_date", "TEXT"),
+                                        # Personaliser: metadata storage for variant/pricing info.
+                                        ("publications", "metadata", "TEXT")):
                 try:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
                 except sqlite3.OperationalError:
@@ -1886,8 +1888,8 @@ class Database:
                 """
                 INSERT INTO publications
                     (created_at, platform, product_id, campaign_id, listing_id,
-                     mode, status, attempts, failure_reason)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     mode, status, attempts, failure_reason, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     _utcnow(),
@@ -1899,6 +1901,7 @@ class Database:
                     pub["status"],
                     int(pub.get("attempts", 1)),
                     pub.get("failure_reason"),
+                    pub.get("metadata"),
                 ),
             )
             pub_id = int(cur.lastrowid)
