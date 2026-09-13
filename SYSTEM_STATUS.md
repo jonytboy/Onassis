@@ -194,22 +194,48 @@ time from the dashboard's Integrations tab, or `GET
 physical orders. Catalogue sync: `/operations/api/sync-gelato` or the
 Catalogue tab.
 
+**Personaliser print orders — fixed this session, was actually broken.**
+`ContentEngine.publish_personaliser_listings(prints=True)` created the Etsy
+listing but never inserted the `products` row `GelatoConnector.
+_resolve_product` needs to map a paid order to a print job — fixed (now
+inserts one, default format = matte poster, same verified-on-Gelato UID as
+the general catalogue's `premium_poster`; `GelatoConnector._gelato_uid` falls
+back to it for any personaliser key with no explicit `expansion.catalogue`
+override).
+
+The deeper bug: `Database.find_personaliser_session_for_order()` matched by
+concatenating **every digit** in the order's compound ref
+(`etsy-<receipt>-<transaction>`) against the session's stored ref (just the
+receipt number the buyer typed) — only ever matched by coincidence for a
+single-digit transaction id; any real multi-digit one meant a finished print
+order sat "waiting" forever, silently, with no error. Fixed to match on the
+receipt-id segment specifically (same fix applied to the buyer-web-app's own
+order lookup, `personaliser_web._find_purchase`, new). This was very likely
+why fulfilment looked unreliable/untested despite one manual order succeeding
+— that one probably just had a 1-digit transaction id.
+
+Also fixed: variant detection (digital/canvas/print) only understood the
+older dashboard publish path's metadata; the image-rich CLI pipeline's
+listings (no metadata) were silently treated as digital even when printed —
+now inferred from the `product_id` convention too. And: the local `orders`
+table is only periodically synced (`--etsy-sync`), not real-time — a fast
+buyer could finish before their order synced; `finalize()` now falls back to
+a live Etsy receipt lookup. And: the buyer's finished file is now actually
+copied to the order-ref-named path Gelato's URL construction expects (it
+never was before).
+
 ## 7. Known gaps / follow-ups
 
-Tracked as open tasks (see repo issue tracker / task list):
-1. **Gelato print leg** for personaliser print orders — fulfilment automation
-   for the *personaliser*-specific print/canvas flow specifically (the
-   general catalogue's Gelato integration exists; the personaliser print
-   variant's handoff needs the same treatment).
-2. **Publish 'Printed' physical listings** per personaliser product (Etsy
-   `--prints` flag exists; Shopify has no physical-listing path yet — see
-   §3's "canvas/print variants" note).
-3. **DB + unlock matching**: match personaliser sessions to Etsy receipts
-   robustly (the digits-only match in `personaliser_web.py::finalize` is
-   basic).
-4. **Web: print-order success message** — the buyer-facing confirmation copy
-   for a physical order needs a pass.
-5. **Full test suite green, then push** — in progress (see below).
+1. **Publish 'Printed' physical listings** for all 55 products — code path is
+   complete and tested (see §6); this is now an operational step:
+   `python main.py --publish-personaliser --apply --prints` on production.
+   Shopify still has no physical-listing path (only digital — see §3's
+   "canvas/print variants" note).
+2. Shopify backfill: family/friends 20 — resume/finish with
+   `python main.py --publish-personaliser-shopify --apply` on production
+   (idempotent, skips what's already live). The pet-costume 20 need the same
+   — same command, no extra step, since it processes the whole catalogue and
+   skips already-published products.
 
 ## 8. Environment gotcha worth remembering
 
