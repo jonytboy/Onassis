@@ -342,7 +342,8 @@ class EtsyDraftClient(EtsyClient):
     def update_listing(self, listing_id: int | str,
                        fields: dict[str, Any]) -> dict[str, Any]:
         """Edit a live/draft listing's editable fields (title/description/tags/
-        materials/state/price). PATCH-style PUT /shops/{shop}/listings/{id}."""
+        materials/state/price). PATCH /shops/{shop}/listings/{id} — Etsy rejects
+        this route with a PUT (returns a bare 404, not 405), so it must be PATCH."""
         body: dict[str, Any] = {}
         for key in ("title", "description", "state"):
             if fields.get(key) is not None:
@@ -357,7 +358,7 @@ class EtsyDraftClient(EtsyClient):
             return {"skipped": "no editable fields"}
         url = (f"{self.base_url}/shops/{self.resolve_shop_id()}"
                f"/listings/{listing_id}")
-        resp = httpx.put(url, headers=self._headers(), json=body, timeout=self.timeout)
+        resp = httpx.patch(url, headers=self._headers(), json=body, timeout=self.timeout)
         if resp.status_code >= 400:
             detail = _response_detail(resp)
             log.error("Etsy updateListing failed: HTTP %s\n%s", resp.status_code, detail)
