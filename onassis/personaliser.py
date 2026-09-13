@@ -246,6 +246,149 @@ PRODUCTS: dict[str, Product] = {
             {"key": "1970s", "label": "1970s",
              "prompt": "Transform this exact photo into an authentic 1970s colour photograph. Preserve the subject's precise likeness. Faded Kodachrome tones, warm cast, slight grain, no text."},
         ], price=5.0),
+
+    # --- Pet costume portraits (Sprint: 20-theme expansion) -----------------
+    # Each is a single-style tier-2 pet product, same shape as royal-pet/
+    # general-pet above, generated at scale via the personaliser publishing
+    # pipeline (before/after + canvas/print/tote mockups per theme).
+    "astronaut-pet": Product(
+        "astronaut-pet", "Astronaut Pet Portrait", 2,
+        "Your pet, suited up and headed for the stars. Upload a photo and get a "
+        "painterly astronaut portrait.",
+        styles=[{"key": "astronaut", "label": "Astronaut",
+                 "prompt": f"Transform this exact animal into an ASTRONAUT portrait: a white NASA-style space suit with helmet held under one arm or visor up, stars and Earth visible behind, dramatic painterly lighting. {_KEEP} Preserve the animal's markings. No text."}],
+        price=7.0, sample_subject=_SUBJECT_PET),
+    "pharaoh-pet": Product(
+        "pharaoh-pet", "Pharaoh Pet Portrait", 2,
+        "Your pet as Egyptian royalty — gold, lapis and all. Upload a photo and "
+        "get a regal pharaoh portrait.",
+        styles=[{"key": "pharaoh", "label": "Pharaoh",
+                 "prompt": f"Transform this exact animal into an Egyptian PHARAOH portrait: a gold and lapis-blue nemes headdress, ornate gold collar, hieroglyph-lined wall behind, classical painted style. {_KEEP} Preserve the animal's markings. No text."}],
+        price=7.0, sample_subject=_SUBJECT_PET),
+    "viking-pet": Product(
+        "viking-pet", "Viking Pet Portrait", 2,
+        "Your pet as a fearsome Norse warrior. Upload a photo and get a Viking "
+        "portrait.",
+        styles=[{"key": "viking", "label": "Viking",
+                 "prompt": f"Transform this exact animal into a VIKING warrior portrait: a horned or winged bronze helmet, fur-trimmed leather armour, a longship and fjord behind, dramatic oil-painting style. {_KEEP} Preserve the animal's markings. No text."}],
+        price=7.0, sample_subject=_SUBJECT_PET),
+    "sailor-pet": Product(
+        "sailor-pet", "Sailor Pet Portrait", 2,
+        "Your pet as a classic sea captain. Upload a photo and get a sailor "
+        "portrait.",
+        styles=[{"key": "sailor", "label": "Sailor",
+                 "prompt": f"Transform this exact animal into a classic SEA CAPTAIN's portrait: a navy peacoat with brass buttons, a captain's hat, a ship's wheel and ocean behind, painterly maritime style. {_KEEP} Preserve the animal's markings. No text."}],
+        price=7.0, sample_subject=_SUBJECT_PET),
+    "superhero-pet": Product(
+        "superhero-pet", "Superhero Pet Portrait", 2,
+        "Your pet as a caped crusader. Upload a photo and get a superhero "
+        "portrait.",
+        styles=[{"key": "superhero", "label": "Superhero",
+                 "prompt": f"Transform this exact animal into a SUPERHERO portrait: a flowing cape, a fitted emblem-chest costume, a heroic city-skyline backdrop, comic-book painted style. {_KEEP} Preserve the animal's markings. No text."}],
+        price=7.0, sample_subject=_SUBJECT_PET),
+    "wizard-pet": Product(
+        "wizard-pet", "Wizard Pet Portrait", 2,
+        "Your pet as a powerful fantasy sorcerer. Upload a photo and get a "
+        "wizard portrait.",
+        styles=[{"key": "wizard", "label": "Wizard",
+                 "prompt": f"Transform this exact animal into a WIZARD portrait: a starry midnight-blue robe and pointed hat, holding a glowing staff, a mystical library or castle behind, painterly fantasy style. {_KEEP} Preserve the animal's markings. No text."}],
+        price=7.0, sample_subject=_SUBJECT_PET),
+    "cowboy-pet": Product(
+        "cowboy-pet", "Cowboy Pet Portrait", 2,
+        "Your pet as a rugged Wild West cowboy. Upload a photo and get a "
+        "cowboy portrait.",
+        styles=[{"key": "cowboy", "label": "Cowboy",
+                 "prompt": f"Transform this exact animal into a WILD WEST COWBOY portrait: a leather vest, a wide-brimmed hat, a bandana, a dusty desert town behind, classic western painted style. {_KEEP} Preserve the animal's markings. No text."}],
+        price=7.0, sample_subject=_SUBJECT_PET),
+    "knight-pet": Product(
+        "knight-pet", "Knight Pet Portrait", 2,
+        "Your pet in shining armour. Upload a photo and get a knight portrait.",
+        styles=[{"key": "knight", "label": "Knight",
+                 "prompt": f"Transform this exact animal into a KNIGHT IN SHINING ARMOUR portrait: polished plate armour, a heraldic tabard, a castle and banners behind, classical oil-painting style. {_KEEP} Preserve the animal's markings. No text."}],
+        price=7.0, sample_subject=_SUBJECT_PET),
+    "mermaid-pet": Product(
+        "mermaid-pet", "Mermaid Pet Portrait", 2,
+        "Your pet as a whimsical sea creature. Upload a photo and get a "
+        "mermaid-themed portrait.",
+        styles=[{"key": "mermaid", "label": "Mermaid",
+                 "prompt": f"Transform this exact animal into a whimsical MERMAID-themed portrait: a shimmering scaled tail motif, pearls and coral, an underwater or shoreline scene behind, painterly fantasy style. {_KEEP} Preserve the animal's markings. No text."}],
+        price=7.0, sample_subject=_SUBJECT_PET),
+    "rockstar-pet": Product(
+        "rockstar-pet", "Rockstar Pet Portrait", 2,
+        "Your pet as a glam rock legend. Upload a photo and get a rockstar "
+        "portrait.",
+        styles=[{"key": "rockstar", "label": "Rockstar",
+                 "prompt": f"Transform this exact animal into a GLAM ROCKSTAR portrait: a studded leather jacket, sunglasses pushed up, an electric guitar, stage lights behind, bold painterly style. {_KEEP} Preserve the animal's markings. No text."}],
+        price=7.0, sample_subject=_SUBJECT_PET),
+    "detective-pet": Product(
+        "detective-pet", "Detective Pet Portrait", 2,
+        "Your pet as a sharp film-noir detective. Upload a photo and get a "
+        "detective portrait.",
+        styles=[{"key": "detective", "label": "Detective",
+                 "prompt": f"Transform this exact animal into a FILM-NOIR DETECTIVE portrait: a trench coat and fedora, a rain-streaked city window behind, moody black-and-white painterly style. {_KEEP} Preserve the animal's markings. No text."}],
+        price=7.0, sample_subject=_SUBJECT_PET),
+    "chef-pet": Product(
+        "chef-pet", "Chef Pet Portrait", 2,
+        "Your pet as a master chef. Upload a photo and get a chef portrait.",
+        styles=[{"key": "chef", "label": "Chef",
+                 "prompt": f"Transform this exact animal into a MASTER CHEF portrait: a white double-breasted chef's coat and toque, a busy kitchen behind, warm painterly style. {_KEEP} Preserve the animal's markings. No text."}],
+        price=7.0, sample_subject=_SUBJECT_PET),
+    "executive-pet": Product(
+        "executive-pet", "Executive Pet Portrait", 2,
+        "Your pet as a sharp-suited executive. Upload a photo and get a "
+        "boardroom portrait.",
+        styles=[{"key": "executive", "label": "Executive",
+                 "prompt": f"Transform this exact animal into a BUSINESS EXECUTIVE portrait: a tailored suit and tie, a boardroom or city-skyline window behind, formal corporate painted style. {_KEEP} Preserve the animal's markings. No text."}],
+        price=7.0, sample_subject=_SUBJECT_PET),
+    "graduate-pet": Product(
+        "graduate-pet", "Graduate Pet Portrait", 2,
+        "Your pet all graduated up. Upload a photo and get a graduation "
+        "portrait.",
+        styles=[{"key": "graduate", "label": "Graduate",
+                 "prompt": f"Transform this exact animal into a GRADUATE portrait: a cap and gown with tassel, holding a rolled diploma, a university hall behind, formal painterly style. {_KEEP} Preserve the animal's markings. No text."}],
+        price=7.0, sample_subject=_SUBJECT_PET),
+    "ballet-pet": Product(
+        "ballet-pet", "Ballet Pet Portrait", 2,
+        "Your pet as a graceful prima ballerina. Upload a photo and get a "
+        "ballet portrait.",
+        styles=[{"key": "ballet", "label": "Ballet Dancer",
+                 "prompt": f"Transform this exact animal into a BALLET DANCER portrait: a delicate tutu and pointe shoes, an elegant stage backdrop, soft romantic painterly style. {_KEEP} Preserve the animal's markings. No text."}],
+        price=7.0, sample_subject=_SUBJECT_PET),
+    "biker-pet": Product(
+        "biker-pet", "Biker Pet Portrait", 2,
+        "Your pet as a leather-clad biker. Upload a photo and get a biker "
+        "portrait.",
+        styles=[{"key": "biker", "label": "Biker",
+                 "prompt": f"Transform this exact animal into a BIKER portrait: a black leather jacket with patches, sitting on or beside a classic motorcycle, open highway behind, bold painterly style. {_KEEP} Preserve the animal's markings. No text."}],
+        price=7.0, sample_subject=_SUBJECT_PET),
+    "safari-pet": Product(
+        "safari-pet", "Safari Pet Portrait", 2,
+        "Your pet as a bold safari explorer. Upload a photo and get a safari "
+        "portrait.",
+        styles=[{"key": "safari", "label": "Safari Explorer",
+                 "prompt": f"Transform this exact animal into a SAFARI EXPLORER portrait: a khaki vest and pith helmet, binoculars, a savannah with acacia trees behind, warm painterly style. {_KEEP} Preserve the animal's markings. No text."}],
+        price=7.0, sample_subject=_SUBJECT_PET),
+    "steampunk-pet": Product(
+        "steampunk-pet", "Steampunk Pet Portrait", 2,
+        "Your pet reimagined in brass and gears. Upload a photo and get a "
+        "steampunk portrait.",
+        styles=[{"key": "steampunk", "label": "Steampunk",
+                 "prompt": f"Transform this exact animal into a STEAMPUNK portrait: brass goggles, a Victorian waistcoat with gears and cogs, an industrial airship backdrop, richly detailed painterly style. {_KEEP} Preserve the animal's markings. No text."}],
+        price=7.0, sample_subject=_SUBJECT_PET),
+    "disco-pet": Product(
+        "disco-pet", "Disco Pet Portrait", 2,
+        "Your pet under the mirror ball. Upload a photo and get a 70s disco "
+        "portrait.",
+        styles=[{"key": "disco", "label": "Disco",
+                 "prompt": f"Transform this exact animal into a 1970s DISCO portrait: a sequinned collar or bandana, colourful dance-floor lights and a mirror ball behind, vibrant retro painterly style. {_KEEP} Preserve the animal's markings. No text."}],
+        price=7.0, sample_subject=_SUBJECT_PET),
+    "eighties-pet": Product(
+        "eighties-pet", "80s Pet Portrait", 2,
+        "Your pet gone totally 80s — neon, big hair energy and all. Upload a "
+        "photo and get an 80s portrait.",
+        styles=[{"key": "eighties", "label": "80s",
+                 "prompt": f"Transform this exact animal into a 1980s portrait: a neon-coloured bandana or leg-warmer-style accessory, a bold geometric neon-gradient background, retro airbrushed painted style. {_KEEP} Preserve the animal's markings. No text."}],
+        price=7.0, sample_subject=_SUBJECT_PET),
 }
 
 
