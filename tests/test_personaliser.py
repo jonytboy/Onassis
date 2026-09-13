@@ -270,6 +270,9 @@ def test_themed_catalogue_is_well_formed():
     tier2 = [p for p in PRODUCTS.values() if p.tier == 2]
     assert len(tier2) >= 10                                   # themed listings
     for p in tier2:
-        assert len(p.styles) == 3 and p.sample_subject
+        # 3 styles = "pick your favourite of three" (original tier-2 products);
+        # 1 style = the single-theme costume/group-portrait batches (pet-costume,
+        # family/friends) — one painterly transform per product, no picker.
+        assert len(p.styles) in (1, 3) and p.sample_subject
         assert all(s["prompt"] and s["label"] for s in p.styles)
     assert PRODUCTS["boyband-90s"].sample_subject != PRODUCTS["royal-pet"].sample_subject

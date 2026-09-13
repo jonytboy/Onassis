@@ -58,6 +58,8 @@ class PersonaliserManager:
                 variants.append("canvas")
             variants.append("print")
 
+            cli_etsy = self._cli_publication(key, "etsy")
+            cli_shopify = self._cli_publication(key, "shopify")
             products.append({
                 "key": key,
                 "name": product.name,
@@ -70,6 +72,10 @@ class PersonaliserManager:
                     v: self.get_variant_price(key, v)
                     for v in variants
                 },
+                # Real (image-rich) listing status from the CLI/pipeline path,
+                # so the dashboard shows what's actually live before publishing.
+                "etsy_live": (cli_etsy or {}).get("status") if cli_etsy else None,
+                "shopify_live": (cli_shopify or {}).get("status") if cli_shopify else None,
             })
         return sorted(products, key=lambda p: p["tier"])
 
@@ -161,8 +167,26 @@ class PersonaliserManager:
 
         return sorted(listings, key=lambda x: (x["product"], x["variant"]))
 
+    def _cli_publication(self, product_key: str, platform: str) -> dict[str, Any] | None:
+        """The product's publication from the **image-rich** pipeline (real
+        mockups/before-after renders, access card) — ``product_id`` convention
+        ``personaliser-<key>``, created by :meth:`ContentEngine.
+        publish_personaliser_listings`/``publish_personaliser_shopify`` (CLI
+        ``--publish-personaliser``/``--publish-personaliser-shopify``, or the
+        Operations Centre's bulk publish API). Digital listings only."""
+        return self.db.get_latest_publication(0, platform, product_id=f"personaliser-{product_key}")
+
     def publish_to_etsy(self, product_key: str, variant: str) -> dict[str, Any]:
-        """Publish a personaliser listing variant to Etsy as a draft."""
+        """Publish a personaliser listing variant to Etsy as a draft.
+
+        For the ``digital`` variant this delegates to the image-rich pipeline
+        (:meth:`ContentEngine.publish_personaliser_listings`) so a listing made
+        from the dashboard has the same real gallery photos as one made from the
+        CLI, and is idempotent against it (won't create a text-only duplicate of
+        a listing that already exists). ``canvas``/``print`` — not yet covered by
+        that pipeline — still use the simpler bespoke listing below."""
+        if variant == "digital":
+            return self._publish_digital_via_pipeline(product_key, "etsy")
         try:
             from onassis.etsy_automation import EtsyAutomationEngine
             from onassis.llm import LLMClient
@@ -231,8 +255,57 @@ class PersonaliserManager:
             log.error(f"Etsy publish error: {exc}")
             return {"ok": False, "error": str(exc)}
 
+    def _publish_digital_via_pipeline(self, product_key: str, platform: str) -> dict[str, Any]:
+        """Digital-variant publish for one product via the image-rich CLI
+        pipeline — idempotent (returns the existing listing rather than
+        duplicating it) and shared by :meth:`publish_to_etsy`/
+        :meth:`publish_to_shopify`."""
+        from onassis.content_engine import ContentEngine
+
+        if product_key not in PRODUCTS:
+            return {"ok": False, "error": "Product not found"}
+        existing = self._cli_publication(product_key, platform)
+        if existing and existing.get("status") not in ("failed", "pending_oauth"):
+            return {"ok": True, "platform": platform, "status": "already_published",
+                    "listing_id": existing.get("listing_id"),
+                    "note": f"Already has a real {platform.title()} listing from the "
+                            "personaliser pipeline — not duplicating it."}
+        engine = ContentEngine(self.config, self.db)
+        try:
+            if platform == "etsy":
+                result = engine.publish_personaliser_listings(
+                    apply=True, product_key=product_key, prints=False)
+            else:
+                result = engine.publish_personaliser_shopify(
+                    apply=True, product_key=product_key)
+        except Exception as exc:
+            log.error(f"{platform} pipeline publish error: {exc}")
+            return {"ok": False, "error": str(exc)}
+        row = next((p for p in result.get("products", []) if p.get("product") == product_key), None)
+        if row is None:
+            return {"ok": False, "error": "Product not found in pipeline output."}
+        status = row.get("status")
+        ok = status in ("draft_created", "exists")
+        out = {"ok": ok, "platform": platform, "status": status,
+              "listing_id": row.get("listing_id")}
+        if row.get("link"):
+            out["link"] = row["link"]
+        if row.get("url"):
+            out["url"] = row["url"]
+        if row.get("error"):
+            out["error"] = row["error"]
+        return out
+
     def publish_to_shopify(self, product_key: str, variant: str) -> dict[str, Any]:
-        """Publish a personaliser listing variant to Shopify as a draft product."""
+        """Publish a personaliser listing variant to Shopify as a draft product.
+
+        For the ``digital`` variant this delegates to the image-rich pipeline
+        (:meth:`ContentEngine.publish_personaliser_shopify`) — see
+        :meth:`publish_to_etsy` for why. ``canvas``/``print`` Shopify products
+        are not yet supported by that pipeline and still use the bespoke,
+        image-less listing below."""
+        if variant == "digital":
+            return self._publish_digital_via_pipeline(product_key, "shopify")
         try:
             from onassis.connectors.shopify import ShopifyConnector
             from onassis.llm import LLMClient

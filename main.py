@@ -261,6 +261,13 @@ def _parse_args() -> argparse.Namespace:
              "listings and recreate them (after deleting the old drafts on Etsy).",
     )
     parser.add_argument(
+        "--publish-personaliser-shopify", action="store_true",
+        help="Create the Personaliser's DRAFT products on Shopify (the second sales "
+             "channel; one per self-serve product, reusing whatever gallery images "
+             "are already cached for the Etsy listing). Preview by default; add "
+             "--apply to create the drafts, --reset to recreate them.",
+    )
+    parser.add_argument(
         "--rewrite-seo", action="store_true",
         help="Preview rewriting live listings' Etsy title+tags (and Shopify title) "
              "around buyer-searched phrases so Etsy search shows them (add --apply "
@@ -1293,6 +1300,28 @@ def main() -> int:
         if not r["applied"]:
             print("\nPREVIEW only. Re-run with --apply to create the DRAFT listings "
                   "(you then review + publish each on Etsy).")
+        return 0
+
+    if args.publish_personaliser_shopify:
+        from onassis.content_engine import ContentEngine
+        from onassis.integrations import apply_integration_overrides
+
+        apply_integration_overrides(config, db)
+        r = ContentEngine(config, db).publish_personaliser_shopify(
+            apply=args.apply, reset=args.reset)
+        print(f"\nPERSONALISER SHOPIFY PRODUCTS — {'APPLIED' if r['applied'] else 'PREVIEW'} "
+              f"({r['count']} product(s), {r['created']} draft(s), "
+              f"{r['errors']} error(s))\n")
+        for p in r["products"]:
+            lid = f" [product {p['listing_id']}]" if p.get("listing_id") else ""
+            print(f"  [{p['status']:16}]{lid} tier {p['tier']}  {p['name']}")
+            if p.get("url"):
+                print(f"      {p['url']}")
+            if p.get("error"):
+                print(f"      error: {p['error']}")
+        if not r["applied"]:
+            print("\nPREVIEW only. Re-run with --apply to create the DRAFT products "
+                  "(you then review + publish each on Shopify).")
         return 0
 
     if args.make_printables:

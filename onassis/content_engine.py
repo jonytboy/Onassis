@@ -1499,6 +1499,101 @@ class ContentEngine:
         return {"ok": True, "applied": apply, "created": created, "errors": errors,
                 "count": len(rows), "products": rows, "base": base}
 
+    def publish_personaliser_shopify(self, apply: bool = False,
+                                     product_key: str | None = None,
+                                     reset: bool = False) -> dict[str, Any]:
+        """Create one Shopify DRAFT product per personaliser product — the
+        second-channel sibling of :meth:`publish_personaliser_listings`. Reuses
+        whatever gallery images are already cached for the Etsy listing (same
+        ``exports/personaliser/listings`` cache, same tier-1/tier-2 render path),
+        so a product already published to Etsy costs nothing extra here; a
+        product with no cached images yet is rendered/generated exactly as the
+        Etsy path does (real AI calls for tier-2 photo products).
+
+        Idempotent: skips a product that already has a Shopify publication.
+        Preview by default; ``apply=True`` creates the drafts. ``reset`` forgets
+        the previous personaliser Shopify publications first (use after deleting
+        the old drafts on Shopify)."""
+        from onassis.connectors.shopify import ShopifyConnector
+        from onassis.personaliser import PRODUCTS
+        from onassis.shopify_publisher import ShopifyPublisher
+
+        if reset and apply:
+            for pub in self.db.list_publications():
+                pid = str(pub.get("product_id") or "")
+                if (pub.get("platform") == "shopify" and pid.startswith("personaliser-")
+                        and (not product_key or pid == f"personaliser-{product_key}")):
+                    self.db.delete_publication(pub["id"])
+
+        conn = getattr(self, "_shopify_conn", None) or ShopifyConnector(self.config, self.db)
+        self._shopify_conn = conn
+        publisher = ShopifyPublisher(self.config, self.db, connector=conn)
+        out_dir = self._exports_base() / "personaliser" / "listings"
+        rows: list[dict[str, Any]] = []
+        created = errors = 0
+        for p in PRODUCTS.values():
+            if product_key and p.key != product_key:
+                continue
+            pid = f"personaliser-{p.key}"
+            row: dict[str, Any] = {"product": p.key, "name": p.name, "tier": p.tier,
+                                   "status": "ok", "listing_id": None}
+            if self.db.get_latest_publication(0, "shopify", product_id=pid):
+                row["status"] = "exists"
+                rows.append(row)
+                continue
+            if not apply:
+                row["status"] = "would_create"
+                rows.append(row)
+                continue
+            if not publisher.can_publish:
+                row["status"] = "not_configured"
+                rows.append(row)
+                continue
+            try:
+                images = self._personaliser_listing_images(p, out_dir)
+            except self._NoSample as exc:
+                row.update(status="no_sample", error=str(exc)[:200])
+                rows.append(row)
+                continue
+            desc = (f"{p.blurb}\n\nHOW IT WORKS\n1. Complete your purchase and note "
+                    "your order number.\n2. Open your personaliser link and enter "
+                    "that order number to unlock.\n3. "
+                    + ("Upload your photo, choose a style and pick your favourite of "
+                       "three" if p.tier == 2 else "Add your details")
+                    + " and see a live preview.\n4. Download your high-resolution "
+                    "(300 DPI) print-ready file instantly.\n\nDIGITAL PRODUCT — "
+                    "nothing is posted. Personal use only.")
+            listing = {
+                "product_id": pid, "title": p.name, "description": desc,
+                "tags": [p.key, "personalised", "custom portrait"], "price": p.price,
+                "images": [{"filename": Path(img).name, "order": i, "alt_text": p.name}
+                          for i, img in enumerate(images, start=1)],
+            }
+            try:
+                result = publisher.publish(0, p.key, listing, images_dir=out_dir)
+            except Exception as exc:
+                row.update(status="error", error=str(exc)[:200])
+                errors += 1
+                rows.append(row)
+                continue
+            if result["status"] == "failed":
+                row.update(status="error", error=str(result.get("reason", ""))[:200])
+                errors += 1
+            elif result["status"] == "not_configured":
+                row["status"] = "not_configured"
+            elif result["status"] == "skipped":
+                row["status"] = "exists"
+            else:
+                pub = result.get("publication") or {}
+                row.update(status="draft_created", listing_id=pub.get("listing_id"),
+                           url=result.get("url"))
+                created += 1
+            rows.append(row)
+        log.info("Personaliser Shopify listings %s: %d product(s), %d draft(s), %d error(s).",
+                 "APPLY" if apply else "preview", len(rows), created, errors)
+        return {"ok": True, "applied": apply, "created": created, "errors": errors,
+                "count": len(rows), "products": rows}
+
     def _listing_alive(self, platform: str, listing_id: str, shop: Any,
                        etsy_holder: dict[str, Any]) -> bool:
         """Does this marketplace listing still exist? Only a definite 404 counts

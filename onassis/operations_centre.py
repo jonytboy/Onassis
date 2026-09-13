@@ -998,6 +998,96 @@ def build_operations_router(get_state) -> APIRouter:
                 "count": db.count_gelato_catalogue(),
                 "available": db.count_gelato_catalogue(available_only=True)}
 
+    # --- Personaliser catalogue (self-serve products) ---
+    @router.get("/api/personaliser/products")
+    def api_personaliser_products(request: Request) -> Any:
+        """The full self-serve product catalogue with each product's Etsy/Shopify
+        publish status, so an operator can see and trigger a publish per product
+        (or in bulk) without touching a script or the CLI."""
+        _require_operator(request)
+        from onassis.personaliser import PRODUCTS
+        db = request.app.state.db
+
+        def _status(platform: str, key: str) -> dict[str, Any]:
+            pub = db.get_latest_publication(0, platform, product_id=f"personaliser-{key}")
+            if not pub:
+                return {"status": "not_created"}
+            return {"status": pub.get("status") or pub.get("mode"),
+                    "listing_id": pub.get("listing_id")}
+
+        rows = [{
+            "key": p.key, "name": p.name, "tier": p.tier, "price": p.price,
+            "print_price": p.print_price,
+            "etsy": _status("etsy", p.key),
+            "etsy_print": db.get_latest_publication(
+                0, "etsy", product_id=f"personaliser-{p.key}-print") is not None,
+            "shopify": _status("shopify", p.key),
+        } for p in PRODUCTS.values()]
+        return {"products": rows, "count": len(rows)}
+
+    @router.post("/api/personaliser/publish")
+    def api_personaliser_publish(request: Request, payload: dict | None = None) -> Any:
+        """Publish personaliser products to Etsy and/or Shopify — runs in the
+        background (tier-2 products with no cached example cost a real AI call).
+        Body: ``{platform: "etsy"|"shopify"|"both", product_key?, apply?, reset?,
+        prints?}``. Preview (``apply`` omitted/false) runs and returns inline
+        instantly, since nothing is created; ``apply: true`` always backgrounds."""
+        _require_operator(request)
+        state = get_state(request.app)
+        body = payload or {}
+        platform = (body.get("platform") or "both").lower()
+        apply = bool(body.get("apply"))
+        product_key = body.get("product_key") or None
+        reset = bool(body.get("reset"))
+        prints = bool(body.get("prints"))
+        if platform not in ("etsy", "shopify", "both"):
+            raise HTTPException(status_code=400, detail="platform must be etsy, shopify or both.")
+
+        from onassis.content_engine import ContentEngine
+        from onassis.integrations import apply_integration_overrides
+        config, db = request.app.state.config, request.app.state.db
+
+        def _run() -> dict[str, Any]:
+            apply_integration_overrides(config, db)
+            engine = ContentEngine(config, db)
+            out: dict[str, Any] = {}
+            if platform in ("etsy", "both"):
+                out["etsy"] = engine.publish_personaliser_listings(
+                    apply=apply, product_key=product_key, reset=reset, prints=prints)
+            if platform in ("shopify", "both"):
+                out["shopify"] = engine.publish_personaliser_shopify(
+                    apply=apply, product_key=product_key, reset=reset)
+            return out
+
+        if not apply:
+            return _run()  # preview — nothing created, safe to run inline
+
+        if state.is_running:
+            raise HTTPException(status_code=409, detail="A run is already in progress.")
+        state.begin_run()
+        label = product_key or "all products"
+        state.add_log(f"PERSONALISER: publishing {label} to {platform} (apply).")
+
+        def worker() -> None:
+            handler = _RunLogHandler(state)
+            root = logging.getLogger("onassis")
+            root.addHandler(handler)
+            try:
+                result = _run()
+                created = sum(r.get("created", 0) for r in result.values())
+                errors = sum(r.get("errors", 0) for r in result.values())
+                state.end_run("completed_with_failures" if errors else "completed", result)
+                state.add_log(f"PERSONALISER: done — {created} created, {errors} error(s).")
+            except Exception as exc:  # never crash the server on a publish failure
+                state.end_run("failed", {"error": str(exc)})
+                state.add_log(f"PERSONALISER publish crashed: {exc}", "error")
+                log.exception("Personaliser publish failed")
+            finally:
+                root.removeHandler(handler)
+
+        threading.Thread(target=worker, name="personaliser-publish", daemon=True).start()
+        return {"status": "started", "platform": platform, "product_key": product_key}
+
     # --- Short-form video content engine (Sprint 48) ---
     @router.get("/api/content/reels")
     def api_content_reels(request: Request) -> Any:
