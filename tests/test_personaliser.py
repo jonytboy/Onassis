@@ -119,6 +119,66 @@ def test_verify_order_looks_up_etsy_receipt(config, db, monkeypatch):
     assert ok is False and "couldn't find" in why
 
 
+# --- Matching a finished session to what was actually bought --------------
+
+def test_variant_of_reads_metadata_or_falls_back_to_product_id_suffix():
+    from onassis.personaliser_web import _variant_of
+
+    # Older PersonaliserManager convention: metadata carries the variant.
+    assert _variant_of({"metadata": '{"variant": "canvas"}'}) == "canvas"
+    assert _variant_of({"metadata": {"variant": "print"}}) == "print"
+    # Image-rich CLI/pipeline convention: no metadata, product_id says it.
+    assert _variant_of({"product_id": "personaliser-place-poster-print"}) == "print"
+    assert _variant_of({"product_id": "personaliser-place-poster"}) == "digital"
+    assert _variant_of(None) is None
+    assert _variant_of({"product_id": "some-other-thing"}) is None
+
+
+def test_find_purchase_matches_a_synced_local_order(config, db):
+    from onassis.personaliser_web import _find_purchase
+    from onassis.revenue import RevenueEngine
+
+    db.insert_publication({"platform": "etsy", "product_id": "personaliser-place-poster-print",
+                           "campaign_id": 0, "listing_id": "777", "mode": "live",
+                           "status": "live"})
+    RevenueEngine(config, db).record_order({
+        "order_ref": "etsy-501-1", "product_id": "777", "campaign_id": 0,
+        "platform": "etsy", "sale_price": 45.0, "quantity": 1})
+    pub, ref = _find_purchase(db, config, "place-poster", "501")
+    assert ref == "etsy-501-1"
+    assert pub["product_id"] == "personaliser-place-poster-print"
+
+
+def test_find_purchase_falls_back_to_a_live_etsy_lookup_when_not_synced(config, db, monkeypatch):
+    """The orders table is only ever periodically synced (--etsy-sync), not a
+    webhook — a buyer who finishes personalising fast must still be matched to
+    the right (print vs digital) listing via a live receipt lookup."""
+    from onassis.personaliser_web import _find_purchase
+
+    db.insert_publication({"platform": "etsy", "product_id": "personaliser-place-poster-print",
+                           "campaign_id": 0, "listing_id": "777", "mode": "live",
+                           "status": "live"})
+    # No local `orders` row at all — simulates "not synced yet".
+
+    class _Client:
+        def get_receipt(self, rid):
+            return {"receipt_id": int(rid), "transactions": [
+                {"listing_id": 777, "transaction_id": 55}]}
+
+    class _Engine:
+        is_configured = True
+        def __init__(self, c, d): self.client = _Client()
+
+    import onassis.etsy_automation as EA
+    monkeypatch.setattr(EA, "EtsyAutomationEngine", _Engine)
+    pub, ref = _find_purchase(db, config, "place-poster", "501")
+    assert ref == "etsy-501-55"
+    assert pub["product_id"] == "personaliser-place-poster-print"
+    # A receipt with no transaction for THIS product matches nothing.
+    pub2, ref2 = _find_purchase(db, config, "star-map", "501")
+    assert pub2 is None and ref2 is None
+
+
 # --- The buyer web flow (end to end, tier 1) -----------------------------
 
 @pytest.fixture

@@ -182,9 +182,11 @@ def test_personaliser_print_order_waits_for_buyer_to_finish(gelato_cfg, db):
     assert out["status"] == "waiting" and "not finished" in out["reason"]
     assert not db.get_fulfilment(order["order_ref"])  # no fulfilment record yet
 
-    # Buyer creates a session but hasn't finished.
+    # Buyer creates a session but hasn't finished. The session's order_ref is
+    # what they typed to unlock — just the Etsy receipt id (901), not the
+    # order's compound ref (etsy-901-1, which also carries a transaction id).
     db.insert_personaliser_session({
-        "token": "tok-123", "product": "place-poster", "order_ref": "9011",
+        "token": "tok-123", "product": "place-poster", "order_ref": "901",
         "status": "unlocked"})
     out = conn.submit_order(order)
     assert out["status"] == "waiting"  # still waiting
@@ -218,9 +220,11 @@ def test_personaliser_print_order_uses_session_file(gelato_cfg, db):
         "production_cost": 32.0, "shipping_address": _ADDRESS})
     order = db.list_orders()[-1]  # get the newest
 
-    # Buyer has already finished (session exists and is done).
+    # Buyer has already finished (session exists and is done). Session
+    # order_ref is the bare receipt id they typed (902), not the order's
+    # compound ref (etsy-902-1).
     db.insert_personaliser_session({
-        "token": "tok-456", "product": "star-map", "order_ref": "9021",
+        "token": "tok-456", "product": "star-map", "order_ref": "902",
         "status": "done", "file_path": "/exports/personaliser/tok-456.png"})
     client = FakeGelato()
     conn = GelatoConnector(gelato_cfg, db, client=client)
@@ -229,3 +233,20 @@ def test_personaliser_print_order_uses_session_file(gelato_cfg, db):
     # Gelato order was recorded.
     f = db.get_fulfilment(order["order_ref"])
     assert f["product_key"] == "star-map"
+
+
+def test_find_session_matches_the_receipt_id_not_every_digit_in_the_compound_ref(db):
+    """Regression: order_ref is 'etsy-<receipt>-<transaction>' — a naive
+    'concatenate every digit' match only coincidentally works for a 1-digit
+    transaction id and silently fails for any real multi-digit one (which is
+    most receipts with more than 9 line items ever sold), leaving every such
+    print order stuck 'waiting' forever."""
+    db.insert_personaliser_session({
+        "token": "tok-1", "product": "place-poster", "order_ref": "4471",
+        "status": "done", "file_path": "/exports/personaliser/tok-1.png"})
+    # Transaction id is 2 digits (23) — "matching every digit" would need
+    # "447123", not "4471".
+    found = db.find_personaliser_session_for_order("etsy-4471-23")
+    assert found is not None and found["token"] == "tok-1"
+    # A different receipt id must not match.
+    assert db.find_personaliser_session_for_order("etsy-4472-23") is None

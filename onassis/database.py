@@ -2909,8 +2909,21 @@ class Database:
 
     def find_personaliser_session_for_order(self, order_ref: str) -> dict[str, Any] | None:
         """The latest FINISHED personaliser session unlocked with this Etsy
-        receipt id (digits) — the file a print order should be produced from."""
-        digits = "".join(ch for ch in str(order_ref or "") if ch.isdigit())
+        receipt id (digits) — the file a print order should be produced from.
+
+        ``order_ref`` here is the ORDER's compound ref, ``etsy-<receipt_id>-
+        <transaction_id>`` (see ``EtsyAutomationEngine._collect_new_orders``) —
+        but the buyer only ever typed the receipt id (the number on their Etsy
+        receipt) to unlock their session, so match on that segment specifically.
+        Concatenating every digit in the compound ref would only coincidentally
+        match a single-digit transaction id; any real multi-digit transaction id
+        breaks it."""
+        ref = str(order_ref or "")
+        parts = ref.split("-")
+        if len(parts) >= 3 and parts[0] == "etsy":
+            digits = "".join(ch for ch in parts[1] if ch.isdigit())
+        else:
+            digits = "".join(ch for ch in ref if ch.isdigit())
         if not digits:
             return None
         with self._connect() as conn:

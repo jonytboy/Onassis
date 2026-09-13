@@ -89,6 +89,44 @@ def test_reset_forgets_old_listings_and_recreates(eng):
     assert len(eng._seo_etsy.drafts) == 8
 
 
+def test_prints_creates_a_gelato_fulfillable_product_row(eng):
+    """A 'Printed' listing must also land a `products` row (sku = the listing's
+    product_id) — that's what GelatoConnector._resolve_product looks up to map
+    a paid order back to a Gelato print job. Without it, a print order the
+    buyer finishes can never actually be fulfilled."""
+    from onassis.connectors.gelato import PERSONALISER_PRINT_PRODUCTION_COST
+
+    r = eng.publish_personaliser_listings(apply=True, prints=True, product_key="place-poster")
+    assert r["created"] == 1
+    row = eng.db.get_product_by_sku("personaliser-place-poster-print")
+    assert row is not None
+    assert row["product_key"] == "place-poster"
+    assert row["production_cost"] == PERSONALISER_PRINT_PRODUCTION_COST
+
+    # Reset removes it too, so a re-run doesn't collide on the UNIQUE sku.
+    again = eng.publish_personaliser_listings(
+        apply=True, prints=True, product_key="place-poster", reset=True)
+    assert again["created"] == 1
+    assert eng.db.get_product_by_sku("personaliser-place-poster-print") is not None
+
+
+def test_personaliser_products_get_a_default_gelato_uid(config, db):
+    """Every personaliser product resolves to a print format even with no
+    per-product entry in expansion.catalogue (the general-catalogue mapping) —
+    the matte-poster default, so the 'Printed' listings are fulfillable out of
+    the box."""
+    from onassis.connectors.gelato import (PERSONALISER_PRINT_GELATO_UID,
+                                           GelatoConnector)
+
+    config.expansion = {"catalogue": []}
+    conn = GelatoConnector(config, db, client=object())
+    assert conn._gelato_uid("place-poster") == PERSONALISER_PRINT_GELATO_UID
+    assert conn._gelato_uid("not-a-real-product") is None
+    # An explicit expansion.catalogue entry still overrides the default.
+    config.expansion = {"catalogue": [{"key": "place-poster", "gelato_uid": "custom-uid"}]}
+    assert conn._gelato_uid("place-poster") == "custom-uid"
+
+
 def test_publish_print_listings_creates_physical_variants(eng):
     """Print listings are physical type and use higher price."""
     r = eng.publish_personaliser_listings(apply=True, prints=True)

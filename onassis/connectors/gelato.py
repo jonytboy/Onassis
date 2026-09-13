@@ -40,6 +40,17 @@ _STATUS_MAP = {
     "pending_approval": "in_production", "not_connected": "in_production",
 }
 
+# Every personaliser 'Printed' listing uses the same physical format — a
+# premium matte poster print (matches the listing copy: "300 DPI on premium
+# matte paper") — the same verified-on-Gelato UID as the general catalogue's
+# `premium_poster` entry (config.yaml -> expansion.catalogue). One shared
+# format keeps the personaliser print pipeline (ContentEngine.
+# publish_personaliser_listings(prints=True)) from needing a per-product
+# Gelato mapping; a specific product can still be overridden by adding its
+# key to expansion.catalogue directly (checked first — see _gelato_uid).
+PERSONALISER_PRINT_GELATO_UID = "wall-art_product_pf_pos_pt_matte"
+PERSONALISER_PRINT_PRODUCTION_COST = 8.0
+
 
 class GelatoError(RuntimeError):
     """Raised on a Gelato API 4xx/5xx — carries the response body."""
@@ -139,6 +150,14 @@ class GelatoConnector:
         for item in (self.config.expansion or {}).get("catalogue", []) or []:
             if item.get("key") == product_key:
                 return item.get("gelato_uid")
+        # Personaliser products aren't in the general expansion catalogue —
+        # fall back to the single print format configured for them (an
+        # explicit expansion.catalogue entry above still wins, so a product
+        # can be given its own format later without code changes).
+        from onassis.personaliser import PRODUCTS
+        if product_key in PRODUCTS:
+            pcfg = getattr(self.config, "personaliser", None) or {}
+            return pcfg.get("gelato_uid") or PERSONALISER_PRINT_GELATO_UID
         return None
 
     def _resolve_product(self, order: dict[str, Any]) -> dict[str, Any] | None:

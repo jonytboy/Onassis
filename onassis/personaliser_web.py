@@ -26,6 +26,69 @@ from onassis.personaliser import (PRODUCTS, geocode, render_tier1,
                                   verify_order, watermark)
 
 
+def _find_purchase(db: Any, config: Any, key: str,
+                   order_ref_normalized: str) -> tuple[dict[str, Any] | None, str | None]:
+    """Find the publication (Etsy listing) the buyer actually paid for, and the
+    compound order_ref (``etsy-<receipt>-<transaction>``) the ledger/Gelato code
+    expects. Tries the local ``orders`` table first (fast, no API call); falls
+    back to a **live** Etsy receipt lookup when the order hasn't synced yet
+    (sync is periodic, not a webhook — see ``--etsy-sync``) so a buyer who
+    finishes personalizing quickly isn't mis-treated as having bought the
+    digital variant when they actually bought a physical one."""
+    for o in db.get_orders_by_platform("etsy"):
+        # order_ref is "etsy-<receipt_id>-<transaction_id>" — the buyer only
+        # ever typed the receipt id, so match on that segment, not every digit
+        # in the compound ref (which also includes the transaction id and would
+        # only coincidentally match a single-digit one).
+        ref = str(o.get("order_ref") or "")
+        parts = ref.split("-")
+        o_digits = ("".join(ch for ch in parts[1] if ch.isdigit())
+                   if len(parts) >= 3 and parts[0] == "etsy"
+                   else "".join(ch for ch in ref if ch.isdigit()))
+        if o_digits == order_ref_normalized:
+            pub = db.get_publication_by_listing_id(str(o.get("product_id") or ""))
+            if pub:
+                return pub, o.get("order_ref")
+    if not order_ref_normalized:
+        return None, None
+    try:
+        from onassis.etsy_automation import EtsyAutomationEngine
+        etsy = EtsyAutomationEngine(config, db)
+        if not etsy.is_configured:
+            return None, None
+        receipt = etsy.client.get_receipt(order_ref_normalized)
+    except Exception:
+        return None, None
+    for tx in receipt.get("transactions", []) or []:
+        pub = db.get_publication_by_listing_id(str(tx.get("listing_id") or ""))
+        pid = str((pub or {}).get("product_id") or "")
+        if pub and (pid.startswith(f"personaliser-{key}") or pid.startswith(f"{key}-")):
+            return pub, f"etsy-{receipt.get('receipt_id')}-{tx.get('transaction_id')}"
+    return None, None
+
+
+def _variant_of(pub: dict[str, Any] | None) -> str | None:
+    """digital | canvas | print, from either publish convention: the older
+    dashboard flow tags it in publication metadata; the image-rich CLI/
+    pipeline flow (no metadata) says it via the product_id suffix instead."""
+    if not pub:
+        return None
+    metadata = pub.get("metadata")
+    if metadata:
+        try:
+            if isinstance(metadata, str):
+                metadata = json.loads(metadata)
+            variant = metadata.get("variant")
+            if variant:
+                return variant
+        except (ValueError, TypeError, json.JSONDecodeError):
+            pass
+    pid = str(pub.get("product_id") or "")
+    if pid.startswith("personaliser-"):
+        return "print" if pid.endswith("-print") else "digital"
+    return None
+
+
 def build_personaliser_router(config: Any, db: Any) -> APIRouter:
     router = APIRouter(prefix="/make", tags=["personaliser"])
     pcfg = dict(getattr(config, "personaliser", None) or {})
@@ -151,45 +214,38 @@ def build_personaliser_router(config: Any, db: Any) -> APIRouter:
             fp.write_bytes(upscale_for_print(src.read_bytes()))
         db.update_personaliser_session(s["token"], status="done", file_path=str(fp))
 
-        # Check if the buyer's order is for a physical (canvas/print) or digital listing.
-        # Look up the Etsy order to determine the variant.
+        # Check if the buyer's order is for a physical (canvas/print) or digital
+        # listing — matched against the local orders table, or (if not synced
+        # yet) a live Etsy lookup. See _find_purchase / _variant_of above.
         order_ref_normalized = s.get("order_ref", "")
-        variant = None  # digital | canvas | print
-        order = None
-        for o in db.get_orders_by_platform("etsy"):
-            # Match by normalized order_ref (digits only).
-            o_digits = "".join(ch for ch in str(o.get("order_ref") or "") if ch.isdigit())
-            if o_digits == order_ref_normalized:
-                order = o
-                break
+        pub, order_ref = _find_purchase(db, config, key, order_ref_normalized)
+        variant = _variant_of(pub)
 
-        # Determine variant from publication metadata if available
-        if order:
-            listing_id = str(order.get("product_id") or "")
-            pub = db.get_publication_by_listing_id(listing_id)
-            if pub:
-                import json
-                metadata = pub.get("metadata")
-                if metadata:
-                    try:
-                        if isinstance(metadata, str):
-                            metadata = json.loads(metadata)
-                        variant = metadata.get("variant")
-                    except (ValueError, TypeError, json.JSONDecodeError):
-                        pass
+        if variant in ("canvas", "print") and order_ref:
+            # The Gelato fulfilment engine (GelatoConnector.submit_order) fetches
+            # the print file from a URL built from the ORDER's ref, not the
+            # session token — copy the finished file there so that URL resolves
+            # to something real. (out_root == the personaliser export dir Gelato's
+            # file_base_url is rooted at, e.g. exports/personaliser/.)
+            try:
+                (out_root / f"{order_ref}.png").write_bytes(fp.read_bytes())
+            except OSError:
+                pass  # best-effort — the buyer's own download still works below
 
         # Canvas orders go to print production
         if variant == "canvas":
             return JSONResponse({
                 "canvas_order": True,
-                "message": "Your canvas is being prepared and will ship within 7-10 business days.",
+                "message": "Thank you! Your canvas is being prepared now and will ship "
+                          "within 7-10 business days — no further action needed.",
                 "download": f"/make/download/{s['token']}"
             })
         # Print orders go to print production
         elif variant == "print":
             return JSONResponse({
                 "print_order": True,
-                "message": "Your print order is being prepared and will ship within 5-7 business days.",
+                "message": "Thank you! Your print is being prepared now and will ship "
+                          "within 5-7 business days — no further action needed.",
                 "download": f"/make/download/{s['token']}"
             })
         # Digital orders (variant == "digital" or unknown) are instant downloads
@@ -321,10 +377,9 @@ $('finish').onclick=async()=>{$('finish').disabled=true;$('finish').textContent=
   const body={token};if(S.tier===1)body.fields=fields();else body.choice=choice;
   const r=await fetch('/make/'+S.key+'/finalize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const d=await r.json();if(!r.ok){$('err2').textContent=d.error||'error';$('finish').disabled=false;$('finish').textContent='Finish & download';return;}
-  if(d.print_order){
+  if(d.print_order||d.canvas_order){
     $('finish').textContent='Order submitted ✓';
-    $('phint').textContent=d.message;
-    setTimeout(()=>{location.href=d.download;},2000);
+    $('phint').innerHTML=d.message+'<br><a href="'+d.download+'">Get a digital copy too</a>';
   }else{
     location.href=d.download;
   }};

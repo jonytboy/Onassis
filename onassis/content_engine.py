@@ -1402,6 +1402,9 @@ class ContentEngine:
                         and pid.endswith(suffix)
                         and (not product_key or pid == f"personaliser-{product_key}{suffix}")):
                     self.db.delete_publication(pub["id"])
+                    if prints:  # also drop the matching Gelato-fulfilment product row
+                        with self.db._connect() as conn:
+                            conn.execute("DELETE FROM products WHERE sku = ?", (pid,))
         etsy = getattr(self, "_seo_etsy", None) or EtsyAutomationEngine(self.config, self.db)
         llm = getattr(self, "_seo_llm", None) or LLMClient(self.config)
         listing_cfg = getattr(self.config, "listing", None) or {}
@@ -1485,6 +1488,16 @@ class ContentEngine:
                     self.db.insert_publication({
                         "platform": "etsy", "product_id": pid, "campaign_id": 0,
                         "listing_id": lid, "mode": "draft", "status": "draft"})
+                    if prints and not self.db.get_product_by_sku(pid):
+                        # The Gelato fulfilment engine maps a paid order to a
+                        # product by SKU (GelatoConnector._resolve_product) — a
+                        # print listing needs this row to ever be fulfillable.
+                        from onassis.connectors.gelato import \
+                            PERSONALISER_PRINT_PRODUCTION_COST
+                        self.db.insert_product({
+                            "sku": pid, "name": seo["title"], "campaign_id": 0,
+                            "product_key": p.key, "marketplace": "etsy",
+                            "production_cost": PERSONALISER_PRINT_PRODUCTION_COST})
                     row.update(status="draft_created", listing_id=lid, link=link)
                     created += 1
                 except self._NoSample as exc:
