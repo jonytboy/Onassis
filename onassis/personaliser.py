@@ -389,6 +389,150 @@ PRODUCTS: dict[str, Product] = {
         styles=[{"key": "eighties", "label": "80s",
                  "prompt": f"Transform this exact animal into a 1980s portrait: a neon-coloured bandana or leg-warmer-style accessory, a bold geometric neon-gradient background, retro airbrushed painted style. {_KEEP} Preserve the animal's markings. No text."}],
         price=7.0, sample_subject=_SUBJECT_PET),
+
+    # --- Family & friends group portraits (Sprint: 20-theme expansion) ------
+    # Same shape as the pet-costume products above but for a group of people
+    # (_SUBJECT_GROUP) — bands, vintage, decade and squad themes.
+    "rockband-friends": Product(
+        "rockband-friends", "Rock Band Portrait", 2,
+        "Your crew as a legendary rock band. Upload a group photo and get an "
+        "album-cover portrait.",
+        styles=[{"key": "rockband", "label": "Rock Band",
+                 "prompt": f"Transform this exact group of people into a ROCK BAND album-cover portrait: leather jackets, instruments, dramatic stage lighting, bold graphic composition. {_KEEP} Keep every person's precise facial likeness so each is recognisable. No text."}],
+        price=8.0, sample_subject=_SUBJECT_GROUP),
+    "popband-friends": Product(
+        "popband-friends", "Pop Band Portrait", 2,
+        "Your crew as a chart-topping pop group. Upload a group photo and get "
+        "a pop-band poster portrait.",
+        styles=[{"key": "popband", "label": "Pop Band",
+                 "prompt": f"Transform this exact group of people into a glossy POP BAND poster portrait: coordinated outfits, bright studio lighting, glamorous group pose. {_KEEP} Keep every person's precise facial likeness so each is recognisable. No text."}],
+        price=8.0, sample_subject=_SUBJECT_GROUP),
+    "prom-friends": Product(
+        "prom-friends", "80s Prom Portrait", 2,
+        "Your crew at the best 80s prom ever. Upload a group photo and get a "
+        "prom-night portrait.",
+        styles=[{"key": "prom", "label": "80s Prom",
+                 "prompt": f"Transform this exact group of people into an 1980s PROM NIGHT portrait: big hair, ruffled and sequinned formalwear, a balloon-arch backdrop, warm flash-photography style. {_KEEP} Keep every person's precise facial likeness so each is recognisable. No text."}],
+        price=8.0, sample_subject=_SUBJECT_GROUP),
+    "vintage-family": Product(
+        "vintage-family", "Vintage Family Portrait", 2,
+        "Your family as a treasured old-world portrait. Upload a group photo "
+        "and get a vintage sepia portrait.",
+        styles=[{"key": "vintage", "label": "Vintage",
+                 "prompt": f"Transform this exact group of people into an authentic VINTAGE sepia studio portrait: period-appropriate formal clothing, a painted studio backdrop, soft aged-photograph texture. {_KEEP} Keep every person's precise facial likeness so each is recognisable. No text."}],
+        price=8.0, sample_subject=_SUBJECT_GROUP),
+    "christmas-family": Product(
+        "christmas-family", "Christmas Family Portrait", 2,
+        "Your family in matching Christmas jumpers. Upload a group photo and "
+        "get a festive portrait.",
+        styles=[{"key": "christmas", "label": "Christmas",
+                 "prompt": f"Transform this exact group of people into a cosy CHRISTMAS portrait: matching festive jumpers, a decorated tree and fireplace behind, warm golden light, painterly holiday-card style. {_KEEP} Keep every person's precise facial likeness so each is recognisable. No text."}],
+        price=8.0, sample_subject=_SUBJECT_GROUP),
+    "wedding-vintage": Product(
+        "wedding-vintage", "Vintage Wedding Portrait", 2,
+        "Your wedding party as a timeless vintage portrait. Upload a group "
+        "photo and get a classic portrait.",
+        styles=[{"key": "wedding", "label": "Vintage Wedding",
+                 "prompt": f"Transform this exact group of people into a classic VINTAGE WEDDING portrait: elegant period formalwear, soft romantic sepia tones, a garden or studio backdrop. {_KEEP} Keep every person's precise facial likeness so each is recognisable. No text."}],
+        price=8.0, sample_subject=_SUBJECT_GROUP),
+    "biker-friends": Product(
+        "biker-friends", "Biker Gang Portrait", 2,
+        "Your crew as a leather-clad biker gang. Upload a group photo and get "
+        "a biker gang portrait.",
+        styles=[{"key": "biker", "label": "Biker Gang",
+                 "prompt": f"Transform this exact group of people into a BIKER GANG portrait: black leather jackets with patches, classic motorcycles, an open highway backdrop, bold painterly style. {_KEEP} Keep every person's precise facial likeness so each is recognisable. No text."}],
+        price=8.0, sample_subject=_SUBJECT_GROUP),
+    "superhero-friends": Product(
+        "superhero-friends", "Superhero Squad Portrait", 2,
+        "Your crew as a superhero squad. Upload a group photo and get a "
+        "comic-book team portrait.",
+        styles=[{"key": "superhero", "label": "Superhero Squad",
+                 "prompt": f"Transform this exact group of people into a SUPERHERO SQUAD portrait: flowing capes, fitted emblem costumes, a heroic city-skyline backdrop, comic-book painted style. {_KEEP} Keep every person's precise facial likeness so each is recognisable. No text."}],
+        price=8.0, sample_subject=_SUBJECT_GROUP),
+    "western-friends": Product(
+        "western-friends", "Western Gang Portrait", 2,
+        "Your crew as a Wild West gang. Upload a group photo and get a "
+        "western portrait.",
+        styles=[{"key": "western", "label": "Western Gang",
+                 "prompt": f"Transform this exact group of people into a WILD WEST GANG portrait: leather vests, wide-brimmed hats, a dusty desert town behind, classic western painted style. {_KEEP} Keep every person's precise facial likeness so each is recognisable. No text."}],
+        price=8.0, sample_subject=_SUBJECT_GROUP),
+    "safari-family": Product(
+        "safari-family", "Safari Family Portrait", 2,
+        "Your family as bold safari explorers. Upload a group photo and get a "
+        "safari portrait.",
+        styles=[{"key": "safari", "label": "Safari Family",
+                 "prompt": f"Transform this exact group of people into a SAFARI EXPLORER portrait: khaki vests and pith helmets, binoculars, a savannah with acacia trees behind, warm painterly style. {_KEEP} Keep every person's precise facial likeness so each is recognisable. No text."}],
+        price=8.0, sample_subject=_SUBJECT_GROUP),
+    "sports-friends": Product(
+        "sports-friends", "Sports Team Portrait", 2,
+        "Your crew as a championship sports team. Upload a group photo and "
+        "get a team portrait.",
+        styles=[{"key": "sports", "label": "Sports Team",
+                 "prompt": f"Transform this exact group of people into a SPORTS TEAM portrait: matching team jerseys, a stadium backdrop, dynamic action-poster style. {_KEEP} Keep every person's precise facial likeness so each is recognisable. No text."}],
+        price=8.0, sample_subject=_SUBJECT_GROUP),
+    "noir-friends": Product(
+        "noir-friends", "Film Noir Gang Portrait", 2,
+        "Your crew as a sharp film-noir gang. Upload a group photo and get a "
+        "detective-movie portrait.",
+        styles=[{"key": "noir", "label": "Film Noir",
+                 "prompt": f"Transform this exact group of people into a FILM-NOIR GANG portrait: trench coats and fedoras, a rain-streaked city street behind, moody black-and-white painterly style. {_KEEP} Keep every person's precise facial likeness so each is recognisable. No text."}],
+        price=8.0, sample_subject=_SUBJECT_GROUP),
+    "sitcom-friends": Product(
+        "sitcom-friends", "90s Sitcom Cast Portrait", 2,
+        "Your crew as a 90s sitcom cast. Upload a group photo and get a "
+        "retro TV-poster portrait.",
+        styles=[{"key": "sitcom", "label": "90s Sitcom",
+                 "prompt": f"Transform this exact group of people into a 1990s SITCOM CAST poster portrait: colourful casual 90s fashion, a cosy living-room set behind, bright retro TV-poster style. {_KEEP} Keep every person's precise facial likeness so each is recognisable. No text."}],
+        price=8.0, sample_subject=_SUBJECT_GROUP),
+    "graduation-friends": Product(
+        "graduation-friends", "Graduation Class Portrait", 2,
+        "Your crew all graduated together. Upload a group photo and get a "
+        "graduation portrait.",
+        styles=[{"key": "graduation", "label": "Graduation",
+                 "prompt": f"Transform this exact group of people into a GRADUATION portrait: caps and gowns with tassels, rolled diplomas, a university hall behind, formal painterly style. {_KEEP} Keep every person's precise facial likeness so each is recognisable. No text."}],
+        price=8.0, sample_subject=_SUBJECT_GROUP),
+    "royalcourt-friends": Product(
+        "royalcourt-friends", "Royal Court Portrait", 2,
+        "Your crew as a royal court. Upload a group photo and get a regal "
+        "old-master portrait.",
+        styles=[{"key": "royalcourt", "label": "Royal Court",
+                 "prompt": f"Transform this exact group of people into a grand ROYAL COURT portrait: crowns, jewels and ermine-trimmed robes, a palace hall behind, classical old-master oil painting. {_KEEP} Keep every person's precise facial likeness so each is recognisable. No text."}],
+        price=8.0, sample_subject=_SUBJECT_GROUP),
+    "disco-friends": Product(
+        "disco-friends", "Disco Squad Portrait", 2,
+        "Your crew under the mirror ball. Upload a group photo and get a 70s "
+        "disco portrait.",
+        styles=[{"key": "disco", "label": "Disco Squad",
+                 "prompt": f"Transform this exact group of people into a 1970s DISCO SQUAD portrait: sequinned outfits, colourful dance-floor lights and a mirror ball behind, vibrant retro painterly style. {_KEEP} Keep every person's precise facial likeness so each is recognisable. No text."}],
+        price=8.0, sample_subject=_SUBJECT_GROUP),
+    "pirate-friends": Product(
+        "pirate-friends", "Pirate Crew Portrait", 2,
+        "Your crew as a fearsome pirate crew. Upload a group photo and get a "
+        "pirate-ship portrait.",
+        styles=[{"key": "pirate", "label": "Pirate Crew",
+                 "prompt": f"Transform this exact group of people into a PIRATE CREW portrait: weathered coats, tricorn hats and sashes, a sailing ship and stormy sea behind, dramatic painterly style. {_KEEP} Keep every person's precise facial likeness so each is recognisable. No text."}],
+        price=8.0, sample_subject=_SUBJECT_GROUP),
+    "viking-friends": Product(
+        "viking-friends", "Viking Clan Portrait", 2,
+        "Your crew as a fearsome Norse clan. Upload a group photo and get a "
+        "Viking portrait.",
+        styles=[{"key": "viking", "label": "Viking Clan",
+                 "prompt": f"Transform this exact group of people into a VIKING CLAN portrait: horned or winged bronze helmets, fur-trimmed leather armour, a longship and fjord behind, dramatic oil-painting style. {_KEEP} Keep every person's precise facial likeness so each is recognisable. No text."}],
+        price=8.0, sample_subject=_SUBJECT_GROUP),
+    "astronaut-friends": Product(
+        "astronaut-friends", "Astronaut Crew Portrait", 2,
+        "Your crew suited up and headed for the stars. Upload a group photo "
+        "and get an astronaut-crew portrait.",
+        styles=[{"key": "astronaut", "label": "Astronaut Crew",
+                 "prompt": f"Transform this exact group of people into an ASTRONAUT CREW portrait: matching white NASA-style space suits, helmets held under arm or visor up, stars and Earth visible behind, dramatic painterly lighting. {_KEEP} Keep every person's precise facial likeness so each is recognisable. No text."}],
+        price=8.0, sample_subject=_SUBJECT_GROUP),
+    "renaissance-family": Product(
+        "renaissance-family", "Renaissance Family Portrait", 2,
+        "Your family painted like old masters. Upload a group photo and get "
+        "a Renaissance-style portrait.",
+        styles=[{"key": "renaissance", "label": "Renaissance",
+                 "prompt": f"Transform this exact group of people into a RENAISSANCE old-master family portrait: rich period clothing, dramatic chiaroscuro lighting, a classical interior behind. {_KEEP} Keep every person's precise facial likeness so each is recognisable. No text."}],
+        price=8.0, sample_subject=_SUBJECT_GROUP),
 }
 
 
